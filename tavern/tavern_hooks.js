@@ -5,11 +5,14 @@
 // 原因：99-mount.js 执行完页面结构才存在；而 ui.js 一加载就会记下“所有页面”的名单，
 // 新加的“酒馆互联”页面必须在那之前放进去，否则切换页面时它关不掉。
 //
-// yuan 更新后如果某个钩子挂不上，控制台会出现“[酒馆外挂] 挂载失败”的红字，照着提示修这个文件即可。
+// yuan 更新后如果某个钩子挂不上，“酒馆互联”页面顶部会出现“挂载失败”的提示（控制台也有），照着提示修这个文件即可。
 (function () {
     const TAG = '[酒馆外挂]';
     function fail(what) {
-        console.error(`${TAG} 挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`);
+        const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
+        // 记到“酒馆互联”页面顶部的问题记录里（手机上看控制台不方便）
+        if (window.TavernSync && typeof window.TavernSync.reportIssue === 'function') window.TavernSync.reportIssue(text);
+        else console.error(`${TAG} ${text}`);
     }
 
     // ========== 1. “酒馆互联”页面 ==========
@@ -141,7 +144,7 @@
             if (typeof prompt !== 'string' || !window.TavernSync) return prompt;
             let block = '';
             try { block = window.TavernSync.buildPromptBlock(character); }
-            catch (e) { console.error(`${TAG} 生成酒馆提示词失败：`, e); }
+            catch (e) { fail('生成酒馆提示词出错：' + e.message); }
             return block ? insertTavernBlock(prompt, block) : prompt;
         };
     }
@@ -202,7 +205,78 @@
         }, 1500);
     }
 
-    // ========== 7. 让“酒馆互联”的设置能保存 ==========
+    // ========== 7. 酒馆楼层在聊天里显示成折叠卡片 ==========
+    // 从酒馆导入的楼层（fromTavern）放在聊天记录里，但不应该像普通气泡那样显示。
+    // yuan 用 createMessageBubbleElement(消息) 画每一条消息，在它外面套一层：遇到酒馆楼层就画成可点开的卡片，
+    // 样式借用 yuan 剧情节点摘要的那种折叠卡片。
+    function buildTavernCard(message) {
+        const t = message.tavern || {};
+        const wrapper = document.createElement('div');
+        wrapper.className = 'message-wrapper system-notification independent-summary-wrapper received';
+        wrapper.dataset.id = message.id;
+        wrapper.style.margin = '6px 0';
+
+        const box = document.createElement('div');
+        box.className = 'node-summary-container independent-summary';
+        box.style.maxWidth = '90%';
+
+        const toggle = document.createElement('div');
+        toggle.className = 'node-summary-toggle';
+        toggle.textContent = `🍺 酒馆剧情 · 第${t.floor}楼${t.name ? ' · ' + t.name : ''}${t.summary ? ' · 有摘要' : ''}`;
+
+        const body = document.createElement('div');
+        body.className = 'node-summary-content';
+        body.style.display = 'none';
+        body.style.whiteSpace = 'pre-wrap';
+        body.style.textAlign = 'left';
+        body.textContent = message.content || '';
+        if (t.summary && t.summary.text) {
+            const sum = document.createElement('div');
+            sum.style.cssText = 'margin-top:10px; padding-top:8px; border-top:1px dashed rgba(128,128,128,0.4); opacity:0.85;';
+            sum.textContent = `柏宝书摘要${t.summary.time ? `（${t.summary.time}）` : ''}：${t.summary.text}`;
+            body.appendChild(sum);
+        }
+
+        toggle.addEventListener('click', () => {
+            body.style.display = body.style.display === 'none' ? 'block' : 'none';
+        });
+        box.appendChild(toggle);
+        box.appendChild(body);
+        wrapper.appendChild(box);
+        return wrapper;
+    }
+
+    function hookBubbleRender() {
+        if (typeof window.createMessageBubbleElement !== 'function') {
+            return fail('找不到 yuan 画消息的函数 createMessageBubbleElement，酒馆楼层会显示成普通消息');
+        }
+        const originalCreate = window.createMessageBubbleElement;
+        window.createMessageBubbleElement = function (message) {
+            if (message && message.fromTavern) {
+                try { return buildTavernCard(message); }
+                catch (e) { fail('画酒馆剧情卡片出错：' + e.message); }
+            }
+            return originalCreate.apply(this, arguments);
+        };
+    }
+
+    // ========== 8. 发给 AI 前处理酒馆楼层 ==========
+    // yuan 发消息、写日记、更新记忆表格前，都会用 filterHistoryForAI(聊天, 消息列表) 整理聊天记录。
+    // 在它外面套一层：整理完之后，把酒馆楼层换成“包裹后的原文”或“柏宝书摘要”（规则见 TavernSync.prepareHistoryForAI）。
+    function hookHistoryFilter() {
+        if (typeof window.filterHistoryForAI !== 'function') {
+            return fail('找不到 yuan 整理聊天记录的函数 filterHistoryForAI，酒馆楼层会以未处理的原文发给 AI');
+        }
+        const originalFilter = window.filterHistoryForAI;
+        window.filterHistoryForAI = function (chat) {
+            const result = originalFilter.apply(this, arguments);
+            if (!window.TavernSync) return result;
+            try { return window.TavernSync.prepareHistoryForAI(chat, result); }
+            catch (e) { fail('处理酒馆楼层出错：' + e.message); return result; }
+        };
+    }
+
+    // ========== 9. 让“酒馆互联”的设置能保存 ==========
     // yuan 只保存 globalSettingKeys 名单里的设置项，把 tavernSync 加进名单。
     // 名单在 yuan 后面的脚本里才定义，所以等页面脚本全部加载完（DOMContentLoaded）再加；
     // 这个监听比 main.js 的注册得早，所以会赶在 yuan 读取数据（loadData）之前执行。
@@ -222,5 +296,7 @@
         hookSystemPrompt();
         hookAiReply();
         startChatWatcher();
+        hookBubbleRender();
+        hookHistoryFilter();
     });
 })();
