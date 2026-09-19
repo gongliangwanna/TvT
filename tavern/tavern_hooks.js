@@ -149,16 +149,131 @@
         };
     }
 
-    // ========== 5. AI 回复后自动推送到酒馆 ==========
+    // ========== 5. 重新生成、AI 回复后自动推送 ==========
+    // yuan 的“重新生成”（handleRegenerate）只能对最后一轮用：删掉最后一条用户消息之后的所有内容，再调用 getAiReply。
+    // 补丁的处理（维护者的设计）：“重新生成”是换掉当时那几句回复，不是在后面接着聊，所以
+    //   - 被一起删掉的酒馆楼层先不放回 → AI 重新生成时看不到“之后才发生的”酒馆剧情；
+    //   - 回复生成完，把新回复的时间设成紧跟在那条用户消息之后，再把酒馆楼层放回来 → 新回复留在原位置；
+    //   - 酒馆里如果已经有旧回复（推送过），就在那一楼里原地换成新回复（位置不动、不新增楼层），
+    //     酒馆里没有旧回复（没推送过），就把新回复接在酒馆里“这轮之前最后一条小手机消息”那一楼里；
+    //     成功后新回复标记 skipTavernPush，免得再推一次；
+    //   - 生成期间旧回复记在 binding.keptIds 里，删除同步当作还在，免得在替换前就被删掉；
+    //     替换失败时退回“酒馆保留旧回复、新回复不推送”，并在页面上报问题。
+    // 你自己长按删掉的酒馆卡片不受影响（不是“重新生成”删的），下次同步时才会重新出现。
+    let regenSnapshot = null;
+
+    function hookRegenerate() {
+        if (typeof window.handleRegenerate !== 'function') {
+            return fail('找不到 yuan 的重新生成函数 handleRegenerate，“重新生成”会删掉后面的酒馆剧情（下次同步会恢复），旧回复也会从酒馆删掉');
+        }
+        const originalRegenerate = window.handleRegenerate;
+        window.handleRegenerate = function () {
+            try {
+                const char = currentChatType === 'private' ? db.characters.find(c => c.id === currentChatId) : null;
+                // yuan 有时会先弹“保存旧版本？”的确认框，用户点完才真正重新生成，所以快照保留一会儿（2 分钟）
+                regenSnapshot = char && Array.isArray(char.history)
+                    ? { chatId: currentChatId, history: char.history.slice(), time: Date.now() } : null;
+            } catch (e) { regenSnapshot = null; }
+            return originalRegenerate.apply(this, arguments);
+        };
+    }
+
+    // 调用 AI 之前：如果这是一次“重新生成”，算出被删掉了什么，先不放回酒馆楼层
+    function beginRegenerate(chatId, chatType) {
+        const snap = regenSnapshot;
+        if (!snap || chatType !== 'private' || snap.chatId !== chatId) return null;
+        regenSnapshot = null;
+        if (Date.now() - snap.time > 2 * 60 * 1000) return null;
+        const char = db.characters.find(c => c.id === chatId);
+        if (!char || !Array.isArray(char.history)) return null;
+        const present = new Set(char.history.map(m => m && m.id));
+        const removed = snap.history.filter(m => m && !present.has(m.id));
+        if (!removed.length) return null;
+        let anchorTime = null;   // 最后一条用户消息的时间：新回复要紧跟在它后面
+        for (let i = char.history.length - 1; i >= 0; i--) {
+            const m = char.history[i];
+            if (m && m.role === 'user' && !m.fromTavern) { anchorTime = Number(m.timestamp); break; }
+        }
+        const removedReplies = removed.filter(m => !m.fromTavern);
+        // 旧回复要在酒馆里保留：必须现在就记下，不能等 AI 回完——
+        // “删消息时同步删酒馆”每 1.5 秒检查一次，可能在 AI 回复期间就去酒馆删它们
+        const binding = window.TavernSync.findBindingForChar(char.id);
+        if (binding && removedReplies.length) {
+            binding.keptIds = [...(Array.isArray(binding.keptIds) ? binding.keptIds : []), ...removedReplies.map(m => m.id)].slice(-500);
+            if (typeof saveData === 'function') saveData();
+        }
+        return {
+            char,
+            binding,
+            anchorTime: Number.isFinite(anchorTime) ? anchorTime : null,
+            removedFloors: removed.filter(m => m.fromTavern),
+            removedReplies,
+            idsBefore: present,
+        };
+    }
+
+    // AI 回完之后：新回复放回原位置；酒馆里的旧回复原地换成新回复；酒馆楼层放回来
+    async function finishRegenerate(regen) {
+        const { char, binding } = regen;
+        const newReplies = char.history.filter(m => m && !regen.idsBefore.has(m.id) && !m.fromTavern);
+
+        if (regen.removedFloors.length && regen.anchorTime != null) {
+            newReplies.forEach((m, i) => { m.timestamp = regen.anchorTime + i + 1; });
+        }
+        const oldIds = regen.removedReplies.map(m => m.id);
+        if (binding && oldIds.length && newReplies.length) {
+            const oldSet = new Set(oldIds);
+            const dropKept = () => { binding.keptIds = (binding.keptIds || []).filter(id => !oldSet.has(id)); };
+            try {
+                const r = await window.TavernSync.replaceRegeneratedInTavern(binding, oldIds, newReplies);
+                if (r.replaced) {
+                    // 新回复已经在酒馆里了（替换进去的），不要再推一次
+                    newReplies.forEach(m => { m.skipTavernPush = true; });
+                    if (oldSet.has(binding.lastPushedMsgId)) binding.lastPushedMsgId = newReplies[newReplies.length - 1].id;
+                } else if (oldSet.has(binding.lastPushedMsgId)) {
+                    // 酒馆里没找到旧回复（没推送过或被手动删了）：新回复按平常推送，“上次推送到”退回这轮之前
+                    const before = char.history.filter(m => m && !m.fromTavern && !newReplies.includes(m) && Number(m.timestamp) <= (regen.anchorTime ?? Infinity));
+                    binding.lastPushedMsgId = before.length ? before[before.length - 1].id : null;
+                }
+                dropKept();   // 旧回复在酒馆里已经被换掉（或本来就没有），不用再保护
+            } catch (e) {
+                // 替换失败（比如连不上酒馆）：退回“不推送新回复、酒馆保留旧回复”，免得酒馆里出现重复或错位
+                window.TavernSync.reportIssue('重新生成后替换酒馆里的旧回复失败：' + e.message + '。酒馆里保留了旧回复，可以去酒馆手动修改');
+                newReplies.forEach(m => { m.skipTavernPush = true; });
+                if (oldSet.has(binding.lastPushedMsgId)) binding.lastPushedMsgId = newReplies[newReplies.length - 1].id;
+            }
+        }
+        if (regen.removedFloors.length) {
+            char.history.push(...regen.removedFloors);
+            window.TavernSync.placeTavernFloors(char);
+        }
+        if (typeof saveData === 'function') await saveData();
+        if (typeof renderMessages === 'function' && currentChatId === char.id) {
+            try { renderMessages(false, true); } catch (e) { /* 画不出来不影响数据 */ }
+        }
+    }
+
     // yuan 的 getAiReply(聊天ID, 聊天类型, ...) 负责一轮 AI 回复，成功结束时返回 true。
-    // 在它外面套一层：私聊回复成功后，按“自动推送”设置把新消息推到酒馆（设置没开就什么也不做）。
+    // 在它外面套一层：处理“重新生成”（见上面），私聊回复成功后按“自动推送”设置推到酒馆。
     function hookAiReply() {
         if (typeof window.getAiReply !== 'function') {
             return fail('找不到 yuan 的回复函数 getAiReply，“AI 回复后自动推送”将不起作用');
         }
         const originalGetAiReply = window.getAiReply;
         window.getAiReply = async function (chatId, chatType) {
-            const result = await originalGetAiReply.apply(this, arguments);
+            let regen = null;
+            try { if (window.TavernSync) regen = beginRegenerate(chatId, chatType); }
+            catch (e) { fail('处理重新生成出错：' + e.message); }
+            let result;
+            try {
+                result = await originalGetAiReply.apply(this, arguments);
+            } finally {
+                // 不管回复成功与否，都要把酒馆楼层放回来
+                if (regen) {
+                    try { await finishRegenerate(regen); }
+                    catch (e) { fail('重新生成后整理酒馆楼层出错：' + e.message); }
+                }
+            }
             if (result === true && chatType === 'private' && window.TavernSync) {
                 window.TavernSync.autoPushIfNeeded(chatId).catch(e => console.warn(`${TAG} 自动推送失败：`, e));
             }
@@ -166,12 +281,14 @@
         };
     }
 
+
     // ========== 6. 打开聊天时自动拉取、删消息时同步删酒馆 ==========
     // yuan 打开聊天、删消息的写法有很多处（单删、多选删、按范围删、重新生成、清空……），
     // 一处处挂钩子容易在 yuan 更新后断掉。所以改成每 1.5 秒看一眼当前打开的聊天：
     //   - 换到了另一个私聊 → 按“自动拉取”设置从酒馆拉取记忆
     //   - 当前私聊里有消息消失了 → 按“自动推送”设置，把删除同步到酒馆（稍等 1.5 秒，把连续删除合并成一次）
     // 只在内存里对比消息编号，不联网；只有真的发现变化才会去连酒馆。
+    // 酒馆剧情卡片可以像普通消息一样长按删除，删掉后 AI 就读不到了，下次同步会重新出现。
     function startChatWatcher() {
         let lastChatId = null;
         let knownIds = null;
@@ -205,6 +322,7 @@
         }, 1500);
     }
 
+
     // ========== 7. 酒馆楼层在聊天里显示成折叠卡片 ==========
     // 从酒馆导入的楼层（fromTavern）放在聊天记录里，但不应该像普通气泡那样显示。
     // yuan 用 createMessageBubbleElement(消息) 画每一条消息，在它外面套一层：遇到酒馆楼层就画成可点开的卡片，
@@ -212,8 +330,9 @@
     function buildTavernCard(message) {
         const t = message.tavern || {};
         const wrapper = document.createElement('div');
-        wrapper.className = 'message-wrapper system-notification independent-summary-wrapper received';
+        wrapper.className = 'message-wrapper system-notification independent-summary-wrapper received tavern-floor-wrapper';
         wrapper.dataset.id = message.id;
+        wrapper.dataset.tavernFloor = t.floor != null ? String(t.floor) : "";
         wrapper.style.margin = '6px 0';
 
         const box = document.createElement('div');
@@ -222,7 +341,7 @@
 
         const toggle = document.createElement('div');
         toggle.className = 'node-summary-toggle';
-        toggle.textContent = `🍺 酒馆剧情 · 第${t.floor}楼${t.name ? ' · ' + t.name : ''}${t.summary ? ' · 有摘要' : ''}`;
+        toggle.textContent = `酒馆剧情 · 第${t.floor}楼${t.name ? ' · ' + t.name : ''}${t.summary ? ' · 有摘要' : ''}`;
 
         const body = document.createElement('div');
         body.className = 'node-summary-content';
@@ -260,6 +379,105 @@
         };
     }
 
+    // ========== 7.5 连续的酒馆剧情整组折叠 ==========
+    // 聊天界面里连着的一串酒馆楼层，默认收成一张“酒馆剧情 · N 楼”的卡片，免得把小手机上文挤得看不到。
+    // 点开后显示原来的一张张楼层卡片（再点某一楼看原文）；组的开头和结尾都有“收起”，
+    // 楼层很多时不用翻回开头也能收起，从结尾收起后会滚回这一组的位置。
+    // 做法：不改 yuan 画消息的流程，而是在聊天区内容变化后，把连续的 .tavern-floor-wrapper 分组，
+    // 在每组前后插入我们自己的“组头/组尾”，并按展开状态显示或隐藏组里的楼层。
+    // 夹在酒馆楼层之间的时间分隔线也算进组里一起收起。
+    const expandedGroups = new Set();   // 展开着的组（用组里第一楼的消息编号记），重新画聊天后保持
+    let groupObserver = null;
+    let regroupScheduled = false;
+
+    function makeGroupBar(text, onClick) {
+        const outer = document.createElement('div');
+        outer.className = 'tavern-group-bar';
+        outer.style.cssText = 'display:flex; justify-content:center; margin:8px 0;';
+        const box = document.createElement('div');
+        box.className = 'node-summary-container independent-summary';
+        box.style.maxWidth = '90%';
+        const toggle = document.createElement('div');
+        toggle.className = 'node-summary-toggle';
+        toggle.textContent = text;
+        toggle.addEventListener('click', (e) => { e.stopPropagation(); onClick(outer); });
+        box.appendChild(toggle);
+        outer.appendChild(box);
+        return outer;
+    }
+
+    function regroupTavernFloors() {
+        const area = document.getElementById('message-area');
+        if (!area) return;
+        if (groupObserver) groupObserver.disconnect();
+        try {
+            area.querySelectorAll(':scope > .tavern-group-bar').forEach(el => el.remove());
+            // 找出连续的酒馆楼层（中间只隔着时间分隔线也算连续）
+            const groups = [];
+            let current = null, pendingDividers = [];
+            for (const el of Array.from(area.children)) {
+                if (el.classList.contains('tavern-floor-wrapper')) {
+                    if (!current) { current = { floors: [], members: [] }; groups.push(current); }
+                    else current.members.push(...pendingDividers);
+                    pendingDividers = [];
+                    current.floors.push(el);
+                    current.members.push(el);
+                } else if (current && el.classList.contains('time-divider')) {
+                    pendingDividers.push(el);
+                } else {
+                    current = null; pendingDividers = [];
+                }
+            }
+            for (const g of groups) {
+                const key = g.floors[0].dataset.id;
+                const open = expandedGroups.has(key);
+                const count = g.floors.length;
+                const floorNos = g.floors.map(el => el.dataset.tavernFloor).filter(x => x !== undefined && x !== '');
+                const range = floorNos.length ? `（第${floorNos[0]}${floorNos.length > 1 ? '~' + floorNos[floorNos.length - 1] : ''}楼）` : '';
+                g.members.forEach(el => { el.style.display = open ? '' : 'none'; });
+                const toggleGroup = (bar, fromBottom) => {
+                    if (expandedGroups.has(key)) expandedGroups.delete(key); else expandedGroups.add(key);
+                    regroupTavernFloors();
+                    // 从组尾收起：滚回这一组的位置，不然会停在很下面
+                    if (fromBottom) {
+                        const head = Array.from(area.querySelectorAll(':scope > .tavern-group-bar')).find(el => el.dataset.group === key);
+                        if (head) head.scrollIntoView({ block: 'center' });
+                    }
+                };
+                const head = makeGroupBar(
+                    open ? `酒馆剧情 · ${count} 楼${range} · 点击收起` : `酒馆剧情 · ${count} 楼${range} · 点击展开`,
+                    (bar) => toggleGroup(bar, false));
+                head.dataset.group = key;
+                area.insertBefore(head, g.members[0]);
+                if (open) {
+                    const tail = makeGroupBar(`收起酒馆剧情（${count} 楼）`, (bar) => toggleGroup(bar, true));
+                    const last = g.members[g.members.length - 1];
+                    area.insertBefore(tail, last.nextSibling);
+                }
+            }
+        } catch (e) {
+            fail('整理酒馆剧情分组出错：' + e.message);
+        } finally {
+            if (groupObserver) groupObserver.observe(area, { childList: true });
+        }
+    }
+
+    function startTavernGrouping() {
+        const area = document.getElementById('message-area');
+        if (!area) return fail('找不到聊天消息区 #message-area，酒馆剧情不会整组折叠');
+        groupObserver = new MutationObserver((records) => {
+            // 只是我们自己插入/删除组头组尾引起的变化 → 不理会，否则会“分组 → 触发 → 再分组”无限循环
+            const ours = (n) => n.nodeType === 1 && n.classList.contains('tavern-group-bar');
+            if (records.every(r => [...r.addedNodes, ...r.removedNodes].every(ours))) return;
+            if (regroupScheduled) return;
+            regroupScheduled = true;
+            // 等 yuan 这一轮把消息都画完再分组
+            Promise.resolve().then(() => { regroupScheduled = false; regroupTavernFloors(); });
+        });
+        groupObserver.observe(area, { childList: true });
+        regroupTavernFloors();
+    }
+
     // ========== 8. 发给 AI 前处理酒馆楼层 ==========
     // yuan 发消息、写日记、更新记忆表格前，都会用 filterHistoryForAI(聊天, 消息列表) 整理聊天记录。
     // 在它外面套一层：整理完之后，把酒馆楼层换成“包裹后的原文”或“柏宝书摘要”（规则见 TavernSync.prepareHistoryForAI）。
@@ -269,7 +487,15 @@
         }
         const originalFilter = window.filterHistoryForAI;
         window.filterHistoryForAI = function (chat) {
-            const result = originalFilter.apply(this, arguments);
+            // 打开了“单独限制酒馆上文”：先按“最新 N 楼酒馆 + 其余名额给小手机消息”重新挑一遍上文
+            let args = arguments;
+            if (window.TavernSync) {
+                try {
+                    const picked = window.TavernSync.limitTavernContext(chat, arguments[1], arguments[2]);
+                    if (picked) { args = Array.prototype.slice.call(arguments); args[1] = picked; }
+                } catch (e) { fail('按酒馆上文条数挑选消息出错：' + e.message); }
+            }
+            const result = originalFilter.apply(this, args);
             if (!window.TavernSync) return result;
             try { return window.TavernSync.prepareHistoryForAI(chat, result); }
             catch (e) { fail('处理酒馆楼层出错：' + e.message); return result; }
@@ -294,9 +520,11 @@
         registerSettingKey();
         hookShowPanel();
         hookSystemPrompt();
+        hookRegenerate();
         hookAiReply();
         startChatWatcher();
         hookBubbleRender();
         hookHistoryFilter();
+        startTavernGrouping();
     });
 })();
