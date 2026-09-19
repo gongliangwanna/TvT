@@ -8,6 +8,9 @@
 // yuan 更新后如果某个钩子挂不上，“酒馆互联”页面顶部会出现“挂载失败”的提示（控制台也有），照着提示修这个文件即可。
 (function () {
     const TAG = '[酒馆外挂]';
+    // 文件版本：显示在“酒馆互联”页面最下面（见 tavern_sync.js 的 SYNC_VERSION）
+    const HOOKS_VERSION = '2026-09-20 a';
+    if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
         // 记到“酒馆互联”页面顶部的问题记录里（手机上看控制台不方便）
@@ -416,8 +419,9 @@
             // 找出连续的酒馆楼层（中间只隔着时间分隔线也算连续）
             const groups = [];
             let current = null, pendingDividers = [];
+            const isFloor = (el) => el.classList.contains('tavern-floor-wrapper') || el.hasAttribute('data-tavern-floor');
             for (const el of Array.from(area.children)) {
-                if (el.classList.contains('tavern-floor-wrapper')) {
+                if (isFloor(el)) {
                     if (!current) { current = { floors: [], members: [] }; groups.push(current); }
                     else current.members.push(...pendingDividers);
                     pendingDividers = [];
@@ -468,10 +472,14 @@
     function ensureGrouped() {
         const area = document.getElementById('message-area');
         if (!area) return;
-        const floors = area.querySelectorAll(':scope > .tavern-floor-wrapper').length;
+        const floors = area.querySelectorAll(':scope > .tavern-floor-wrapper, :scope > [data-tavern-floor]').length;
         if (!floors) return;
-        const bars = area.querySelectorAll(':scope > .tavern-group-bar').length;
-        if (!bars) regroupTavernFloors();
+        if (area.querySelectorAll(':scope > .tavern-group-bar').length) return;
+        regroupTavernFloors();
+        // 分了组还是没有组标题 → 说明分组这步没起作用，报出来好排查（同一句话只会记一次）
+        if (!area.querySelectorAll(':scope > .tavern-group-bar').length) {
+            fail(`聊天里有 ${floors} 张酒馆剧情卡片，但整组折叠没能生效`);
+        }
     }
 
     function startTavernGrouping() {

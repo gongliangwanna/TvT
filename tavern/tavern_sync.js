@@ -75,6 +75,8 @@ function readFloorTime(m) {
 }
 
 const TavernSync = {
+    // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
+    SYNC_VERSION: '2026-09-20 a',
     DEFAULT_TIME_REGEX,
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
@@ -1288,6 +1290,11 @@ function setupTavernSyncScreen() {
                         </select>
                     </div>
                     <div style="font-size:11px; color:#888; margin-top:4px;">新开楼层：每次推送创建新消息；合并末尾：追加到最后一楼末尾（配合正则隐藏）。注：若最后一楼已是小手机消息，无论模式都会自动合并</div>
+                </div>
+                <div style="font-size:11px; color:#888; text-align:center; margin-top:14px; line-height:1.6;">
+                    补丁文件版本<br>
+                    tavern_sync.js：${TavernSync.SYNC_VERSION} ／ tavern_hooks.js：${TavernSync.HOOKS_VERSION || '没有加载'}<br>
+                    两个版本不一样，说明手机上还在用缓存里的旧文件
                 </div>
             </div>
         </div>`;
