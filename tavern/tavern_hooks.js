@@ -51,10 +51,72 @@
             window.setupTavernSyncScreen();
             switchScreen('tavern-sync-screen');
         });
-        grids[grids.length - 1].appendChild(item);
+        const grid = grids[grids.length - 1];
+        grid.appendChild(item);
+        keepLast(grid, item);
     }
 
-    // ========== 3. 让“酒馆互联”的设置能保存 ==========
+    // 让外挂加的按钮始终排在最后：yuan 以后如果用代码往同一处再加按钮，就把我们的挪回末尾
+    function keepLast(container, item) {
+        new MutationObserver(() => {
+            if (item.parentNode === container && container.lastElementChild !== item) container.appendChild(item);
+        }).observe(container, { childList: true });
+    }
+
+    // ========== 3. 聊天页“+”面板里的“推送酒馆”按钮 ==========
+    // 只有当前私聊角色绑定了酒馆时才显示（每次打开“+”面板时判断，见下面的 hookShowPanel）
+    function addChatPushButton() {
+        if (document.getElementById('push-tavern-btn')) return;
+        const grid = document.querySelector('#panel-function-area .expansion-grid');
+        if (!grid) return fail('找不到聊天页“+”面板的按钮区 #panel-function-area .expansion-grid');
+        const item = document.createElement('div');
+        item.className = 'expansion-item';
+        item.id = 'push-tavern-btn';
+        item.style.display = 'none';
+        item.innerHTML = `
+            <div class="expansion-item-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12,2L4,9H9V15H15V9H20L12,2M4,19V21H20V19H4Z"/>
+                </svg>
+            </div>
+            <span class="expansion-item-name">推送酒馆</span>`;
+        item.addEventListener('click', async () => {
+            if (!window.TavernSync) { showToast('酒馆同步未启用'); return; }
+            const binding = window.TavernSync.findBindingForChar(currentChatId);
+            if (!binding) { showToast('该角色未绑定酒馆'); return; }
+            if (typeof showPanel === 'function') showPanel('none');
+            window.showAutoPushModal(binding);
+        });
+        grid.appendChild(item);
+        // “+”面板第一次打开时 yuan 会把这些按钮按每页 8 个重新分页，之后 grid 就不存在了，
+        // 所以只在分页前保持“最后一个”即可
+        keepLast(grid, item);
+    }
+
+    function updateChatPushButton() {
+        const btn = document.getElementById('push-tavern-btn');
+        if (!btn) return;
+        let hasBinding = false;
+        try {
+            hasBinding = currentChatType === 'private' && !!window.TavernSync
+                && !!window.TavernSync.findBindingForChar(currentChatId);
+        } catch (e) { /* 取不到当前聊天就当作没绑定 */ }
+        btn.style.display = hasBinding ? '' : 'none';
+    }
+
+    // yuan 用 showPanel('function') 打开“+”面板。在它外面套一层：打开前先决定按钮显不显示
+    function hookShowPanel() {
+        if (typeof window.showPanel !== 'function') {
+            return fail('找不到 yuan 的面板函数 showPanel，聊天页的“推送酒馆”按钮不会显示');
+        }
+        const originalShowPanel = window.showPanel;
+        window.showPanel = function (type) {
+            if (type === 'function') updateChatPushButton();
+            return originalShowPanel.apply(this, arguments);
+        };
+    }
+
+    // ========== 4. 让“酒馆互联”的设置能保存 ==========
     // yuan 只保存 globalSettingKeys 名单里的设置项，把 tavernSync 加进名单。
     // 名单在 yuan 后面的脚本里才定义，所以等页面脚本全部加载完（DOMContentLoaded）再加；
     // 这个监听比 main.js 的注册得早，所以会赶在 yuan 读取数据（loadData）之前执行。
@@ -67,5 +129,9 @@
 
     addScreen();
     addMenuItem();
-    document.addEventListener('DOMContentLoaded', registerSettingKey);
+    addChatPushButton();
+    document.addEventListener('DOMContentLoaded', () => {
+        registerSettingKey();
+        hookShowPanel();
+    });
 })();
