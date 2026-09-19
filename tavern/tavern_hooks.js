@@ -294,6 +294,7 @@
         let knownIds = null;
         let deletionTimer = null;
         setInterval(() => {
+            try { ensureGrouped(); } catch (e) { /* 分组失败不影响同步 */ }
             const TS = window.TavernSync;
             if (!TS || typeof db === 'undefined' || !Array.isArray(db.characters)) return;
             const chatId = (typeof currentChatType !== 'undefined' && currentChatType === 'private'
@@ -460,6 +461,17 @@
         } finally {
             if (groupObserver) groupObserver.observe(area, { childList: true });
         }
+    }
+
+    // 保险：万一“监听页面变化”在某些浏览器里没触发，每 1.5 秒的检查里也看一眼——
+    // 聊天里有酒馆卡片却没有分组标题，就重新分一次组。只比对数量，很省事。
+    function ensureGrouped() {
+        const area = document.getElementById('message-area');
+        if (!area) return;
+        const floors = area.querySelectorAll(':scope > .tavern-floor-wrapper').length;
+        if (!floors) return;
+        const bars = area.querySelectorAll(':scope > .tavern-group-bar').length;
+        if (!bars) regroupTavernFloors();
     }
 
     function startTavernGrouping() {
