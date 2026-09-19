@@ -10,15 +10,6 @@
 // 可选：weekday / location / weather / mood（缺失则继承上一楼）
 const DEFAULT_TIME_REGEX = String.raw`【\s*(?<year>\d{4})\s*年\s*(?<month>\d{1,2})\s*月\s*(?<day>\d{1,2})\s*日\s*(?<hour>\d{1,2})\s*[:：]\s*(?<minute>\d{2})\s*(?<weekday>星期[一二三四五六日天])?\s*(?:\|(?<location>[^|】]*)\|(?<weather>[^|】]*)\|(?<mood>[^】]*))?】?`;
 
-// 收藏日记是否注入到 AI 上下文。默认开；用户可在酒馆互联设置里关掉
-// （st 版放在 chat_ai.js 里，移植时搬到这里）
-function getFavoritedJournalsForAi(character) {
-    if (!character) return [];
-    if (typeof db !== 'undefined' && db.tavernSync && db.tavernSync.injectFavoritedJournals === false) return [];
-    return (character.memoryJournals || []).filter(j => j.isFavorited);
-}
-window.getFavoritedJournalsForAi = getFavoritedJournalsForAi;
-
 // 酒馆楼层注入过滤：开关关闭时跳过 user 楼层（省 token）
 // （st 版放在 chat_ai.js 里，移植时搬到这里）
 function filterFloorsForInjection(floors) {
@@ -42,7 +33,6 @@ const TavernSync = {
         if (!Array.isArray(db.tavernSync.cleanRules)) db.tavernSync.cleanRules = [];
         if (typeof db.tavernSync.pushIncludeStatusBar !== 'boolean') db.tavernSync.pushIncludeStatusBar = true;
         if (typeof db.tavernSync.timeRegex !== 'string' || !db.tavernSync.timeRegex.trim()) db.tavernSync.timeRegex = DEFAULT_TIME_REGEX;
-        if (typeof db.tavernSync.injectFavoritedJournals !== 'boolean') db.tavernSync.injectFavoritedJournals = true;
         if (typeof db.tavernSync.injectUserFloors !== 'boolean') db.tavernSync.injectUserFloors = true;
         return db.tavernSync;
     },
@@ -173,6 +163,8 @@ const TavernSync = {
 
         // 隐藏楼层级联：在【全部】楼层里找最后一条 is_system=true 的剧情时间 → 之前的 OVO 历史也要跟着藏
         // 注意要看完整 msgs（不是 validMsgs），因为 validMsgs 已经把 is_system 过掉了
+        // 【移植说明】yuan 版补丁没有移植“按截止时间隐藏小手机消息”的部分（它是 st 版“同步后消息发不到 AI”bug 的来源），
+        // 这里算出的 hiddenCutoffStoryTime 只是照旧存下来，目前没有任何地方使用。
         let hiddenCutoffStoryTime = null;
         for (let i = msgs.length - 1; i >= 0; i--) {
             const m = msgs[i];
@@ -633,6 +625,37 @@ ${transcript}`;
         return { pushed: 1, lineCount: lines.length - 1, message: injectMsg };
     },
 
+    // ========== 提示词注入 ==========
+
+    // 生成要塞进 AI 提示词的酒馆内容（世界书 + 已发生的剧情，按“世界书注入位置”设置排列）
+    // 由 tavern_hooks.js 插进 yuan 提示词的 <memoir> 区域。没有任何酒馆数据时返回空字符串。
+    // 内容与 st 版 chat_ai.js 的 generatePrivateSystemPrompt 里注入的部分一致。
+    buildPromptBlock(character) {
+        if (!character) return '';
+        const tsConfig = (db.tavernSync || {});
+        const wbPosition = tsConfig.worldBookPosition || 'before_chat';
+        const tavernWorldText = character.tavernWorldMemory?.content
+            ? `【世界设定】\n以下是该世界观的背景设定，你需要了解并遵循：\n${character.tavernWorldMemory.content}\n\n` : '';
+        // 已发生的剧情：优先 floors（受 injectUserFloors 过滤），fallback 到老的平铺 content
+        let tavernChatText = '';
+        if (character.tavernMemory && Array.isArray(character.tavernMemory.floors) && character.tavernMemory.floors.length > 0) {
+            const _floors = filterFloorsForInjection(character.tavernMemory.floors);
+            if (_floors.length > 0) {
+                const lines = _floors.map(f => {
+                    const meta = [f.storyTime, f.weekday, f.location, f.weather, f.mood].filter(Boolean).join(' · ');
+                    const who = f.role === 'user' ? (character.myName || '我') : (character.realName || character.name);
+                    const head = meta ? `[${meta} · ${who}]` : `[${who}]`;
+                    return `${head}\n${f.content}`;
+                });
+                tavernChatText = `【已发生的剧情（共 ${_floors.length} 条）】\n以下是你和${character.myName || '我'}一起经历过的场景，按时间顺序排列。你完整知晓这些记忆：\n\n${lines.join('\n\n')}\n\n`;
+            }
+        } else if (character.tavernMemory?.content) {
+            tavernChatText = `【已发生的剧情】\n以下是你完整知晓的过往经历，${character.myName || '我'}问起时可以自然回应：\n${character.tavernMemory.content}\n\n`;
+        }
+        const block = wbPosition === 'before_chat' ? tavernWorldText + tavernChatText : tavernChatText + tavernWorldText;
+        return block.trim();
+    },
+
     // ========== 自动同步 ==========
 
     // 查找角色对应的绑定
@@ -909,13 +932,6 @@ function setupTavernSyncScreen() {
                             <div style="font-size:11px; color:#888;">关闭后，从酒馆拉取的剧情记忆只保留 AI / 角色 楼层，跳过 user 楼层。节省 token，适合"我已经知道我说过啥"的场景</div>
                         </div>
                     </label>
-                    <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
-                        <input type="checkbox" id="ts-inject-journals" ${config.injectFavoritedJournals !== false ? 'checked' : ''}>
-                        <div>
-                            <div>注入收藏日记到 AI 上下文</div>
-                            <div style="font-size:11px; color:#888;">关闭后，已收藏的日记不再作为"共同回忆"喂给 AI，但日记页仍可正常阅读。适合主要靠酒馆楼层维护剧情记忆的玩法</div>
-                        </div>
-                    </label>
                 </div>
                 <div style="${TS.card} margin-top:12px;">
                     <span style="${TS.title}">自动同步</span>
@@ -976,7 +992,6 @@ function setupTavernSyncScreen() {
     mainEl.querySelector('#ts-wb-pos').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.worldBookPosition = e.target.value; await TavernSync.saveConfig(cfg); });
     mainEl.querySelector('#ts-push-status-bar').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.pushIncludeStatusBar = e.target.checked; await TavernSync.saveConfig(cfg); });
     mainEl.querySelector('#ts-inject-user-floors').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.injectUserFloors = e.target.checked; await TavernSync.saveConfig(cfg); });
-    mainEl.querySelector('#ts-inject-journals').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.injectFavoritedJournals = e.target.checked; await TavernSync.saveConfig(cfg); });
     mainEl.querySelector('#ts-auto-pull').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.autoPull = e.target.checked; await TavernSync.saveConfig(cfg); });
     mainEl.querySelector('#ts-auto-push').addEventListener('change', async (e) => {
         const cfg = TavernSync.getConfig(); cfg.autoPush = e.target.checked; await TavernSync.saveConfig(cfg);
@@ -1858,9 +1873,7 @@ function showPromptPreview(binding) {
 
     let sections = [];
 
-    const favJournals = (typeof window.getFavoritedJournalsForAi === 'function'
-        ? window.getFavoritedJournalsForAi(char)
-        : (char.memoryJournals || []).filter(j => j.isFavorited));
+    const favJournals = (char.memoryJournals || []).filter(j => j.isFavorited);
     if (favJournals.length) {
         sections.push({ title: '共同回忆', content: favJournals.map(j => `标题：${j.title}\n内容：${j.content}`).join('\n---\n'), color: '#4CAF50' });
     }

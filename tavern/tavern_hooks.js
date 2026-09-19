@@ -116,7 +116,37 @@
         };
     }
 
-    // ========== 4. 让“酒馆互联”的设置能保存 ==========
+    // ========== 4. 把酒馆剧情塞进发给 AI 的提示词 ==========
+    // yuan 用 generatePrivateSystemPrompt(角色) 生成私聊的系统提示词（普通模式、自定义模板、分层提示词、剧情节点都走它）。
+    // 在它外面套一层：yuan 生成完之后，把酒馆内容插进去：
+    //   - 有 </memoir>（共同回忆区）→ 插在它前面，和 st 版位置一致
+    //   - 没有（比如没收藏任何日记时，yuan 不输出回忆区）→ 自己包一个 <memoir> 放在 <logic_rules> 前面
+    //   - 连 <logic_rules> 都没有（用户自定义模板）→ 放在最后
+    function insertTavernBlock(prompt, block) {
+        const memoirEnd = prompt.indexOf('</memoir>');
+        if (memoirEnd !== -1) return prompt.slice(0, memoirEnd) + '\n' + block + '\n' + prompt.slice(memoirEnd);
+        const wrapped = `<memoir>\n${block}\n</memoir>\n\n`;
+        const logicStart = prompt.indexOf('<logic_rules>');
+        if (logicStart !== -1) return prompt.slice(0, logicStart) + wrapped + prompt.slice(logicStart);
+        return prompt + '\n\n' + wrapped;
+    }
+
+    function hookSystemPrompt() {
+        if (typeof window.generatePrivateSystemPrompt !== 'function') {
+            return fail('找不到 yuan 的提示词函数 generatePrivateSystemPrompt，AI 将看不到酒馆剧情');
+        }
+        const originalGenerate = window.generatePrivateSystemPrompt;
+        window.generatePrivateSystemPrompt = function (character) {
+            const prompt = originalGenerate.apply(this, arguments);
+            if (typeof prompt !== 'string' || !window.TavernSync) return prompt;
+            let block = '';
+            try { block = window.TavernSync.buildPromptBlock(character); }
+            catch (e) { console.error(`${TAG} 生成酒馆提示词失败：`, e); }
+            return block ? insertTavernBlock(prompt, block) : prompt;
+        };
+    }
+
+    // ========== 5. 让“酒馆互联”的设置能保存 ==========
     // yuan 只保存 globalSettingKeys 名单里的设置项，把 tavernSync 加进名单。
     // 名单在 yuan 后面的脚本里才定义，所以等页面脚本全部加载完（DOMContentLoaded）再加；
     // 这个监听比 main.js 的注册得早，所以会赶在 yuan 读取数据（loadData）之前执行。
@@ -133,5 +163,6 @@
     document.addEventListener('DOMContentLoaded', () => {
         registerSettingKey();
         hookShowPanel();
+        hookSystemPrompt();
     });
 })();
