@@ -146,7 +146,63 @@
         };
     }
 
-    // ========== 5. 让“酒馆互联”的设置能保存 ==========
+    // ========== 5. AI 回复后自动推送到酒馆 ==========
+    // yuan 的 getAiReply(聊天ID, 聊天类型, ...) 负责一轮 AI 回复，成功结束时返回 true。
+    // 在它外面套一层：私聊回复成功后，按“自动推送”设置把新消息推到酒馆（设置没开就什么也不做）。
+    function hookAiReply() {
+        if (typeof window.getAiReply !== 'function') {
+            return fail('找不到 yuan 的回复函数 getAiReply，“AI 回复后自动推送”将不起作用');
+        }
+        const originalGetAiReply = window.getAiReply;
+        window.getAiReply = async function (chatId, chatType) {
+            const result = await originalGetAiReply.apply(this, arguments);
+            if (result === true && chatType === 'private' && window.TavernSync) {
+                window.TavernSync.autoPushIfNeeded(chatId).catch(e => console.warn(`${TAG} 自动推送失败：`, e));
+            }
+            return result;
+        };
+    }
+
+    // ========== 6. 打开聊天时自动拉取、删消息时同步删酒馆 ==========
+    // yuan 打开聊天、删消息的写法有很多处（单删、多选删、按范围删、重新生成、清空……），
+    // 一处处挂钩子容易在 yuan 更新后断掉。所以改成每 1.5 秒看一眼当前打开的聊天：
+    //   - 换到了另一个私聊 → 按“自动拉取”设置从酒馆拉取记忆
+    //   - 当前私聊里有消息消失了 → 按“自动推送”设置，把删除同步到酒馆（稍等 1.5 秒，把连续删除合并成一次）
+    // 只在内存里对比消息编号，不联网；只有真的发现变化才会去连酒馆。
+    function startChatWatcher() {
+        let lastChatId = null;
+        let knownIds = null;
+        let deletionTimer = null;
+        setInterval(() => {
+            const TS = window.TavernSync;
+            if (!TS || typeof db === 'undefined' || !Array.isArray(db.characters)) return;
+            const chatId = (typeof currentChatType !== 'undefined' && currentChatType === 'private'
+                && typeof currentChatId !== 'undefined') ? currentChatId : null;
+
+            if (chatId !== lastChatId) {
+                lastChatId = chatId;
+                knownIds = null;
+                if (chatId) TS.autoPullIfNeeded(chatId).catch(() => {});
+            }
+            if (!chatId || !TS.findBindingForChar(chatId)) { knownIds = null; return; }
+
+            const char = db.characters.find(c => c.id === chatId);
+            if (!char || !Array.isArray(char.history)) return;
+            const ids = new Set(char.history.map(m => m.id));
+            if (knownIds) {
+                for (const id of knownIds) {
+                    if (!ids.has(id)) {
+                        clearTimeout(deletionTimer);
+                        deletionTimer = setTimeout(() => TS.autoDeletionSyncIfNeeded(chatId).catch(() => {}), 1500);
+                        break;
+                    }
+                }
+            }
+            knownIds = ids;
+        }, 1500);
+    }
+
+    // ========== 7. 让“酒馆互联”的设置能保存 ==========
     // yuan 只保存 globalSettingKeys 名单里的设置项，把 tavernSync 加进名单。
     // 名单在 yuan 后面的脚本里才定义，所以等页面脚本全部加载完（DOMContentLoaded）再加；
     // 这个监听比 main.js 的注册得早，所以会赶在 yuan 读取数据（loadData）之前执行。
@@ -164,5 +220,7 @@
         registerSettingKey();
         hookShowPanel();
         hookSystemPrompt();
+        hookAiReply();
+        startChatWatcher();
     });
 })();

@@ -2003,6 +2003,20 @@ async function showBindingEditor(onSave) {
     });
 }
 
+// 写酒馆的操作排队执行（yuan 版新增）：
+// 推送、删除同步、小总结、通话记录都是“读取酒馆聊天 → 修改 → 整个存回去”。
+// 两个操作同时进行时，后存的会把先存的改动覆盖掉。自动推送和删除同步可能同时触发，所以让它们一个接一个来。
+TavernSync._writeQueue = Promise.resolve();
+['pushToTavern', 'pushSummaryToTavern', 'pushCallRecordToTavern'].forEach(name => {
+    const original = TavernSync[name];
+    TavernSync[name] = function (...args) {
+        const run = () => original.apply(TavernSync, args);
+        const result = TavernSync._writeQueue.then(run, run);
+        TavernSync._writeQueue = result.catch(() => {});
+        return result;
+    };
+});
+
 window.setupTavernSyncScreen = setupTavernSyncScreen;
 window.TavernSync = TavernSync;
 window.showAutoPushModal = showAutoPushModal;
