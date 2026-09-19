@@ -1,0 +1,174 @@
+function renderSyncGroupList(character) {
+    const syncGroupListContainer = document.getElementById('setting-sync-group-list');
+    if (!syncGroupListContainer) {
+        console.warn('setting-sync-group-list container not found');
+        return;
+    }
+    
+    // 如果角色不存在，清空并隐藏
+    if (!character) {
+        syncGroupListContainer.innerHTML = '';
+        syncGroupListContainer.style.display = 'none';
+        return;
+    }
+    
+    // 如果开关未打开，清空内容但保持容器存在（显示状态由调用者控制）
+    if (!character.syncGroupMemory) {
+        syncGroupListContainer.innerHTML = '';
+        return;
+    }
+    
+    // 确保容器显示
+    syncGroupListContainer.style.display = 'block';
+    syncGroupListContainer.innerHTML = '';
+    
+    // 获取角色所在的所有群聊
+    const groupsWithCharacter = db.groups.filter(group => 
+        group.members && group.members.some(member => member.originalCharId === character.id)
+    );
+    
+    if (groupsWithCharacter.length === 0) {
+        syncGroupListContainer.innerHTML = '<div style="padding: 10px; color: #999; font-size: 12px;">该角色未加入任何群聊</div>';
+    } else {
+        // 添加标题
+        const title = document.createElement('div');
+        title.style.fontSize = '13px';
+        title.style.color = '#666';
+        title.style.marginBottom = '10px';
+        title.style.fontWeight = '500';
+        title.textContent = '选择要互通的群聊：';
+        syncGroupListContainer.appendChild(title);
+        
+        const syncGroupIds = character.syncGroupIds || [];
+        groupsWithCharacter.forEach(group => {
+            const checkbox = document.createElement('label');
+            checkbox.style.display = 'flex';
+            checkbox.style.alignItems = 'center';
+            checkbox.style.padding = '8px 0';
+            checkbox.style.cursor = 'pointer';
+            checkbox.style.userSelect = 'none';
+            
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.value = group.id;
+            input.checked = syncGroupIds.includes(group.id);
+            input.style.marginRight = '10px';
+            input.style.width = '18px';
+            input.style.height = '18px';
+            input.style.cursor = 'pointer';
+            
+            const label = document.createElement('span');
+            label.textContent = group.name || '未命名群聊';
+            label.style.fontSize = '14px';
+            label.style.color = '#333';
+            label.style.flex = '1';
+            
+            checkbox.appendChild(input);
+            checkbox.appendChild(label);
+            syncGroupListContainer.appendChild(checkbox);
+        });
+    }
+}
+
+/**
+ * 渲染小剧场世界书分类下拉（与创建剧场页面风格一致）
+ * @param {string[]} selectedIds - 已选中的世界书ID数组
+ */
+function _populateCharTheaterWbDropdown(selectedIds) {
+    const wbOptions = document.getElementById('setting-char-theater-wb-options');
+    const wbDisplay = document.getElementById('setting-char-theater-wb-display');
+    const wbDropdown = document.getElementById('setting-char-theater-wb-dropdown');
+    if (!wbOptions || !wbDisplay) return;
+
+    // 绑定展开/收起
+    if (wbDropdown && !wbDisplay._charTheaterWbBound) {
+        wbDisplay._charTheaterWbBound = true;
+        wbDisplay.addEventListener('click', (e) => {
+            e.stopPropagation();
+            wbDropdown.style.display = wbDropdown.style.display === 'block' ? 'none' : 'block';
+        });
+        document.addEventListener('click', (e) => {
+            if (!wbDropdown.contains(e.target) && e.target !== wbDisplay) {
+                wbDropdown.style.display = 'none';
+            }
+        });
+    }
+
+    wbOptions.innerHTML = '';
+    const allBooks = db.worldBooks || [];
+    const selectedSet = new Set(selectedIds);
+
+    if (allBooks.length === 0) {
+        wbOptions.innerHTML = '<div style="padding:10px;font-size:12px;color:#999;">暂无世界书</div>';
+        _updateCharTheaterWbDisplay(wbDisplay, wbOptions);
+        return;
+    }
+
+    // 按分类分组
+    const grouped = allBooks.reduce((acc, book) => {
+        const cat = (book.category && book.category.trim()) || '未分类';
+        if (!acc[cat]) acc[cat] = [];
+        acc[cat].push(book);
+        return acc;
+    }, {});
+
+    const sortedCats = Object.keys(grouped).sort((a, b) => {
+        if (a === '未分类') return -1;
+        if (b === '未分类') return 1;
+        return a.localeCompare(b, 'zh-Hans');
+    });
+
+    sortedCats.forEach(cat => {
+        const group = document.createElement('div');
+        group.className = 'theater-multiselect-group';
+
+        const header = document.createElement('div');
+        header.className = 'theater-multiselect-group-header';
+        header.innerHTML = `<span class="theater-multiselect-group-title">${cat}</span><span class="theater-multiselect-group-arrow">⌃</span>`;
+
+        const body = document.createElement('div');
+        body.className = 'theater-multiselect-group-body';
+
+        grouped[cat].forEach(book => {
+            const option = document.createElement('div');
+            option.className = 'theater-multiselect-option' + (selectedSet.has(book.id) ? ' selected' : '');
+            option.dataset.id = book.id;
+            option.innerHTML = `<div class="theater-multiselect-checkbox">✓</div><div class="theater-multiselect-label">${book.name || book.title || '未命名世界书'}</div>`;
+            option.addEventListener('click', () => {
+                option.classList.toggle('selected');
+                _updateCharTheaterWbDisplay(wbDisplay, wbOptions);
+            });
+            body.appendChild(option);
+        });
+
+        if (cat !== '未分类') group.classList.add('collapsed');
+        header.addEventListener('click', (e) => { e.stopPropagation(); group.classList.toggle('collapsed'); });
+
+        group.appendChild(header);
+        group.appendChild(body);
+        wbOptions.appendChild(group);
+    });
+
+    _updateCharTheaterWbDisplay(wbDisplay, wbOptions);
+}
+
+function _updateCharTheaterWbDisplay(displayEl, optionsEl) {
+    if (!displayEl || !optionsEl) return;
+    const placeholder = displayEl.querySelector('.theater-multiselect-placeholder');
+    if (!placeholder) return;
+    const selected = optionsEl.querySelectorAll('.theater-multiselect-option.selected');
+    if (selected.length === 0) {
+        placeholder.textContent = '请选择世界书（可选）';
+        displayEl.classList.remove('has-selection');
+    } else {
+        const names = Array.from(selected).map(o => {
+            const lbl = o.querySelector('.theater-multiselect-label');
+            return lbl ? lbl.textContent : '';
+        }).filter(Boolean);
+        placeholder.textContent = names.length > 2
+            ? `已选 ${selected.length} 项：${names.slice(0, 2).join('、')}...`
+            : `已选 ${selected.length} 项：${names.join('、')}`;
+        displayEl.classList.add('has-selection');
+    }
+}
+

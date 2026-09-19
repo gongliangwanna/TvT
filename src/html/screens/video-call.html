@@ -1,0 +1,397 @@
+        <!-- Video Call Screens & Modals -->
+
+        <!-- SCENE 1: 加载/连线界面 -->
+        <div id="vc-scene-loading" class="vc-scene vc-hidden">
+            <div class="vc-loading-top-bar">
+                <button type="button" class="vc-loading-minimize-btn" id="vc-loading-minimize-btn" title="最小化">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-1 9h-6c-.55 0-1-.45-1-1V5h7v7z"/></svg>
+                </button>
+            </div>
+            <div class="vc-center-wrapper">
+                <div class="vc-connection-wrapper">
+                    <!-- AI -->
+                    <div class="vc-avatar-box">
+                        <div class="vc-avatar ai" id="vc-loading-char-avatar"></div>
+                        <div class="vc-avatar-label" id="vc-loading-char-name" style="color:var(--vc-ai-color)">AI</div>
+                    </div>
+
+                    <!-- 信号桥 -->
+                    <div class="vc-signal-bridge">
+                        <svg class="vc-ekg-svg" viewBox="0 0 100 40" preserveAspectRatio="none">
+                            <defs>
+                                <linearGradient id="vcSignalGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                    <stop offset="0%" style="stop-color:var(--vc-ai-color); stop-opacity:1" />
+                                    <stop offset="100%" style="stop-color:var(--vc-user-color); stop-opacity:1" />
+                                </linearGradient>
+                            </defs>
+                            <path class="vc-ekg-line"
+                                d="M0,20 L10,20 L15,5 L20,35 L25,20 L40,20 L45,10 L50,30 L55,20 L75,20 L80,5 L85,35 L90,20 L100,20" />
+                            <path class="vc-ekg-line ghost"
+                                d="M0,20 L10,20 L15,8 L20,32 L25,20 L40,20 L45,12 L50,28 L55,20 L75,20 L80,8 L85,32 L90,20 L100,20" />
+                        </svg>
+                    </div>
+
+                    <!-- User -->
+                    <div class="vc-avatar-box">
+                        <div class="vc-avatar user" id="vc-loading-user-avatar"></div>
+                        <div class="vc-avatar-label" style="color:var(--vc-user-color)">YOU</div>
+                    </div>
+                </div>
+
+                <!-- 状态文字区 -->
+                <div class="vc-status-display">
+                    <div class="vc-status-text" id="vc-status-main">正在建立通话专线...</div>
+                    <div class="vc-sub-status" id="vc-status-sub">HANDSHAKE_INIT</div>
+                </div>
+            </div>
+
+            <!-- 底部：按钮放在外面，保持在屏幕底部 -->
+            <div class="vc-loading-footer">
+                <div class="vc-c-btn vc-btn-hangup" id="vc-loading-hangup-btn">
+                    <div class="vc-c-icon-box">
+                        <div class="vc-icon-hangup"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SCENE 2: 通话界面 -->
+        <div id="vc-scene-call" class="vc-scene vc-hidden">
+            <!-- NovelAI 生成的角色画面（全屏背景） -->
+            <div id="vc-nai-bg" class="vc-nai-bg" style="display:none;">
+                <img id="vc-nai-bg-img" src="" alt="">
+                <div class="vc-nai-bg-loading" id="vc-nai-bg-loading" style="display:none;">
+                    <div class="vc-nai-spinner"></div>
+                </div>
+            </div>
+            <!-- 保存图片按钮（独立于背景层，确保可点击） -->
+            <button id="vc-nai-save-btn" class="vc-nai-save-btn" style="display:none;" title="保存图片">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                    <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                </svg>
+            </button>
+            <!-- 用户真实摄像头画中画 -->
+            <div id="vc-user-camera-pip" class="vc-user-camera-pip" style="display:none;">
+                <video id="vc-user-camera-video" autoplay playsinline muted></video>
+                <div class="vc-pip-flip-hint">点击翻转</div>
+            </div>
+            <canvas id="vc-camera-capture-canvas" style="display:none;"></canvas>
+            <div class="vc-call-header">
+                <div class="vc-contact-info">
+                    <div class="name" id="vc-call-name">Unknown</div>
+                    <div class="time" id="vc-call-timer">00:00:00</div>
+                </div>
+                <div class="vc-header-avatar" id="vc-call-avatar">
+                    <div class="vc-online-dot"></div>
+                </div>
+            </div>
+
+            <div class="vc-chat-area" id="vc-chat-container">
+                <!-- 自动插入的第一条消息 -->
+            </div>
+
+            <!-- 收起/展开聊天内容按钮 -->
+            <button id="vc-chat-toggle-btn" class="vc-chat-toggle-btn" title="收起聊天">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" class="vc-toggle-icon-down">
+                    <path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
+                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" class="vc-toggle-icon-up" style="display:none;">
+                    <path fill-rule="evenodd" d="M7.646 4.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1-.708.708L8 5.707l-5.646 5.647a.5.5 0 0 1-.708-.708l6-6z"/>
+                </svg>
+            </button>
+
+            <div class="vc-controls-wrapper">
+                <div class="vc-controls">
+                    <div class="vc-c-btn" id="vc-camera-toggle-btn">
+                        <div class="vc-c-icon-box">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor"
+                                class="bi bi-camera-video" viewBox="0 0 16 16">
+                                <path fill-rule="evenodd"
+                                    d="M0 5a2 2 0 0 1 2-2h7.5a2 2 0 0 1 1.983 1.738l3.11-1.382A1 1 0 0 1 16 4.269v7.462a1 1 0 0 1-1.406.913l-3.111-1.382A2 2 0 0 1 9.5 13H2a2 2 0 0 1-2-2V5zm11.5 5.175 3.5 1.556V4.269l-3.5 1.556v4.35zM2 4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1H2z" />
+                            </svg>
+                        </div>
+                        <span class="vc-c-label">Camera</span>
+                    </div>
+                    <div class="vc-c-btn" id="vc-action-voice-btn">
+                        <div class="vc-c-icon-box">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor"
+                                class="bi bi-mic" viewBox="0 0 16 16">
+                                <path
+                                    d="M3.5 6.5A.5.5 0 0 1 4 7v1a4 4 0 0 0 8 0V7a.5.5 0 0 1 1 0v1a5 5 0 0 1-4.5 4.975V15h3a.5.5 0 0 1 0 1h-7a.5.5 0 0 1 0-1h3v-2.025A5 5 0 0 1 3 8V7a.5.5 0 0 1 .5-.5z" />
+                                <path
+                                    d="M10 8a2 2 0 1 1-4 0V3a2 2 0 1 1 4 0v5zM8 0a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V3a3 3 0 0 0-3-3z" />
+                            </svg>
+                        </div>
+                        <span class="vc-c-label">Speak</span>
+                    </div>
+                    <div class="vc-c-btn vc-btn-hangup" id="vc-call-hangup-btn">
+                        <div class="vc-c-icon-box">
+                            <div class="vc-icon-hangup"></div>
+                        </div>
+                        <span class="vc-c-label">End</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 通话输入框覆盖层 -->
+            <div id="vc-input-overlay" class="vc-input-overlay" style="display: none;">
+                <div class="vc-input-box">
+                    <input type="text" id="vc-input-text" placeholder="输入你想说的话..." autocomplete="off">
+                    <button id="vc-input-help-btn" title="使用说明">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                            <path
+                                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Call Type Selection Modal -->
+        <div id="vc-type-modal" class="vc-type-modal">
+            <div class="vc-type-sheet">
+                <div class="vc-type-header">
+                    <span class="vc-type-title">发起通话</span>
+                    <button class="vc-type-close" id="vc-type-close-btn">×</button>
+                </div>
+
+                <button class="vc-type-btn video" id="vc-start-video-btn">
+                    <div class="vc-type-icon">📹</div>
+                    <div class="vc-type-info">
+                        <span class="vc-type-label">视频通话</span>
+                        <span class="vc-type-desc">沉浸式视觉体验</span>
+                    </div>
+                </button>
+
+                <button class="vc-type-btn voice" id="vc-start-voice-btn">
+                    <div class="vc-type-icon">📞</div>
+                    <div class="vc-type-info">
+                        <span class="vc-type-label">语音通话</span>
+                        <span class="vc-type-desc">仅声音交流</span>
+                    </div>
+                </button>
+
+                <button class="vc-type-btn history" id="vc-history-btn">
+                    <div class="vc-type-icon">📜</div>
+                    <div class="vc-type-info">
+                        <span class="vc-type-label">通话记录</span>
+                        <span class="vc-type-desc">查看过往记录</span>
+                    </div>
+                </button>
+            </div>
+        </div>
+
+        <!-- Call History Modal -->
+        <div id="vc-history-modal" class="vc-type-modal">
+            <div class="vc-type-sheet" style="height: 70vh;">
+                <div class="vc-type-header">
+                    <span class="vc-type-title">通话记录</span>
+                    <button class="vc-type-close" id="vc-history-close-btn">×</button>
+                </div>
+                <div id="vc-history-list" class="vc-history-list">
+                    <!-- JS populated -->
+                    <div class="vc-history-empty">暂无通话记录</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Call Detail Modal -->
+        <div id="vc-detail-modal" class="vc-type-modal">
+            <div class="vc-type-sheet" style="height: 80vh;">
+                <div class="vc-type-header">
+                    <button class="vc-type-close" id="vc-detail-back-btn" style="font-size: 18px;">‹ 返回</button>
+                    <span class="vc-type-title">通话详情</span>
+                    <button class="vc-type-close" id="vc-detail-close-btn">×</button>
+                </div>
+                <div id="vc-detail-content" class="vc-detail-content">
+                    <!-- JS populated -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Incoming Call Notification (iOS Style) -->
+        <div id="vc-incoming-modal" class="vc-incoming-overlay">
+            <div class="vc-incoming-banner">
+                <div class="vc-incoming-content">
+                    <div class="vc-incoming-avatar" id="vc-incoming-avatar"></div>
+                    <div class="vc-incoming-info">
+                        <div class="vc-incoming-name" id="vc-incoming-name">Unknown</div>
+                        <div class="vc-incoming-type" id="vc-incoming-type">视频通话邀请...</div>
+                    </div>
+                </div>
+                <div class="vc-incoming-actions">
+                    <button class="vc-incoming-btn reject" id="vc-incoming-reject-btn">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                            <path
+                                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z" />
+                        </svg>
+                    </button>
+                    <button class="vc-incoming-btn accept" id="vc-incoming-accept-btn">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Floating Window (Mini Mode) -->
+        <div id="vc-floating-window" class="vc-floating-window" style="display: none;">
+            <div class="vc-float-avatar" id="vc-float-avatar"></div>
+            <div class="vc-float-status" id="vc-float-status">正在连线...</div>
+            <div class="vc-float-timer" id="vc-float-timer">00:00</div>
+        </div>
+
+        <!-- New Peek Wallpaper Modal -->
+        <div id="peek-wallpaper-modal" class="modal-overlay">
+            <div class="modal-window" style="max-height: 80vh; overflow-y: auto;">
+                <h3>“偷看”页面自定义</h3>
+                <div class="collapsible-section open">
+                    <div class="collapsible-header">
+                        <h4>页面壁纸</h4>
+                        <span class="collapsible-arrow">▼</span>
+                    </div>
+                    <div class="collapsible-content">
+                        <form id="peek-wallpaper-form">
+                            <div class="form-group">
+                                <label for="peek-wallpaper-url-input">壁纸URL</label>
+                                <input type="url" id="peek-wallpaper-url-input" class="form-group"
+                                    placeholder="粘贴图片URL">
+                            </div>
+                            <p style="text-align:center; color:#888; margin: -10px 0 15px;">或</p>
+                            <input type="file" id="peek-wallpaper-upload" accept="image/*" style="display: none;">
+                            <label for="peek-wallpaper-upload" class="btn btn-secondary">从本地上传</label>
+                        </form>
+                    </div>
+                </div>
+                <div class="collapsible-section">
+                    <div class="collapsible-header">
+                        <h4>应用图标</h4>
+                        <span class="collapsible-arrow">▼</span>
+                    </div>
+                    <div class="collapsible-content" id="peek-app-icons-settings">
+                        <!-- App icon settings will be rendered here by JS -->
+                    </div>
+                </div>
+                <div class="collapsible-section">
+                    <div class="collapsible-header">
+                        <h4>微博(Unlock)小号</h4>
+                        <span class="collapsible-arrow">▼</span>
+                    </div>
+                    <div class="collapsible-content">
+                        <div class="form-group">
+                            <label for="peek-unlock-avatar-url">头像URL</label>
+                            <input type="url" id="peek-unlock-avatar-url" class="form-group" placeholder="粘贴图片URL">
+                            <p style="text-align:center; color:#888; margin: 8px 0 8px;">或</p>
+                            <input type="file" id="peek-unlock-avatar-upload" class="peek-unlock-avatar-file-upload" accept="image/*" style="display:none;">
+                            <label for="peek-unlock-avatar-upload" class="btn btn-secondary" style="width:100%; margin-bottom: 10px;">从本地上传</label>
+                            <button type="button" class="btn btn-neutral peek-unlock-avatar-reset-btn" style="width:100%;">重置为默认头像</button>
+                        </div>
+                        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="checkbox" id="peek-unlock-comments-enabled" style="width: auto;">
+                            <label for="peek-unlock-comments-enabled" style="margin: 0;">查手机时自动生成小号帖子下的评论</label>
+                        </div>
+                        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="checkbox" id="peek-char-aware-peek-enabled" style="width: auto;">
+                            <label for="peek-char-aware-peek-enabled" style="margin: 0;">角色知晓用户窥屏</label>
+                        </div>
+                        <p style="font-size: 12px; color: #888; margin: 4px 0 0 0;">开启后，角色会知道你偷看了他的手机</p>
+                        <div class="form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 14px;">
+                            <input type="checkbox" id="peek-impersonate-enabled" style="width: auto;">
+                            <label for="peek-impersonate-enabled" style="margin: 0;">代发消息（冒充角色用TA手机发消息）</label>
+                        </div>
+                        <p style="font-size: 12px; color: #888; margin: 4px 0 0 0;">开启后，消息中的联系人会有基础人设，你可以在对话里冒充角色发消息并让对方回复</p>
+                    </div>
+                </div>
+                <div class="collapsible-section">
+                    <div class="collapsible-header">
+                        <h4>刷新条数</h4>
+                        <span class="collapsible-arrow">▼</span>
+                    </div>
+                    <div class="collapsible-content">
+                        <p style="color: #888; font-size: 13px; margin-bottom: 12px;">设置每个应用每次刷新时生成几条到几条内容（仅影响下次刷新）。</p>
+                        <div class="form-group">
+                            <label>聊天（对话个数）</label>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <input type="number" id="peek-refresh-min-messages" min="1" max="20" placeholder="最少" style="width: 80px;">
+                                <span>到</span>
+                                <input type="number" id="peek-refresh-max-messages" min="1" max="20" placeholder="最多" style="width: 80px;">
+                                <span style="color:#888;">条</span>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>时光想说（条数）</label>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <input type="number" id="peek-refresh-min-timeThoughts" min="1" max="15" placeholder="最少" style="width: 80px;">
+                                <span>到</span>
+                                <input type="number" id="peek-refresh-max-timeThoughts" min="1" max="15" placeholder="最多" style="width: 80px;">
+                                <span style="color:#888;">条</span>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>备忘录（条数）</label>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <input type="number" id="peek-refresh-min-memos" min="1" max="15" placeholder="最少" style="width: 80px;">
+                                <span>到</span>
+                                <input type="number" id="peek-refresh-max-memos" min="1" max="15" placeholder="最多" style="width: 80px;">
+                                <span style="color:#888;">条</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="collapsible-section">
+                    <div class="collapsible-header">
+                        <h4>浏览器详情</h4>
+                        <span class="collapsible-arrow">▼</span>
+                    </div>
+                    <div class="collapsible-content">
+                        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="checkbox" id="peek-browser-detail-enabled" style="width: auto;">
+                            <label for="peek-browser-detail-enabled" style="margin: 0;">刷新时自动生成浏览器帖子详情</label>
+                        </div>
+                        <p style="font-size: 12px; color: #888; margin: 4px 0 12px 0;">开启后，每条浏览记录会附带帖子正文，可点击查看详情。会消耗更多 token。</p>
+                        <div class="form-group">
+                            <label>每条详情字数范围</label>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <input type="number" id="peek-browser-detail-min-words" min="50" max="2000" placeholder="最少" style="width: 80px;">
+                                <span>到</span>
+                                <input type="number" id="peek-browser-detail-max-words" min="50" max="2000" placeholder="最多" style="width: 80px;">
+                                <span style="color:#888;">字</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="collapsible-section">
+                    <div class="collapsible-header">
+                        <h4>批量操作</h4>
+                        <span class="collapsible-arrow">▼</span>
+                    </div>
+                    <div class="collapsible-content">
+                        <p style="color: #888; font-size: 14px; margin-bottom: 15px;">
+                            一次性刷新所有应用的内容。注意：这将消耗多次 API 调用，请留意您的 API 额度。
+                        </p>
+                        <button id="refresh-all-peek-apps-btn" class="btn btn-secondary" style="width: 100%; margin-bottom: 10px;">全部刷新</button>
+                        <button id="manage-peek-data-btn" class="btn btn-neutral" style="width: 100%;">管理已刷新数据</button>
+                    </div>
+                </div>
+                <button id="save-peek-settings-btn" class="btn btn-primary" style="margin-top: 20px;">保存所有更改</button>
+            </div>
+        </div>
+        <!-- Peek Data Management Modal -->
+        <div id="peek-data-management-modal" class="modal-overlay" style="z-index: 10002;">
+            <div class="modal-window" style="max-width: 400px;">
+                <h3>管理偷看数据</h3>
+                <p style="color: #888; font-size: 13px; margin-bottom: 15px;">
+                    删除已刷新的应用数据，下次点击应用时将重新生成。
+                </p>
+                <div id="peek-data-list" style="max-height: 300px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; padding: 10px; margin-bottom: 15px; background: #fafafa;">
+                    <!-- 动态生成的应用列表 -->
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button id="delete-selected-peek-data-btn" class="btn btn-primary" style="flex: 1;">删除选中</button>
+                    <button id="delete-all-peek-data-btn" class="btn btn-danger" style="flex: 1;">全部删除</button>
+                </div>
+                <button id="close-peek-data-management-btn" class="btn btn-neutral" style="width: 100%; margin-top: 10px;">取消</button>
+            </div>
+        </div>

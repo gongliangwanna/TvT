@@ -1,0 +1,1023 @@
+function loadSettingsToSidebar() {
+    const e = db.characters.find(e => e.id === currentChatId);
+    if (e) {
+        const avatarPreviewEl = document.getElementById('setting-char-avatar-preview');
+        if (avatarPreviewEl) {
+            avatarPreviewEl.src = e.avatar;
+        }
+        const nameDisplay = document.getElementById('setting-char-name-display');
+        if(nameDisplay) nameDisplay.textContent = e.remarkName;
+        const realNameEl = document.getElementById('setting-char-real-name');
+        if (realNameEl) realNameEl.value = e.realName || '';
+        
+        const birthdayEl = document.getElementById('setting-char-birthday');
+        if (birthdayEl) birthdayEl.value = e.birthday || '';
+        
+        const enableDynamicAgeEl = document.getElementById('setting-char-enable-dynamic-age');
+        if (enableDynamicAgeEl) enableDynamicAgeEl.checked = e.enableDynamicAge || false;
+        
+        document.getElementById('setting-char-remark').value = e.remarkName;
+        
+        const timezoneEl = document.getElementById('setting-char-timezone');
+        const timezonePresetEl = document.getElementById('setting-char-timezone-preset');
+        if (timezoneEl) timezoneEl.value = e.charTimezone || '';
+        if (timezonePresetEl) {
+            timezonePresetEl.value = '';
+            timezonePresetEl.onchange = function() {
+                if (this.value && timezoneEl) timezoneEl.value = this.value;
+            };
+        }
+        
+        const enableDynamicTimezoneEl = document.getElementById('setting-char-enable-dynamic-timezone');
+        if (enableDynamicTimezoneEl) enableDynamicTimezoneEl.checked = e.enableDynamicTimezone || false;
+
+        const customPromptPresetEl = document.getElementById('setting-char-custom-prompt-preset');
+        if (customPromptPresetEl) {
+            customPromptPresetEl.innerHTML = '<option value="">跟随全局设置</option>';
+            if (db.magicRoom && db.magicRoom.presets) {
+                db.magicRoom.presets.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id || p.name;
+                    opt.textContent = p.name;
+                    customPromptPresetEl.appendChild(opt);
+                });
+            }
+            const presetRef = e.customPromptPresetId || e.customPromptPreset || '';
+            const matchedPreset = (db.magicRoom && db.magicRoom.presets || []).find(p => p.id === presetRef || p.name === presetRef);
+            customPromptPresetEl.value = matchedPreset ? (matchedPreset.id || matchedPreset.name) : '';
+        }
+        
+        document.getElementById('setting-char-persona').value = e.persona;
+        
+        if (e.source === 'forum' && db.forumUserProfile) {
+            const fp = db.forumUserProfile;
+            const defaultAvatar = (fp.avatar && fp.avatar.trim()) ? fp.avatar : 'https://i.postimg.cc/GtbTnxhP/o-o-1.jpg';
+            document.getElementById('setting-my-avatar-preview').src = (e.myAvatar && e.myAvatar.trim()) ? e.myAvatar : defaultAvatar;
+            document.getElementById('setting-my-name').value = (e.myName && String(e.myName).trim()) ? e.myName : (fp.username || '用户');
+            document.getElementById('setting-my-persona').value = (e.myPersona && String(e.myPersona).trim()) ? e.myPersona : (fp.bio || '');
+        }
+        
+        const forumSupplementContainer = document.getElementById('setting-forum-supplement-container');
+        if (forumSupplementContainer) {
+            if (e.source === 'forum' || e.source === 'peek') {
+                forumSupplementContainer.style.display = 'block';
+                const supplementCb = document.getElementById('setting-forum-supplement-persona-enabled');
+                const supplementAiCb = document.getElementById('setting-forum-supplement-persona-ai-enabled');
+                const supplementTextEl = document.getElementById('setting-forum-supplement-persona-text');
+                var manualOn = !!e.supplementPersonaEnabled;
+                var aiOn = !!e.supplementPersonaAiEnabled;
+                if (manualOn && aiOn) {
+                    aiOn = false;
+                    e.supplementPersonaAiEnabled = false;
+                }
+                if (supplementCb) supplementCb.checked = manualOn;
+                if (supplementAiCb) supplementAiCb.checked = aiOn;
+                if (supplementTextEl) {
+                    supplementTextEl.value = e.supplementPersonaText || '';
+                    supplementTextEl.style.display = (manualOn || aiOn) ? 'block' : 'none';
+                }
+                function updateSupplementTextareaVisibility() {
+                    if (supplementTextEl) supplementTextEl.style.display = (supplementCb && supplementCb.checked) || (supplementAiCb && supplementAiCb.checked) ? 'block' : 'none';
+                }
+                if (supplementCb) supplementCb.onchange = function() {
+                    if (supplementCb.checked && supplementAiCb) { supplementAiCb.checked = false; }
+                    updateSupplementTextareaVisibility();
+                };
+                if (supplementAiCb) supplementAiCb.onchange = function() {
+                    if (supplementAiCb.checked && supplementCb) { supplementCb.checked = false; }
+                    updateSupplementTextareaVisibility();
+                };
+            } else {
+                forumSupplementContainer.style.display = 'none';
+            }
+        }
+        
+        const stickerGroupsContainer = document.getElementById('setting-char-sticker-groups-container');
+        stickerGroupsContainer.innerHTML = '';
+        
+        const allGroups = [...new Set(db.myStickers.map(s => s.group || '未分类'))].filter(g => g);
+        const charGroups = (e.stickerGroups || '').split(/[,，]/).map(s => s.trim());
+
+        const stickerDescEnabledEl = document.getElementById('setting-char-sticker-description-enabled');
+        if (stickerDescEnabledEl) {
+            stickerDescEnabledEl.checked = e.stickerDescriptionEnabled || false;
+        }
+
+        if (allGroups.length === 0) {
+            stickerGroupsContainer.innerHTML = '<span style="color:#999; font-size:12px;">暂无表情包分组，请先在表情包管理中添加。</span>';
+        } else {
+            allGroups.forEach(group => {
+                const tag = document.createElement('div');
+                tag.className = 'sticker-group-tag';
+                if (charGroups.includes(group)) {
+                    tag.classList.add('selected');
+                }
+                tag.textContent = group;
+                tag.dataset.group = group;
+                
+                tag.addEventListener('click', () => {
+                    tag.classList.toggle('selected');
+                });
+                
+                stickerGroupsContainer.appendChild(tag);
+            });
+        }
+        
+        if (e.source !== 'forum') {
+            const myAvatarPreviewEl = document.getElementById('setting-my-avatar-preview');
+            if (myAvatarPreviewEl) myAvatarPreviewEl.src = e.myAvatar || 'https://i.postimg.cc/GtbTnxhP/o-o-1.jpg';
+            const myNameEl = document.getElementById('setting-my-name');
+            if (myNameEl) myNameEl.value = e.myName || '';
+            const myPersonaEl = document.getElementById('setting-my-persona');
+            if (myPersonaEl) myPersonaEl.value = e.myPersona || '';
+            
+            const myBirthdayEl = document.getElementById('setting-my-birthday');
+            if (myBirthdayEl) myBirthdayEl.value = e.myBirthday || '';
+            const myEnableDynamicAgeEl = document.getElementById('setting-my-enable-dynamic-age');
+            if (myEnableDynamicAgeEl) myEnableDynamicAgeEl.checked = e.myEnableDynamicAge || false;
+            
+            const myEnableDynamicTimezoneEl = document.getElementById('setting-my-enable-dynamic-timezone');
+            if (myEnableDynamicTimezoneEl) myEnableDynamicTimezoneEl.checked = e.myEnableDynamicTimezone || false;
+            const myTimezoneEl = document.getElementById('setting-my-timezone');
+            const myTimezonePresetEl = document.getElementById('setting-my-timezone-preset');
+            if (myTimezoneEl) myTimezoneEl.value = e.myTimezone || '';
+            if (myTimezonePresetEl) {
+                myTimezonePresetEl.value = '';
+                myTimezonePresetEl.onchange = function() {
+                    if (this.value && myTimezoneEl) myTimezoneEl.value = this.value;
+                };
+            }
+        }
+        const themeColorEl = document.getElementById('setting-theme-color');
+        if (themeColorEl) themeColorEl.value = e.theme || 'white_pink';
+        const maxMemoryEl = document.getElementById('setting-max-memory');
+        if (maxMemoryEl) maxMemoryEl.value = e.maxMemory;
+        const syncGroupMemoryEl = document.getElementById('setting-sync-group-memory');
+        if (syncGroupMemoryEl) syncGroupMemoryEl.checked = e.syncGroupMemory || false;
+        
+        // 群聊记忆互通相关设置
+        const groupMemoryHistoryCount = e.groupMemoryHistoryCount !== undefined ? e.groupMemoryHistoryCount : 20;
+        const groupMemorySummaryCount = e.groupMemorySummaryCount !== undefined ? e.groupMemorySummaryCount : 0;
+        
+        const groupJournalFavTopEl = document.getElementById('setting-group-journal-favorite-top');
+        if (groupJournalFavTopEl) groupJournalFavTopEl.checked = e.journalFavoriteTop !== false; // 默认开启
+        document.getElementById('setting-group-memory-history-count').value = groupMemoryHistoryCount;
+        document.getElementById('setting-group-memory-summary-count').value = groupMemorySummaryCount;
+        
+        // 根据开关状态显示/隐藏设置项
+        const historyContainer = document.getElementById('setting-group-memory-container');
+        const summaryContainer = document.getElementById('setting-group-summary-container');
+        const syncGroupListContainer = document.getElementById('setting-sync-group-list');
+        
+        if (historyContainer) {
+            historyContainer.style.display = e.syncGroupMemory ? 'flex' : 'none';
+        }
+        if (summaryContainer) {
+            summaryContainer.style.display = e.syncGroupMemory ? 'flex' : 'none';
+        }
+        
+        // 渲染群聊选择列表（函数内部会根据开关状态控制显示）
+        renderSyncGroupList(e);
+        
+        // 确保容器显示状态正确（在渲染后再次确认）
+        if (syncGroupListContainer) {
+            syncGroupListContainer.style.display = e.syncGroupMemory ? 'block' : 'none';
+        }
+        
+        document.getElementById('setting-reply-count-enabled').checked = e.replyCountEnabled || false;
+        const replyCountContainer = document.getElementById('setting-reply-count-container');
+        if (replyCountContainer) {
+            replyCountContainer.style.display = e.replyCountEnabled ? 'flex' : 'none';
+        }
+        document.getElementById('setting-reply-count-min').value = e.replyCountMin || 3;
+        document.getElementById('setting-reply-count-max').value = e.replyCountMax || 8;
+
+        const stickerSmartMatchEl = document.getElementById('setting-sticker-smart-match');
+        if (stickerSmartMatchEl) stickerSmartMatchEl.checked = e.stickerSmartMatchEnabled || false;
+
+        document.getElementById('setting-auto-journal-enabled').checked = e.autoJournalEnabled || false;
+        const memoryModeEl = document.getElementById('setting-memory-mode');
+        if (memoryModeEl) memoryModeEl.value = e.memoryMode || 'journal';
+        const autoJournalIntervalContainer = document.getElementById('setting-auto-journal-interval-container');
+        if (autoJournalIntervalContainer) {
+            autoJournalIntervalContainer.style.display = e.autoJournalEnabled ? 'flex' : 'none';
+        }
+        document.getElementById('setting-auto-journal-interval').value = e.autoJournalInterval || 100;
+        if (typeof ensureAutoJournalState === 'function') {
+            ensureAutoJournalState(e);
+        }
+        if (typeof refreshAutoJournalButton === 'function') {
+            refreshAutoJournalButton(e, 'private');
+        }
+
+        const charAutoFavEl = document.getElementById('setting-char-auto-favorite');
+        if (charAutoFavEl) charAutoFavEl.checked = e.characterAutoFavoriteEnabled || false;
+        
+        const charAwareUserFavoritesEl = document.getElementById('setting-char-aware-user-favorites');
+        const awareFavoriteScopeContainer = document.getElementById('setting-aware-favorite-scope-container');
+        if (charAwareUserFavoritesEl) {
+            charAwareUserFavoritesEl.checked = e.charAwareUserFavorites || false;
+            if (awareFavoriteScopeContainer) {
+                awareFavoriteScopeContainer.style.display = e.charAwareUserFavorites ? 'block' : 'none';
+            }
+        }
+        
+        const awareScopeCurrent = document.getElementById('setting-aware-favorite-scope-current');
+        const awareScopeAll = document.getElementById('setting-aware-favorite-scope-all');
+        if (e.awareFavoriteScope === 'all') {
+            if (awareScopeAll) awareScopeAll.checked = true;
+        } else {
+            if (awareScopeCurrent) awareScopeCurrent.checked = true;
+        }
+        
+        const journalFavTopEl = document.getElementById('setting-journal-favorite-top');
+        if (journalFavTopEl) journalFavTopEl.checked = e.journalFavoriteTop !== false; // 默认开启
+
+        // 加载单人思维链设置
+        const charCotEnabledEl = document.getElementById('setting-char-cot-enabled');
+        const charCotOptionsEl = document.getElementById('setting-char-cot-options');
+        const charCotChatEnabledEl = document.getElementById('setting-char-cot-chat-enabled');
+        const charCotChatPresetEl = document.getElementById('setting-char-cot-chat-preset');
+        const charCotChatPresetCont = document.getElementById('setting-char-cot-chat-preset-container');
+        const charCotCallEnabledEl = document.getElementById('setting-char-cot-call-enabled');
+        const charCotCallPresetEl = document.getElementById('setting-char-cot-call-preset');
+        const charCotCallPresetCont = document.getElementById('setting-char-cot-call-preset-container');
+        const charCotOfflineEnabledEl = document.getElementById('setting-char-cot-offline-enabled');
+        const charCotOfflinePresetEl = document.getElementById('setting-char-cot-offline-preset');
+        const charCotOfflinePresetCont = document.getElementById('setting-char-cot-offline-preset-container');
+        
+        if (charCotEnabledEl) {
+            charCotEnabledEl.checked = e.cotSettings?.enabled || false;
+            if (charCotOptionsEl) {
+                charCotOptionsEl.style.display = e.cotSettings?.enabled ? 'block' : 'none';
+            }
+            charCotEnabledEl.onchange = function() {
+                if (charCotOptionsEl) charCotOptionsEl.style.display = this.checked ? 'block' : 'none';
+            };
+        }
+        
+        if (charCotChatEnabledEl) {
+            charCotChatEnabledEl.checked = e.cotSettings?.chatEnabled || false;
+            if (charCotChatPresetCont) charCotChatPresetCont.style.display = charCotChatEnabledEl.checked ? 'block' : 'none';
+            charCotChatEnabledEl.onchange = function() {
+                if (charCotChatPresetCont) charCotChatPresetCont.style.display = this.checked ? 'block' : 'none';
+            };
+        }
+        if (charCotCallEnabledEl) {
+            charCotCallEnabledEl.checked = e.cotSettings?.callEnabled || false;
+            if (charCotCallPresetCont) charCotCallPresetCont.style.display = charCotCallEnabledEl.checked ? 'block' : 'none';
+            charCotCallEnabledEl.onchange = function() {
+                if (charCotCallPresetCont) charCotCallPresetCont.style.display = this.checked ? 'block' : 'none';
+            };
+        }
+        if (charCotOfflineEnabledEl) {
+            charCotOfflineEnabledEl.checked = e.cotSettings?.offlineEnabled || false;
+            if (charCotOfflinePresetCont) charCotOfflinePresetCont.style.display = charCotOfflineEnabledEl.checked ? 'block' : 'none';
+            charCotOfflineEnabledEl.onchange = function() {
+                if (charCotOfflinePresetCont) charCotOfflinePresetCont.style.display = this.checked ? 'block' : 'none';
+            };
+        }
+        
+        // 填充预设下拉框
+        const presets = db.cotPresets || [];
+        const populateCotPreset = (selectEl, defaultText, activeId) => {
+            if (!selectEl) return;
+            selectEl.innerHTML = `<option value="">${defaultText}</option>`;
+            presets.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.name;
+                selectEl.appendChild(opt);
+            });
+            if (activeId) selectEl.value = activeId;
+        };
+        
+        populateCotPreset(charCotChatPresetEl, '默认预设', e.cotSettings?.activePresetId);
+        populateCotPreset(charCotCallPresetEl, '默认通话预设', e.cotSettings?.activeCallPresetId);
+        populateCotPreset(charCotOfflinePresetEl, '默认线下预设', e.cotSettings?.activeOfflinePresetId);
+
+        // 加载小剧场设置
+        const charTheaterEnabledEl = document.getElementById('setting-char-theater-enabled');
+        const charTheaterOptionsEl = document.getElementById('setting-char-theater-options');
+        const charTheaterProbEl = document.getElementById('setting-char-theater-probability');
+        const charTheaterProbValEl = document.getElementById('setting-char-theater-probability-value');
+        const charTheaterFormatEl = document.getElementById('setting-char-theater-format');
+        const charTheaterPromptEl = document.getElementById('setting-char-theater-prompt');
+        if (charTheaterEnabledEl) {
+            charTheaterEnabledEl.checked = e.charTheaterEnabled || false;
+            if (charTheaterOptionsEl) {
+                charTheaterOptionsEl.style.display = e.charTheaterEnabled ? '' : 'none';
+            }
+            charTheaterEnabledEl.onchange = function() {
+                if (charTheaterOptionsEl) charTheaterOptionsEl.style.display = this.checked ? '' : 'none';
+            };
+        }
+        if (charTheaterProbEl) {
+            const prob = e.charTheaterProbability !== undefined ? e.charTheaterProbability : 20;
+            charTheaterProbEl.value = prob;
+            if (charTheaterProbValEl) charTheaterProbValEl.textContent = prob + '%';
+            charTheaterProbEl.oninput = function() {
+                if (charTheaterProbValEl) charTheaterProbValEl.textContent = this.value + '%';
+            };
+        }
+        if (charTheaterFormatEl) charTheaterFormatEl.value = e.charTheaterFormat || 'text';
+        if (charTheaterPromptEl) charTheaterPromptEl.value = e.charTheaterPrompt || '';
+
+        // 加载聊天条数、日记条数
+        const charTheaterChatCountEl = document.getElementById('setting-char-theater-chat-count');
+        const charTheaterJournalCountEl = document.getElementById('setting-char-theater-journal-count');
+        if (charTheaterChatCountEl) charTheaterChatCountEl.value = e.charTheaterChatCount !== undefined ? e.charTheaterChatCount : 20;
+        if (charTheaterJournalCountEl) charTheaterJournalCountEl.value = e.charTheaterJournalCount !== undefined ? e.charTheaterJournalCount : 0;
+
+        // 渲染世界书分类下拉多选（与创建剧场页面相同风格）
+        _populateCharTheaterWbDropdown(e.charTheaterWorldBookIds || []);
+
+        // 填充预设提示词下拉
+        const charTheaterPresetSel = document.getElementById('setting-char-theater-prompt-preset');
+        if (charTheaterPresetSel) {
+            charTheaterPresetSel.innerHTML = '<option value="">— 从预设中选择 —</option>';
+            const presets = (typeof getTheaterPromptPresets === 'function') ? getTheaterPromptPresets() : (db.theaterPromptPresets || []);
+            presets.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id || p.name;
+                opt.textContent = p.name;
+                charTheaterPresetSel.appendChild(opt);
+            });
+        }
+        // 应用预设按钮
+        const charTheaterPresetApplyBtn = document.getElementById('setting-char-theater-prompt-apply');
+        if (charTheaterPresetApplyBtn) {
+            charTheaterPresetApplyBtn.onclick = () => {
+                const sel = document.getElementById('setting-char-theater-prompt-preset');
+                const textarea = document.getElementById('setting-char-theater-prompt');
+                if (!sel || !textarea) return;
+                const presets = (typeof getTheaterPromptPresets === 'function') ? getTheaterPromptPresets() : (db.theaterPromptPresets || []);
+                const preset = presets.find(p => (p.id || p.name) === sel.value);
+                if (preset) textarea.value = preset.content || '';
+            };
+        }
+
+        // 自知开关
+        const charTheaterSelfAwareEl = document.getElementById('setting-char-theater-self-aware');
+        if (charTheaterSelfAwareEl) {
+            // 兼容历史数据：可能是字符串 "true"/"false"
+            const v = e.charTheaterSelfAware;
+            const normalized = (v === true || v === 'true');
+            charTheaterSelfAwareEl.checked = normalized;
+            // 顺便把旧数据归一化为 boolean，避免后续真值判断踩坑
+            e.charTheaterSelfAware = normalized;
+        }
+
+        // 独立 API 设置
+        const charTheaterUseCustomApiEl = document.getElementById('setting-char-theater-use-custom-api');
+        const charTheaterApiConfigEl = document.getElementById('setting-char-theater-api-config');
+        if (charTheaterUseCustomApiEl && charTheaterApiConfigEl) {
+            charTheaterUseCustomApiEl.checked = e.charTheaterUseCustomApi || false;
+            charTheaterApiConfigEl.style.display = e.charTheaterUseCustomApi ? '' : 'none';
+            charTheaterUseCustomApiEl.onchange = () => {
+                charTheaterApiConfigEl.style.display = charTheaterUseCustomApiEl.checked ? '' : 'none';
+            };
+            const urlEl = document.getElementById('setting-char-theater-api-url');
+            const keyEl = document.getElementById('setting-char-theater-api-key');
+            const modelEl = document.getElementById('setting-char-theater-api-model');
+            if (urlEl) urlEl.value = e.charTheaterApiUrl || '';
+            if (keyEl) keyEl.value = e.charTheaterApiKey || '';
+            if (modelEl) {
+                // 先确保已保存的模型作为一个选项存在，再设置选中值
+                const savedModel = e.charTheaterApiModel || '';
+                if (savedModel) {
+                    let found = Array.from(modelEl.options).some(o => o.value === savedModel);
+                    if (!found) {
+                        const opt = document.createElement('option');
+                        opt.value = savedModel;
+                        opt.textContent = savedModel;
+                        modelEl.appendChild(opt);
+                    }
+                    modelEl.value = savedModel;
+                }
+            }
+
+            // 拉取模型按钮
+            const fetchModelsBtn = document.getElementById('setting-char-theater-fetch-models-btn');
+            if (fetchModelsBtn) {
+                fetchModelsBtn.onclick = async () => {
+                    const apiUrl = (urlEl ? urlEl.value.trim() : '');
+                    const apiKey = (keyEl ? keyEl.value.trim() : '');
+                    if (!apiUrl || !apiKey) {
+                        showToast('请先填写 API URL 和 Key');
+                        return;
+                    }
+                    const blockedDomains = (typeof BLOCKED_API_DOMAINS !== 'undefined') ? BLOCKED_API_DOMAINS : [];
+                    if (blockedDomains.some(d => apiUrl.includes(d))) {
+                        showToast('该API站点已被屏蔽');
+                        return;
+                    }
+                    const endpoint = `${apiUrl.replace(/\/$/, '')}/v1/models`;
+                    fetchModelsBtn.disabled = true;
+                    const origText = fetchModelsBtn.textContent;
+                    fetchModelsBtn.textContent = '拉取中…';
+                    try {
+                        const resp = await fetch(endpoint, { headers: { 'Authorization': `Bearer ${apiKey}` } });
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                        const json = await resp.json();
+                        const models = (json.data || []).map(m => m.id).filter(Boolean).sort();
+                        if (!models.length) { showToast('未找到可用模型'); return; }
+                        const cur = modelEl ? modelEl.value : '';
+                        if (modelEl) {
+                            modelEl.innerHTML = '';
+                            models.forEach(m => {
+                                const opt = document.createElement('option');
+                                opt.value = m;
+                                opt.textContent = m;
+                                modelEl.appendChild(opt);
+                            });
+                            if (models.includes(cur)) modelEl.value = cur;
+                        }
+                        showToast(`成功拉取 ${models.length} 个模型`);
+                    } catch (err) {
+                        console.error('拉取模型失败', err);
+                        showToast('拉取模型失败：' + (err.message || '未知错误'));
+                    } finally {
+                        fetchModelsBtn.disabled = false;
+                        fetchModelsBtn.textContent = origText;
+                    }
+                };
+            }
+
+            // 填充预设下拉
+            const presetSel = document.getElementById('setting-char-theater-api-preset');
+            if (presetSel) {
+                presetSel.innerHTML = '<option value="">— 选择预设配置 —</option>';
+                const allPresets = [
+                    ...(db.apiPresets || []).map(p => ({ name: p.name + '（主API）', data: p.data })),
+                    ...(db.summaryApiPresets || []).map(p => ({ name: p.name + '（总结API）', data: p.data })),
+                    ...(db.backgroundApiPresets || []).map(p => ({ name: p.name + '（后台API）', data: p.data })),
+                    ...(db.supplementPersonaApiPresets || []).map(p => ({ name: p.name + '（补齐人设API）', data: p.data })),
+                    ...(db.peekApiPresets || []).map(p => ({ name: p.name + '（偷看手机API）', data: p.data })),
+                ];
+                allPresets.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = JSON.stringify(p.data);
+                    opt.textContent = p.name;
+                    presetSel.appendChild(opt);
+                });
+                presetSel.onchange = () => {
+                    if (!presetSel.value) return;
+                    try {
+                        const data = JSON.parse(presetSel.value);
+                        if (urlEl) urlEl.value = data.apiUrl || data.url || '';
+                        if (keyEl) keyEl.value = data.apiKey || data.key || '';
+                        if (modelEl) {
+                            const m = data.model || '';
+                            // 如果该模型尚不在 select 列表中，先添加再选中
+                            if (m) {
+                                let found = Array.from(modelEl.options).some(o => o.value === m);
+                                if (!found) {
+                                    const opt = document.createElement('option');
+                                    opt.value = m;
+                                    opt.textContent = m;
+                                    modelEl.appendChild(opt);
+                                }
+                                modelEl.value = m;
+                            }
+                        }
+                    } catch (err) { console.warn('预设解析失败', err); }
+                    presetSel.value = '';
+                };
+            }
+        }
+
+        document.getElementById('setting-bilingual-mode').checked = e.bilingualModeEnabled || false;
+        document.getElementById('setting-bilingual-style').value = e.bilingualBubbleStyle || 'under';
+
+        if (window.PokeSystem) window.PokeSystem.ensureSettings(e);
+        const pokeEnabledEl = document.getElementById('setting-poke-enabled');
+        const pokeOptionsEl = document.getElementById('setting-poke-options');
+        if (pokeEnabledEl) pokeEnabledEl.checked = e.pokeEnabled === true;
+        if (pokeOptionsEl) pokeOptionsEl.style.display = e.pokeEnabled === true ? 'block' : 'none';
+        const pokeCharacterEl = document.getElementById('setting-poke-character-initiated');
+        if (pokeCharacterEl) pokeCharacterEl.checked = e.pokeAllowCharacterInitiated !== false;
+        const pokeReplyEl = document.getElementById('setting-poke-trigger-reply');
+        if (pokeReplyEl) pokeReplyEl.checked = e.pokeTriggerReply !== false;
+        const pokeCharSuffixEl = document.getElementById('setting-poke-char-suffix');
+        if (pokeCharSuffixEl) pokeCharSuffixEl.value = e.pokeCharacterSuffix || '';
+        const pokeUserSuffixEl = document.getElementById('setting-poke-user-suffix');
+        if (pokeUserSuffixEl) pokeUserSuffixEl.value = e.pokeUserSuffix || '';
+        const pokeEffectEl = document.getElementById('setting-poke-effect-mode');
+        if (pokeEffectEl) pokeEffectEl.value = e.pokeEffectMode || 'full';
+        const pokeVibrationEl = document.getElementById('setting-poke-vibration');
+        if (pokeVibrationEl) pokeVibrationEl.checked = e.pokeVibrationEnabled !== false;
+        const pokeNotificationEl = document.getElementById('setting-poke-notification-mode');
+        if (pokeNotificationEl) pokeNotificationEl.value = e.pokeNotificationMode || 'in_chat';
+        const pokeContextEl = document.getElementById('setting-poke-context');
+        if (pokeContextEl) pokeContextEl.checked = e.pokeContextEnabled !== false;
+        
+        document.getElementById('setting-avatar-mode').value = e.avatarMode || 'full';
+        const avatarRadius = e.avatarRadius !== undefined ? e.avatarRadius : 50;
+        document.getElementById('setting-avatar-radius').value = avatarRadius;
+        document.getElementById('setting-avatar-radius-value').textContent = `${avatarRadius}%`;
+        
+        const radiusSlider = document.getElementById('setting-avatar-radius');
+        const radiusValue = document.getElementById('setting-avatar-radius-value');
+        radiusSlider.oninput = () => {
+            radiusValue.textContent = `${radiusSlider.value}%`;
+        };
+
+        // 头像圆角重置按钮
+        const resetAvatarRadiusBtn = document.getElementById('reset-avatar-radius-btn');
+        if (resetAvatarRadiusBtn) {
+            resetAvatarRadiusBtn.onclick = () => {
+                radiusSlider.value = 50;
+                radiusValue.textContent = '50%';
+            };
+        }
+
+        document.getElementById('setting-bubble-blur').checked = e.bubbleBlurEnabled !== false; 
+
+        document.getElementById('setting-title-layout').value = e.titleLayout || 'left';
+        document.getElementById('setting-show-timestamp').checked = e.showTimestamp || false;
+        document.getElementById('setting-timestamp-style').value = e.timestampStyle || 'bubble';
+        document.getElementById('setting-timestamp-format').value = e.timestampFormat || 'hm';
+        document.getElementById('setting-show-status').checked = e.showStatus !== false;
+        document.getElementById('setting-show-status-update-msg').checked = e.showStatusUpdateMsg || false;
+        document.getElementById('setting-show-reminder-msg').checked = e.showReminderMsg !== false;
+        document.getElementById('setting-avatar-system-enabled').checked = e.avatarSystemEnabled || false;
+        document.getElementById('setting-char-sense-avatar-change').checked = e.charSenseAvatarChangeEnabled === true;
+        const arDisplaySpan = document.getElementById('avatar-recognition-detail-display');
+        if (arDisplaySpan) {
+            const val = db.avatarRecognitionDetailLevel;
+            if (val === 'brief') arDisplaySpan.textContent = '简洁（10-20字）';
+            else if (val === 'standard') arDisplaySpan.textContent = '标准（30-50字）';
+            else if (val === 'detailed' || !val) arDisplaySpan.textContent = '详细（不限）';
+            else {
+                const n = typeof val === 'number' ? val : parseInt(val, 10);
+                arDisplaySpan.textContent = (!isNaN(n) && n > 0) ? '自定义（' + n + '字）' : '详细（不限）';
+            }
+        }
+        document.getElementById('setting-show-avatar-action-msg').checked = e.showAvatarActionMsg || false;
+        const charCanSwitchEl = document.getElementById('setting-char-can-switch-avatar');
+        if (charCanSwitchEl) charCanSwitchEl.checked = e.charCanSwitchAvatarEnabled === true;
+        const charCollectEl = document.getElementById('setting-char-collect-image-as-avatar');
+        if (charCollectEl) charCollectEl.checked = e.charCollectImageAsAvatarEnabled === true;
+        const charCollectCoupleEl = document.getElementById('setting-char-collect-couple-avatar');
+        if (charCollectCoupleEl) charCollectCoupleEl.checked = e.charCollectCoupleAvatarEnabled === true;
+        const charSenseCoupleEl = document.getElementById('setting-char-sense-couple-avatar');
+        if (charSenseCoupleEl) charSenseCoupleEl.checked = e.charSenseCoupleAvatarEnabled === true;
+        document.getElementById('setting-char-reminder-enabled').checked = e.charReminderEnabled || false;
+
+        // 消息版本管理
+        const keepRegenEl = document.getElementById('setting-keep-regen-versions');
+        if (keepRegenEl) keepRegenEl.checked = e.keepRegenVersions || false;
+
+        const sp = e.statusPanel || {};
+        document.getElementById('setting-status-panel-enabled').checked = sp.enabled || false;
+        document.getElementById('setting-status-prompt-suffix').value = sp.promptSuffix || '';
+        document.getElementById('setting-status-regex').value = sp.regexPattern || '';
+        document.getElementById('setting-status-replace').value = sp.replacePattern || '';
+        document.getElementById('setting-status-history-limit').value = sp.historyLimit !== undefined ? sp.historyLimit : 3;
+        
+        const statusPanelContainer = document.getElementById('status-panel-settings-container');
+        if (statusPanelContainer) {
+            if (sp.enabled) {
+                statusPanelContainer.style.maxHeight = '5000px';
+                statusPanelContainer.style.paddingBottom = '20px';
+            } else {
+                statusPanelContainer.style.maxHeight = '0';
+                statusPanelContainer.style.paddingBottom = '0';
+            }
+        }
+
+        const newGameBtn = document.getElementById('archive-new-game-btn');
+        if (newGameBtn) {
+            // 先解绑之前的事件防止重复
+            const newBtn = newGameBtn.cloneNode(true);
+            newGameBtn.parentNode.replaceChild(newBtn, newGameBtn);
+            
+            newBtn.addEventListener('click', async () => {
+                const cid = currentChatId;
+                if (!cid) {
+                    showToast('请先进入一个角色的聊天');
+                    return;
+                }
+                const char = db.characters.find(c => c.id === cid);
+                if (!char) return;
+                
+                const confirmed = await customConfirm('确定要为该角色开启新档吗？\n当前角色的所有聊天记录、上下文和日记将被清空，但人设等基础设置会保留。\n\n建议在此操作前先保存当前进度的存档！', '提示');
+                if (!confirmed) return;
+                
+                // 清空记录与状态
+                char.history = [];
+                char.tokens = 0;
+                if (char.memory) {
+                    char.memory.journal = [];
+                    char.memory.context = '';
+                }
+                char.nodes = [];
+                char.chatHistory = [];
+                char.messages = [];
+                char.chatContext = '';
+                char.chatSummary = '';
+                if (char.memoryTables && typeof char.memoryTables === 'object') {
+                    char.memoryTables.data = {};
+                    char.memoryTables.history = [];
+                    char.memoryTables.lastChangedFieldPaths = [];
+                }
+                if (char.vectorMemory && typeof char.vectorMemory === 'object') {
+                    char.vectorMemory.entries = [];
+                    char.vectorMemory.history = [];
+                    char.vectorMemory.lastSummarizedMsgId = null;
+                    char.vectorMemory.lastSummarizedMsgTimestamp = null;
+                    char.vectorMemory.lastContextBlock = '';
+                    char.vectorMemory.lastRetrievedEntryIds = [];
+                    char.vectorMemory.lastQueryText = '';
+                    char.vectorMemory.autoSummaryState = 'idle';
+                    char.vectorMemory.autoSummaryPending = false;
+                }
+                
+                // 同步清空拉黑和好友申请相关记忆
+                char.blockHistory = [];
+                char.friendRequests = [];
+                char.charBlockHistory = [];
+                char.userFriendRequests = [];
+                char.isBlocked = false;
+                char.blockedAt = null;
+                char.blockReapply = null;
+                char.isBlockedByChar = false;
+                char.blockedByCharAt = null;
+                char.blockedByCharReason = null;
+                
+                // 隐藏角色拉黑遮罩（如果有）
+                var charBlockedOverlay = document.getElementById('char-blocked-overlay');
+                if (charBlockedOverlay) charBlockedOverlay.style.display = 'none';
+                
+                await saveData();
+                
+                showToast('新档开启成功！');
+                if (currentChatId === cid && typeof renderMessages === 'function') {
+                    renderMessages();
+                }
+                if (typeof renderChatList === 'function') renderChatList();
+                
+                // 自动保存一个初始存档
+                await createArchive(cid, '初始状态');
+            });
+        }
+
+        // 加载角色正则过滤设置
+        const rf = e.regexFilter || {};
+        document.getElementById('setting-regex-filter-enabled').checked = rf.enabled || false;
+        const rfRulesText = (rf.rules || []).map(r => r.replace ? `${r.pattern}|||${r.replace}` : r.pattern).join('\n');
+        document.getElementById('setting-regex-filter-rules').value = rfRulesText;
+        const regexFilterContainer = document.getElementById('regex-filter-settings-container');
+        if (regexFilterContainer) {
+            if (rf.enabled) {
+                regexFilterContainer.style.maxHeight = '5000px';
+                regexFilterContainer.style.paddingBottom = '20px';
+            } else {
+                regexFilterContainer.style.maxHeight = '0';
+                regexFilterContainer.style.paddingBottom = '0';
+            }
+        }
+        if (typeof populateRegexFilterPresetSelect === 'function') populateRegexFilterPresetSelect();
+
+        const webSearchEnabledEl = document.getElementById('setting-char-web-search-enabled');
+        const webSearchPayloadEl = document.getElementById('setting-char-web-search-payload');
+        const webSearchPayloadCont = document.getElementById('setting-char-web-search-payload-container');
+        if (webSearchEnabledEl) {
+            webSearchEnabledEl.checked = !!e.webSearchEnabled;
+            if (webSearchPayloadCont) {
+                webSearchPayloadCont.style.display = e.webSearchEnabled ? 'flex' : 'none';
+            }
+            webSearchEnabledEl.onchange = function() {
+                if (webSearchPayloadCont) {
+                    webSearchPayloadCont.style.display = this.checked ? 'flex' : 'none';
+                }
+            };
+        }
+        if (webSearchPayloadEl) {
+            webSearchPayloadEl.value = e.webSearchPayload || '';
+        }
+
+        // 加载环境与天气增强设置
+        const charWeatherEnabledEl = document.getElementById('setting-char-weather-enabled');
+        const charWeatherCityCont = document.getElementById('setting-char-weather-city-container');
+        const charWeatherCityEl = document.getElementById('setting-char-weather-city');
+        const userWeatherEnabledEl = document.getElementById('setting-user-weather-enabled');
+        const userWeatherCityCont = document.getElementById('setting-user-weather-city-container');
+        const userWeatherCityEl = document.getElementById('setting-user-weather-city');
+        const locateBtn = document.getElementById('setting-user-weather-locate-btn');
+
+        // 单人独立天气 API
+        const charWeatherCustomApiEnabledEl = document.getElementById('setting-char-weather-custom-api-enabled');
+        const charWeatherCustomApiCont = document.getElementById('setting-char-weather-custom-api-container');
+        const charWeatherProviderEl = document.getElementById('setting-char-weather-provider');
+        const charWeatherKeyCont = document.getElementById('setting-char-weather-key-container');
+        const charWeatherKeyEl = document.getElementById('setting-char-weather-key');
+
+        if (charWeatherEnabledEl) {
+            charWeatherEnabledEl.checked = e.weatherSettings?.charEnabled || false;
+            if (charWeatherCityCont) charWeatherCityCont.style.display = charWeatherEnabledEl.checked ? 'flex' : 'none';
+            charWeatherEnabledEl.onchange = function() {
+                if (charWeatherCityCont) charWeatherCityCont.style.display = this.checked ? 'flex' : 'none';
+            };
+        }
+        if (charWeatherCityEl) charWeatherCityEl.value = e.weatherSettings?.charCity || '';
+
+        if (userWeatherEnabledEl) {
+            userWeatherEnabledEl.checked = e.weatherSettings?.userEnabled || false;
+            if (userWeatherCityCont) userWeatherCityCont.style.display = userWeatherEnabledEl.checked ? 'flex' : 'none';
+            userWeatherEnabledEl.onchange = function() {
+                if (userWeatherCityCont) userWeatherCityCont.style.display = this.checked ? 'flex' : 'none';
+            };
+        }
+        if (userWeatherCityEl) userWeatherCityEl.value = e.weatherSettings?.userCity || '';
+
+        if (charWeatherCustomApiEnabledEl) {
+            charWeatherCustomApiEnabledEl.checked = e.weatherSettings?.customApiEnabled || false;
+            if (charWeatherCustomApiCont) charWeatherCustomApiCont.style.display = charWeatherCustomApiEnabledEl.checked ? 'block' : 'none';
+            charWeatherCustomApiEnabledEl.onchange = function() {
+                if (charWeatherCustomApiCont) charWeatherCustomApiCont.style.display = this.checked ? 'block' : 'none';
+            };
+        }
+        if (charWeatherProviderEl) {
+            charWeatherProviderEl.value = e.weatherSettings?.provider || 'openmeteo';
+            const updateKeyVis = () => {
+                if (charWeatherProviderEl.value === 'qweather' || charWeatherProviderEl.value === 'seniverse') {
+                    if (charWeatherKeyCont) charWeatherKeyCont.style.display = 'flex';
+                } else {
+                    if (charWeatherKeyCont) charWeatherKeyCont.style.display = 'none';
+                }
+            };
+            charWeatherProviderEl.onchange = updateKeyVis;
+            updateKeyVis();
+        }
+        if (charWeatherKeyEl) charWeatherKeyEl.value = e.weatherSettings?.apiKey || '';
+
+        // 定位按钮功能
+        if (locateBtn && userWeatherCityEl) {
+            // 避免重复绑定
+            locateBtn.replaceWith(locateBtn.cloneNode(true));
+            document.getElementById('setting-user-weather-locate-btn').addEventListener('click', async () => {
+                const btn = document.getElementById('setting-user-weather-locate-btn');
+                btn.textContent = '定位中...';
+                btn.disabled = true;
+                
+                try {
+                    if (!navigator.geolocation) {
+                        throw new Error('浏览器不支持定位功能');
+                    }
+                    
+                    const position = await new Promise((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+                    });
+                    
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    
+                    // 将经纬度填入输入框，让获取天气的逻辑去解析坐标
+                    userWeatherCityEl.value = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+                    showToast('定位成功！');
+                } catch (error) {
+                    console.error('定位失败', error);
+                    showToast(error.message || '获取位置失败，请手动输入');
+                } finally {
+                    btn.textContent = '📍 定位';
+                    btn.disabled = false;
+                }
+            });
+        }
+
+        document.getElementById('setting-shop-interaction-enabled').checked = e.shopInteractionEnabled !== false;
+
+        const familyCardEnabledEl = document.getElementById('setting-family-card-enabled');
+        if (familyCardEnabledEl) familyCardEnabledEl.checked = e.familyCardEnabled === true;
+
+        const autonomousShoppingEl = document.getElementById('setting-autonomous-shopping-enabled');
+        if (autonomousShoppingEl) autonomousShoppingEl.checked = e.autonomousShoppingEnabled === true;
+        const ownWalletShoppingEl = document.getElementById('setting-character-own-wallet-shopping-enabled');
+        if (ownWalletShoppingEl) ownWalletShoppingEl.checked = e.characterOwnWalletShoppingEnabled !== false;
+        const familyCardSpendingEl = document.getElementById('setting-character-family-card-spending-enabled');
+        if (familyCardSpendingEl) familyCardSpendingEl.checked = e.characterFamilyCardSpendingEnabled === true;
+        const selfShoppingEl = document.getElementById('setting-character-self-shopping-enabled');
+        if (selfShoppingEl) selfShoppingEl.checked = e.characterSelfShoppingEnabled !== false;
+        const giftShoppingEl = document.getElementById('setting-character-gift-shopping-enabled');
+        if (giftShoppingEl) giftShoppingEl.checked = e.characterGiftShoppingEnabled !== false;
+        const payRequestEl = document.getElementById('setting-character-pay-request-enabled');
+        if (payRequestEl) payRequestEl.checked = e.characterPayRequestEnabled !== false;
+        const shoppingSingleLimitEl = document.getElementById('setting-character-shopping-single-limit');
+        if (shoppingSingleLimitEl) shoppingSingleLimitEl.value = e.characterShoppingSingleLimit ?? 200;
+        const shoppingBudgetEl = document.getElementById('setting-character-shopping-period-budget');
+        if (shoppingBudgetEl) shoppingBudgetEl.value = e.characterShoppingPeriodBudget ?? 1000;
+        const shoppingFrequencyEl = document.getElementById('setting-character-shopping-frequency');
+        if (shoppingFrequencyEl) shoppingFrequencyEl.value = e.characterShoppingFrequency || 'rare';
+        const shoppingCategoriesEl = document.getElementById('setting-character-shopping-categories');
+        if (shoppingCategoriesEl) shoppingCategoriesEl.value = e.characterShoppingAllowedCategories || '';
+
+        document.getElementById('setting-video-call-enabled').checked = e.videoCallEnabled || false;
+        document.getElementById('setting-real-camera-enabled').checked = e.realCameraEnabled || false;
+        document.getElementById('setting-vc-novelai-enabled').checked = e.vcNovelAiEnabled || false;
+        const vcGptDrawEl = document.getElementById('setting-vc-gpt-draw-enabled');
+        if (vcGptDrawEl) vcGptDrawEl.checked = e.vcGptDrawEnabled || false;
+        const vcGoogleImageEl = document.getElementById('setting-vc-google-image-enabled');
+        if (vcGoogleImageEl) vcGoogleImageEl.checked = e.vcGoogleImageEnabled || false;
+        const vcStabilityImageEl = document.getElementById('setting-vc-stability-image-enabled');
+        if (vcStabilityImageEl) vcStabilityImageEl.checked = e.vcStabilityImageEnabled || false;
+        const saveCallOnInterruptEl = document.getElementById('setting-save-call-on-interrupt');
+        if (saveCallOnInterruptEl) saveCallOnInterruptEl.checked = e.saveCallOnInterrupt || false;
+
+        // === 加载 NovelAI 生图设置（模型/尺寸/画师串）到拓展 Tab ===
+        if (db.novelAiSettings) {
+            const ns = db.novelAiSettings;
+            const naiModelEl = document.getElementById('novelai-model');
+            const naiResEl = document.getElementById('novelai-resolution');
+            const naiArtistEl = document.getElementById('novelai-artist-tags');
+            if (naiModelEl && ns.model) naiModelEl.value = ns.model;
+            if (naiResEl && ns.resolution) naiResEl.value = ns.resolution;
+            if (naiArtistEl && ns.artistTags !== undefined) naiArtistEl.value = ns.artistTags;
+        }
+
+        // === 加载 GPT 专属画师串到拓展 Tab ===
+        const gptArtistEl = document.getElementById('gpt-artist-prompt');
+        if (gptArtistEl) {
+            gptArtistEl.value = e.gptArtistPrompt || '';
+        }
+
+        const ar = e.autoReply || {};
+        document.getElementById('setting-auto-reply-enabled').checked = ar.enabled || false;
+        document.getElementById('setting-auto-reply-interval').value = ar.interval || 60;
+        
+        const modeSelect = document.getElementById('setting-auto-reply-mode');
+        const fixedContainer = document.getElementById('setting-auto-reply-fixed-container');
+        const randomContainer = document.getElementById('setting-auto-reply-random-container');
+        
+        if (modeSelect) {
+            modeSelect.value = ar.mode || 'fixed';
+            
+            const updateModeDisplay = () => {
+                if (modeSelect.value === 'random') {
+                    if (fixedContainer) fixedContainer.style.display = 'none';
+                    if (randomContainer) randomContainer.style.display = 'flex';
+                } else {
+                    if (fixedContainer) fixedContainer.style.display = 'flex';
+                    if (randomContainer) randomContainer.style.display = 'none';
+                }
+            };
+            
+            updateModeDisplay();
+            modeSelect.addEventListener('change', updateModeDisplay);
+        }
+        
+        const minInput = document.getElementById('setting-auto-reply-min');
+        if (minInput) minInput.value = ar.minInterval || 60;
+        
+        const maxInput = document.getElementById('setting-auto-reply-max');
+        if (maxInput) maxInput.value = ar.maxInterval || 180;
+
+        // === 加载角色回复后追发设置 ===
+        const followUp = window.FollowUpReply
+            ? window.FollowUpReply.ensureSettings(e)
+            : (e.followUpReply || {});
+        const followUpEnabledEl = document.getElementById('setting-follow-up-enabled');
+        const followUpOptionsEl = document.getElementById('setting-follow-up-options');
+        const followUpModeEl = document.getElementById('setting-follow-up-mode');
+        const followUpFixedEl = document.getElementById('setting-follow-up-fixed-container');
+        const followUpRandomEl = document.getElementById('setting-follow-up-random-container');
+        const followUpProbabilityEl = document.getElementById('setting-follow-up-probability');
+        const followUpProbabilityValueEl = document.getElementById('setting-follow-up-probability-value');
+        const hoursValue = minutes => Math.round((Number(minutes || 0) / 60) * 1000) / 1000;
+        if (followUpEnabledEl) followUpEnabledEl.checked = followUp.enabled === true;
+        if (followUpOptionsEl) followUpOptionsEl.style.display = followUp.enabled === true ? 'block' : 'none';
+        if (followUpModeEl) followUpModeEl.value = followUp.delayMode === 'fixed' ? 'fixed' : 'random';
+        const followUpFixedHoursEl = document.getElementById('setting-follow-up-fixed-hours');
+        const followUpMinHoursEl = document.getElementById('setting-follow-up-min-hours');
+        const followUpMaxHoursEl = document.getElementById('setting-follow-up-max-hours');
+        if (followUpFixedHoursEl) followUpFixedHoursEl.value = hoursValue(followUp.fixedDelayMinutes || 120);
+        if (followUpMinHoursEl) followUpMinHoursEl.value = hoursValue(followUp.minDelayMinutes || 60);
+        if (followUpMaxHoursEl) followUpMaxHoursEl.value = hoursValue(followUp.maxDelayMinutes || 180);
+        if (followUpProbabilityEl) followUpProbabilityEl.value = followUp.probability ?? 35;
+        if (followUpProbabilityValueEl) followUpProbabilityValueEl.textContent = `${followUp.probability ?? 35}%`;
+        const followUpMaxCountEl = document.getElementById('setting-follow-up-max-count');
+        if (followUpMaxCountEl) followUpMaxCountEl.value = String(followUp.maxFollowUps || 1);
+        const updateFollowUpVisibility = () => {
+            const enabled = followUpEnabledEl && followUpEnabledEl.checked;
+            const fixedMode = followUpModeEl && followUpModeEl.value === 'fixed';
+            if (followUpOptionsEl) followUpOptionsEl.style.display = enabled ? 'block' : 'none';
+            if (followUpFixedEl) followUpFixedEl.style.display = fixedMode ? 'flex' : 'none';
+            if (followUpRandomEl) followUpRandomEl.style.display = fixedMode ? 'none' : 'flex';
+        };
+        if (followUpEnabledEl) followUpEnabledEl.onchange = updateFollowUpVisibility;
+        if (followUpModeEl) followUpModeEl.onchange = updateFollowUpVisibility;
+        if (followUpProbabilityEl) {
+            followUpProbabilityEl.oninput = function () {
+                if (followUpProbabilityValueEl) followUpProbabilityValueEl.textContent = `${this.value}%`;
+            };
+        }
+        updateFollowUpVisibility();
+
+        // === 加载消息弹窗通知设置 ===
+        const bgToastEl = document.getElementById('setting-bg-toast-enabled');
+        if (bgToastEl) {
+            // 如果单人设置未定义，则显示全局设置的状态
+            bgToastEl.checked = e.bgToastEnabled !== undefined ? e.bgToastEnabled : (db.globalToastEnabled !== false);
+        }
+
+        // === 加载免打扰时段设置 ===
+        const qh = ar.quietHours || {};
+        const qhEnabledEl = document.getElementById('setting-quiet-hours-enabled');
+        const qhRangeEl = document.getElementById('quiet-hours-range');
+        qhEnabledEl.checked = qh.enabled || false;
+        document.getElementById('setting-quiet-hours-start').value = qh.start || '23:00';
+        document.getElementById('setting-quiet-hours-end').value = qh.end || '07:00';
+        qhRangeEl.style.display = qhEnabledEl.checked ? 'block' : 'none';
+        qhEnabledEl.addEventListener('change', () => {
+            qhRangeEl.style.display = qhEnabledEl.checked ? 'block' : 'none';
+        });
+
+        document.getElementById('setting-use-real-gallery').checked = e.useRealGallery || false;
+
+        // === 加载 TTS 配置 ===
+        if (typeof TTSSettings !== 'undefined' && TTSSettings.loadChatTTSConfig) {
+            TTSSettings.loadChatTTSConfig(currentChatId);
+        }
+
+        // === 拉黑与好友申请面板 ===
+        const blockCharacterBtnEl = document.getElementById('block-character-btn');
+        const blockSettingsPanelEl = document.getElementById('block-settings-panel');
+        const blockReapplyModeEl = document.getElementById('block-reapply-mode');
+        const blockFixedIntervalEl = document.getElementById('block-fixed-interval');
+        const blockFixedIntervalRowEl = document.getElementById('block-fixed-interval-row');
+        const blockRequestCountEl = document.getElementById('block-request-count');
+        const canBlockUserEl = document.getElementById('setting-can-block-user');
+        if (canBlockUserEl) canBlockUserEl.checked = e.canBlockUser !== false;
+
+        // 角色掌控模式
+        const phoneControlEnabledEl = document.getElementById('setting-phone-control-enabled');
+        const phoneControlOptionsEl = document.getElementById('setting-phone-control-options');
+        const phoneControlActionsEl = document.getElementById('setting-phone-control-actions');
+        const phoneControlViewLimitEl = document.getElementById('setting-phone-control-view-limit');
+        const phoneControlViewLimitValueEl = document.getElementById('setting-phone-control-view-limit-value');
+        if (phoneControlEnabledEl) {
+            phoneControlEnabledEl.checked = e.phoneControlEnabled || false;
+            if (phoneControlOptionsEl) phoneControlOptionsEl.style.display = phoneControlEnabledEl.checked ? 'block' : 'none';
+            if (phoneControlActionsEl) phoneControlActionsEl.style.display = phoneControlEnabledEl.checked ? 'flex' : 'none';
+        }
+        const phoneControlCharFilterEl = document.getElementById('setting-phone-control-char-filter');
+        const phoneControlCharSelectionEl = document.getElementById('setting-phone-control-char-selection');
+        const phoneControlCharFilterEnabledEl = document.getElementById('setting-phone-control-char-filter-enabled');
+        if (phoneControlCharFilterEl) phoneControlCharFilterEl.style.display = e.phoneControlEnabled ? 'flex' : 'none';
+        if (phoneControlCharFilterEnabledEl) phoneControlCharFilterEnabledEl.checked = e.phoneControlCharFilterEnabled || false;
+        if (phoneControlCharSelectionEl) phoneControlCharSelectionEl.style.display = (e.phoneControlEnabled && e.phoneControlCharFilterEnabled) ? 'flex' : 'none';
+        if (phoneControlViewLimitEl) {
+            const limit = Math.min(50, Math.max(5, parseInt(e.phoneControlViewLimit, 10) || 10));
+            phoneControlViewLimitEl.value = limit;
+            if (phoneControlViewLimitValueEl) phoneControlViewLimitValueEl.textContent = limit;
+        }
+
+        if (blockCharacterBtnEl && blockSettingsPanelEl) {
+            if (e.isBlocked) {
+                blockCharacterBtnEl.style.display = 'none';
+                blockSettingsPanelEl.style.display = 'block';
+                const br = e.blockReapply || {};
+                if (blockReapplyModeEl) blockReapplyModeEl.value = br.mode || 'fixed';
+                if (blockFixedIntervalEl) blockFixedIntervalEl.value = Math.max(1, br.fixedInterval || 30);
+                if (blockRequestCountEl) blockRequestCountEl.textContent = (e.friendRequests && e.friendRequests.length) ? e.friendRequests.length : 0;
+                if (blockFixedIntervalRowEl) blockFixedIntervalRowEl.style.display = (br.mode === 'auto') ? 'none' : '';
+                
+                const triggerBtn = document.getElementById('trigger-friend-request-btn');
+                if (triggerBtn) {
+                    if (e.blockReapply && e.blockReapply.pendingRequestId) {
+                        triggerBtn.textContent = '查看未处理申请';
+                        triggerBtn.classList.add('pending');
+                    } else {
+                        triggerBtn.textContent = '生成好友申请';
+                        triggerBtn.classList.remove('pending');
+                    }
+                }
+            } else {
+                blockCharacterBtnEl.style.display = '';
+                blockSettingsPanelEl.style.display = 'none';
+            }
+        }
+
+        const useCustomCssCheckbox = document.getElementById('setting-use-custom-css'),
+            customCssTextarea = document.getElementById('setting-custom-bubble-css'),
+            privatePreviewBox = document.getElementById('private-bubble-css-preview');
+        useCustomCssCheckbox.checked = e.useCustomBubbleCss || false;
+        customCssTextarea.value = e.customBubbleCss || '';
+        customCssTextarea.disabled = !useCustomCssCheckbox.checked;
+        const theme = colorThemes[e.theme || 'white_pink'];
+        updateBubbleCssPreview(privatePreviewBox, e.customBubbleCss, !e.useCustomBubbleCss, theme);
+        populateBubblePresetSelect('bubble-preset-select');
+        const allowCharSwitchCssEl = document.getElementById('setting-allow-char-switch-bubble-css');
+        const bindingsWrap = document.getElementById('bubble-css-theme-bindings-wrap');
+        if (allowCharSwitchCssEl) allowCharSwitchCssEl.checked = !!e.allowCharSwitchBubbleCss;
+        if (bindingsWrap) bindingsWrap.style.display = (e.allowCharSwitchBubbleCss ? 'block' : 'none');
+        populateBubbleThemeBindingsList(e.bubbleCssThemeBindings || []);
+        populateMyPersonaSelect();
+        if (typeof populateStatusBarPresetSelect === 'function') {
+            populateStatusBarPresetSelect();
+        }
+        if (window.McpManager) window.McpManager.renderPermissionEditor(document.getElementById('chat-mcp-settings'), e);
+    }
+}
+

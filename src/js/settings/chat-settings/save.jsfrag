@@ -1,0 +1,447 @@
+async function saveSettingsFromSidebar() {
+    const e = db.characters.find(e => e.id === currentChatId);
+    if (e) {
+        const avatarPreviewEl = document.getElementById('setting-char-avatar-preview');
+        if (avatarPreviewEl) {
+            e.avatar = avatarPreviewEl.src;
+        }
+        const realNameInput = document.getElementById('setting-char-real-name');
+        if (realNameInput) e.realName = (realNameInput.value || '').trim();
+        
+        const birthdayInput = document.getElementById('setting-char-birthday');
+        if (birthdayInput) e.birthday = (birthdayInput.value || '').trim();
+        
+        const enableDynamicAgeInput = document.getElementById('setting-char-enable-dynamic-age');
+        if (enableDynamicAgeInput) e.enableDynamicAge = enableDynamicAgeInput.checked;
+        
+        e.remarkName = document.getElementById('setting-char-remark').value;
+        
+        const timezoneInput = document.getElementById('setting-char-timezone');
+        const timezonePresetEl = document.getElementById('setting-char-timezone-preset');
+        if (timezoneInput) {
+            e.charTimezone = (timezoneInput.value || '').trim();
+            if (timezonePresetEl && timezonePresetEl.value && !timezoneInput.value) {
+                e.charTimezone = timezonePresetEl.value;
+            }
+        }
+        
+        const enableDynamicTimezoneInput = document.getElementById('setting-char-enable-dynamic-timezone');
+        if (enableDynamicTimezoneInput) e.enableDynamicTimezone = enableDynamicTimezoneInput.checked;
+        
+        const customPromptPresetInput = document.getElementById('setting-char-custom-prompt-preset');
+        if (customPromptPresetInput) {
+            e.customPromptPresetId = customPromptPresetInput.value;
+            e.customPromptPreset = customPromptPresetInput.value;
+        }
+
+        e.persona = document.getElementById('setting-char-persona').value;
+        
+        if (e.source === 'forum' || e.source === 'peek') {
+            const supplementEnabledEl = document.getElementById('setting-forum-supplement-persona-enabled');
+            const supplementAiEl = document.getElementById('setting-forum-supplement-persona-ai-enabled');
+            const supplementTextEl = document.getElementById('setting-forum-supplement-persona-text');
+            if (supplementEnabledEl) e.supplementPersonaEnabled = supplementEnabledEl.checked;
+            if (supplementAiEl) e.supplementPersonaAiEnabled = supplementAiEl.checked;
+            if (supplementTextEl) e.supplementPersonaText = supplementTextEl.value || '';
+        }
+        
+        const selectedGroups = Array.from(document.querySelectorAll('#setting-char-sticker-groups-container .sticker-group-tag.selected'))
+            .map(tag => tag.dataset.group)
+            .join(',');
+        e.stickerGroups = selectedGroups;
+
+        const stickerDescEnabledEl = document.getElementById('setting-char-sticker-description-enabled');
+        if (stickerDescEnabledEl) {
+            e.stickerDescriptionEnabled = stickerDescEnabledEl.checked;
+        }
+
+        // 头像系统：有头像变动则识别（含缓存）并系统通知
+        const myAvatarPreviewEl = document.getElementById('setting-my-avatar-preview');
+        const _newMyAvatar = myAvatarPreviewEl ? myAvatarPreviewEl.src : e.myAvatar;
+        const _previousCharAvatar = e.avatar;
+        const _senseAvatarChangeEnabled = document.getElementById('setting-char-sense-avatar-change').checked;
+        if (window.AvatarSystem && _senseAvatarChangeEnabled && e.myAvatar && _newMyAvatar !== e.myAvatar) {
+            await window.AvatarSystem.recognizeAndNotifyUserAvatarChange(currentChatId, e.myAvatar, _newMyAvatar);
+        }
+        if (window.AvatarSystem && typeof window.AvatarSystem.syncManualAvatarChange === 'function') {
+            window.AvatarSystem.syncManualAvatarChange(currentChatId, _newMyAvatar, avatarPreviewEl ? avatarPreviewEl.src : _previousCharAvatar);
+        }
+        e.myAvatar = _newMyAvatar;
+        e.myName = document.getElementById('setting-my-name').value;
+        e.myPersona = document.getElementById('setting-my-persona').value;
+        
+        const myBirthdayInput = document.getElementById('setting-my-birthday');
+        if (myBirthdayInput) e.myBirthday = (myBirthdayInput.value || '').trim();
+        const myEnableDynamicAgeInput = document.getElementById('setting-my-enable-dynamic-age');
+        if (myEnableDynamicAgeInput) e.myEnableDynamicAge = myEnableDynamicAgeInput.checked;
+        
+        const myEnableDynamicTimezoneInput = document.getElementById('setting-my-enable-dynamic-timezone');
+        if (myEnableDynamicTimezoneInput) e.myEnableDynamicTimezone = myEnableDynamicTimezoneInput.checked;
+        
+        const myTimezoneInput = document.getElementById('setting-my-timezone');
+        const myTimezonePresetEl = document.getElementById('setting-my-timezone-preset');
+        if (myTimezoneInput) {
+            e.myTimezone = (myTimezoneInput.value || '').trim();
+            if (myTimezonePresetEl && myTimezonePresetEl.value && !myTimezoneInput.value) {
+                e.myTimezone = myTimezonePresetEl.value;
+            }
+        }
+        
+        e.theme = document.getElementById('setting-theme-color').value;
+        e.maxMemory = document.getElementById('setting-max-memory').value;
+        e.syncGroupMemory = document.getElementById('setting-sync-group-memory').checked;
+        e.groupMemoryHistoryCount = parseInt(document.getElementById('setting-group-memory-history-count').value, 10) || 20;
+        e.groupMemorySummaryCount = parseInt(document.getElementById('setting-group-memory-summary-count').value, 10) || 0;
+        
+        // 保存选中的群聊ID列表
+        const syncGroupListContainer = document.getElementById('setting-sync-group-list');
+        if (syncGroupListContainer && e.syncGroupMemory) {
+            const selectedCheckboxes = syncGroupListContainer.querySelectorAll('input[type="checkbox"]:checked');
+            e.syncGroupIds = Array.from(selectedCheckboxes).map(cb => cb.value);
+        } else {
+            e.syncGroupIds = [];
+        }
+
+        e.replyCountEnabled = document.getElementById('setting-reply-count-enabled').checked;
+        e.replyCountMin = parseInt(document.getElementById('setting-reply-count-min').value, 10) || 3;
+        e.replyCountMax = parseInt(document.getElementById('setting-reply-count-max').value, 10) || 8;
+        const stickerSmartMatchCb = document.getElementById('setting-sticker-smart-match');
+        e.stickerSmartMatchEnabled = stickerSmartMatchCb ? stickerSmartMatchCb.checked : false;
+
+        if (typeof ensureAutoJournalState === 'function') {
+            ensureAutoJournalState(e);
+        }
+        e.autoJournalEnabled = document.getElementById('setting-auto-journal-enabled').checked;
+        const memoryModeElSave = document.getElementById('setting-memory-mode');
+        e.memoryMode = memoryModeElSave ? memoryModeElSave.value : 'journal';
+        const autoJournalIntervalInput = parseInt(document.getElementById('setting-auto-journal-interval').value, 10);
+        e.autoJournalInterval = (isNaN(autoJournalIntervalInput) || autoJournalIntervalInput < 10) ? 100 : autoJournalIntervalInput;
+        const charAutoFavEl = document.getElementById('setting-char-auto-favorite');
+        e.characterAutoFavoriteEnabled = charAutoFavEl ? charAutoFavEl.checked : false;
+
+        const charAwareUserFavoritesEl = document.getElementById('setting-char-aware-user-favorites');
+        e.charAwareUserFavorites = charAwareUserFavoritesEl ? charAwareUserFavoritesEl.checked : false;
+        
+        const awareScopeAll = document.getElementById('setting-aware-favorite-scope-all');
+        e.awareFavoriteScope = (awareScopeAll && awareScopeAll.checked) ? 'all' : 'current';
+
+        const journalFavTopEl = document.getElementById('setting-journal-favorite-top');
+        if (journalFavTopEl) {
+            e.journalFavoriteTop = journalFavTopEl.checked;
+        } else if (e.journalFavoriteTop === undefined) {
+            e.journalFavoriteTop = true; // 如果元素不存在且未定义过，默认保护为 true
+        }
+
+        // 保存单人思维链设置
+        const charCotEnabledSave = document.getElementById('setting-char-cot-enabled');
+        const charCotChatEnabledSave = document.getElementById('setting-char-cot-chat-enabled');
+        const charCotChatPresetSave = document.getElementById('setting-char-cot-chat-preset');
+        const charCotCallEnabledSave = document.getElementById('setting-char-cot-call-enabled');
+        const charCotCallPresetSave = document.getElementById('setting-char-cot-call-preset');
+        const charCotOfflineEnabledSave = document.getElementById('setting-char-cot-offline-enabled');
+        const charCotOfflinePresetSave = document.getElementById('setting-char-cot-offline-preset');
+        
+        if (!e.cotSettings) e.cotSettings = {};
+        e.cotSettings.enabled = charCotEnabledSave ? charCotEnabledSave.checked : false;
+        e.cotSettings.chatEnabled = charCotChatEnabledSave ? charCotChatEnabledSave.checked : false;
+        e.cotSettings.activePresetId = charCotChatPresetSave ? charCotChatPresetSave.value : '';
+        e.cotSettings.callEnabled = charCotCallEnabledSave ? charCotCallEnabledSave.checked : false;
+        e.cotSettings.activeCallPresetId = charCotCallPresetSave ? charCotCallPresetSave.value : '';
+        e.cotSettings.offlineEnabled = charCotOfflineEnabledSave ? charCotOfflineEnabledSave.checked : false;
+        e.cotSettings.activeOfflinePresetId = charCotOfflinePresetSave ? charCotOfflinePresetSave.value : '';
+
+        // 保存小剧场设置
+        const charTheaterEnabledSave = document.getElementById('setting-char-theater-enabled');
+        const charTheaterProbSave = document.getElementById('setting-char-theater-probability');
+        const charTheaterFormatSave = document.getElementById('setting-char-theater-format');
+        const charTheaterPromptSave = document.getElementById('setting-char-theater-prompt');
+        e.charTheaterEnabled = charTheaterEnabledSave ? charTheaterEnabledSave.checked : false;
+        e.charTheaterProbability = charTheaterProbSave ? parseInt(charTheaterProbSave.value, 10) : 20;
+        e.charTheaterFormat = charTheaterFormatSave ? charTheaterFormatSave.value : 'text';
+        e.charTheaterPrompt = charTheaterPromptSave ? charTheaterPromptSave.value.trim() : '';
+        // 保存聊天条数、日记条数
+        const charTheaterChatCountSave = document.getElementById('setting-char-theater-chat-count');
+        const charTheaterJournalCountSave = document.getElementById('setting-char-theater-journal-count');
+        e.charTheaterChatCount = charTheaterChatCountSave ? Math.max(0, parseInt(charTheaterChatCountSave.value, 10) || 0) : 20;
+        e.charTheaterJournalCount = charTheaterJournalCountSave ? Math.max(0, parseInt(charTheaterJournalCountSave.value, 10) || 0) : 0;
+        // 保存世界书多选（theater风格下拉）
+        const charTheaterWbOptionsCont = document.getElementById('setting-char-theater-wb-options');
+        if (charTheaterWbOptionsCont) {
+            e.charTheaterWorldBookIds = Array.from(
+                charTheaterWbOptionsCont.querySelectorAll('.theater-multiselect-option.selected')
+            ).map(opt => opt.dataset.id).filter(Boolean);
+        } else {
+            e.charTheaterWorldBookIds = [];
+        }
+        // 保存自知开关
+        const charTheaterSelfAwareSave = document.getElementById('setting-char-theater-self-aware');
+        e.charTheaterSelfAware = charTheaterSelfAwareSave ? charTheaterSelfAwareSave.checked : false;
+
+        // 保存独立 API 设置
+        const charTheaterUseCustomApiSave = document.getElementById('setting-char-theater-use-custom-api');
+        e.charTheaterUseCustomApi = charTheaterUseCustomApiSave ? charTheaterUseCustomApiSave.checked : false;
+        e.charTheaterApiUrl = (document.getElementById('setting-char-theater-api-url')?.value || '').trim();
+        e.charTheaterApiKey = (document.getElementById('setting-char-theater-api-key')?.value || '').trim();
+        e.charTheaterApiModel = (document.getElementById('setting-char-theater-api-model')?.value || '').trim();
+
+        e.useCustomBubbleCss = document.getElementById('setting-use-custom-css').checked;
+        e.customBubbleCss = document.getElementById('setting-custom-bubble-css').value;
+        e.allowCharSwitchBubbleCss = document.getElementById('setting-allow-char-switch-bubble-css').checked;
+        e.bubbleCssThemeBindings = collectBubbleThemeBindingsFromDOM();
+        if (e.allowCharSwitchBubbleCss) {
+            const cssTrim = (e.customBubbleCss || '').trim();
+            const presets = _getBubblePresets();
+            const matched = presets.find(p => p.css && (p.css.trim() === cssTrim));
+            e.currentBubbleCssPresetName = matched ? matched.name : '';
+        }
+        e.bilingualModeEnabled = document.getElementById('setting-bilingual-mode').checked;
+        e.bilingualBubbleStyle = document.getElementById('setting-bilingual-style').value;
+        
+        e.avatarMode = document.getElementById('setting-avatar-mode').value;
+        e.avatarRadius = parseInt(document.getElementById('setting-avatar-radius').value, 10);
+
+        const chatScreen = document.getElementById('chat-room-screen');
+
+        e.bubbleBlurEnabled = document.getElementById('setting-bubble-blur').checked;
+        if (e.bubbleBlurEnabled) {
+            chatScreen.classList.remove('disable-blur');
+        } else {
+            chatScreen.classList.add('disable-blur');
+        }
+
+        e.titleLayout = document.getElementById('setting-title-layout').value;
+        const header = document.getElementById('chat-room-header-default');
+        if (e.titleLayout === 'center') {
+            header.classList.add('title-centered');
+        } else {
+            header.classList.remove('title-centered');
+        }
+
+        e.showTimestamp = document.getElementById('setting-show-timestamp').checked;
+        
+        if (e.showTimestamp) {
+            chatScreen.classList.add('show-timestamp');
+        } else {
+            chatScreen.classList.remove('show-timestamp');
+        }
+        chatScreen.classList.remove('timestamp-side');
+
+        e.timestampStyle = document.getElementById('setting-timestamp-style').value;
+        chatScreen.classList.remove('timestamp-style-bubble', 'timestamp-style-avatar');
+        chatScreen.classList.add(`timestamp-style-${e.timestampStyle || 'bubble'}`);
+
+        e.timestampFormat = document.getElementById('setting-timestamp-format').value;
+
+        e.showStatus = document.getElementById('setting-show-status').checked;
+        const subtitle = document.getElementById('chat-room-subtitle');
+        if (subtitle) {
+            subtitle.style.display = e.showStatus ? 'flex' : 'none';
+        }
+
+        e.showStatusUpdateMsg = document.getElementById('setting-show-status-update-msg').checked;
+        e.showReminderMsg = document.getElementById('setting-show-reminder-msg').checked;
+        const pokeEnabledEl = document.getElementById('setting-poke-enabled');
+        e.pokeEnabled = !!(pokeEnabledEl && pokeEnabledEl.checked);
+        const pokeCharacterEl = document.getElementById('setting-poke-character-initiated');
+        e.pokeAllowCharacterInitiated = !pokeCharacterEl || pokeCharacterEl.checked;
+        const pokeReplyEl = document.getElementById('setting-poke-trigger-reply');
+        e.pokeTriggerReply = !pokeReplyEl || pokeReplyEl.checked;
+        const pokeCharSuffixEl = document.getElementById('setting-poke-char-suffix');
+        e.pokeCharacterSuffix = window.PokeSystem ? window.PokeSystem.cleanSuffix(pokeCharSuffixEl && pokeCharSuffixEl.value) : ((pokeCharSuffixEl && pokeCharSuffixEl.value) || '').trim();
+        const pokeUserSuffixEl = document.getElementById('setting-poke-user-suffix');
+        e.pokeUserSuffix = window.PokeSystem ? window.PokeSystem.cleanSuffix(pokeUserSuffixEl && pokeUserSuffixEl.value) : ((pokeUserSuffixEl && pokeUserSuffixEl.value) || '').trim();
+        const pokeEffectEl = document.getElementById('setting-poke-effect-mode');
+        e.pokeEffectMode = pokeEffectEl ? pokeEffectEl.value : 'full';
+        const pokeVibrationEl = document.getElementById('setting-poke-vibration');
+        e.pokeVibrationEnabled = !pokeVibrationEl || pokeVibrationEl.checked;
+        const pokeNotificationEl = document.getElementById('setting-poke-notification-mode');
+        e.pokeNotificationMode = pokeNotificationEl ? pokeNotificationEl.value : 'in_chat';
+        const pokeContextEl = document.getElementById('setting-poke-context');
+        e.pokeContextEnabled = !pokeContextEl || pokeContextEl.checked;
+        e.avatarSystemEnabled = document.getElementById('setting-avatar-system-enabled').checked;
+        e.charSenseAvatarChangeEnabled = _senseAvatarChangeEnabled;
+        const charCanSwitchInput = document.getElementById('setting-char-can-switch-avatar');
+        e.charCanSwitchAvatarEnabled = charCanSwitchInput ? charCanSwitchInput.checked : false;
+        const charCollectInput = document.getElementById('setting-char-collect-image-as-avatar');
+        e.charCollectImageAsAvatarEnabled = charCollectInput ? charCollectInput.checked : false;
+        const charCollectCoupleInput = document.getElementById('setting-char-collect-couple-avatar');
+        e.charCollectCoupleAvatarEnabled = charCollectCoupleInput ? charCollectCoupleInput.checked : false;
+        const charSenseCoupleInput = document.getElementById('setting-char-sense-couple-avatar');
+        e.charSenseCoupleAvatarEnabled = charSenseCoupleInput ? charSenseCoupleInput.checked : false;
+        e.showAvatarActionMsg = document.getElementById('setting-show-avatar-action-msg').checked;
+        e.charReminderEnabled = document.getElementById('setting-char-reminder-enabled').checked;
+
+        // 消息版本管理
+        const keepRegenSave = document.getElementById('setting-keep-regen-versions');
+        e.keepRegenVersions = keepRegenSave ? keepRegenSave.checked : false;
+
+        if (!e.statusPanel) e.statusPanel = {};
+        e.statusPanel.enabled = document.getElementById('setting-status-panel-enabled').checked;
+        e.statusPanel.promptSuffix = document.getElementById('setting-status-prompt-suffix').value;
+        e.statusPanel.regexPattern = document.getElementById('setting-status-regex').value;
+        e.statusPanel.replacePattern = document.getElementById('setting-status-replace').value;
+        const historyLimitInput = parseInt(document.getElementById('setting-status-history-limit').value, 10);
+        e.statusPanel.historyLimit = isNaN(historyLimitInput) ? 3 : historyLimitInput;
+
+        // 保存角色正则过滤设置
+        if (!e.regexFilter) e.regexFilter = {};
+        e.regexFilter.enabled = document.getElementById('setting-regex-filter-enabled').checked;
+        const rfRulesText = document.getElementById('setting-regex-filter-rules').value;
+        e.regexFilter.rules = (typeof parseRegexFilterRulesText === 'function') ? parseRegexFilterRulesText(rfRulesText) : [];
+
+        const webSearchEnabledElSave = document.getElementById('setting-char-web-search-enabled');
+        const webSearchPayloadElSave = document.getElementById('setting-char-web-search-payload');
+        e.webSearchEnabled = webSearchEnabledElSave ? webSearchEnabledElSave.checked : false;
+        e.webSearchPayload = webSearchPayloadElSave ? webSearchPayloadElSave.value.trim() : '';
+
+        // 保存环境与天气增强设置
+        if (!e.weatherSettings) e.weatherSettings = {};
+        e.weatherSettings.charEnabled = document.getElementById('setting-char-weather-enabled')?.checked || false;
+        e.weatherSettings.charCity = (document.getElementById('setting-char-weather-city')?.value || '').trim();
+        e.weatherSettings.userEnabled = document.getElementById('setting-user-weather-enabled')?.checked || false;
+        e.weatherSettings.userCity = (document.getElementById('setting-user-weather-city')?.value || '').trim();
+        
+        e.weatherSettings.customApiEnabled = document.getElementById('setting-char-weather-custom-api-enabled')?.checked || false;
+        e.weatherSettings.provider = document.getElementById('setting-char-weather-provider')?.value || 'openmeteo';
+        e.weatherSettings.apiKey = (document.getElementById('setting-char-weather-key')?.value || '').trim();
+
+        e.shopInteractionEnabled = document.getElementById('setting-shop-interaction-enabled').checked;
+        const familyCardEnabledEl = document.getElementById('setting-family-card-enabled');
+        if (familyCardEnabledEl) e.familyCardEnabled = familyCardEnabledEl.checked;
+
+        const autonomousShoppingEl = document.getElementById('setting-autonomous-shopping-enabled');
+        if (autonomousShoppingEl) e.autonomousShoppingEnabled = autonomousShoppingEl.checked;
+        const ownWalletShoppingEl = document.getElementById('setting-character-own-wallet-shopping-enabled');
+        if (ownWalletShoppingEl) e.characterOwnWalletShoppingEnabled = ownWalletShoppingEl.checked;
+        const familyCardSpendingEl = document.getElementById('setting-character-family-card-spending-enabled');
+        if (familyCardSpendingEl) e.characterFamilyCardSpendingEnabled = familyCardSpendingEl.checked;
+        const selfShoppingEl = document.getElementById('setting-character-self-shopping-enabled');
+        if (selfShoppingEl) e.characterSelfShoppingEnabled = selfShoppingEl.checked;
+        const giftShoppingEl = document.getElementById('setting-character-gift-shopping-enabled');
+        if (giftShoppingEl) e.characterGiftShoppingEnabled = giftShoppingEl.checked;
+        const payRequestEl = document.getElementById('setting-character-pay-request-enabled');
+        if (payRequestEl) e.characterPayRequestEnabled = payRequestEl.checked;
+        const shoppingSingleLimitEl = document.getElementById('setting-character-shopping-single-limit');
+        if (shoppingSingleLimitEl) e.characterShoppingSingleLimit = Math.max(0, Number(shoppingSingleLimitEl.value) || 0);
+        const shoppingBudgetEl = document.getElementById('setting-character-shopping-period-budget');
+        if (shoppingBudgetEl) e.characterShoppingPeriodBudget = Math.max(0, Number(shoppingBudgetEl.value) || 0);
+        const shoppingFrequencyEl = document.getElementById('setting-character-shopping-frequency');
+        if (shoppingFrequencyEl) e.characterShoppingFrequency = shoppingFrequencyEl.value || 'rare';
+        const shoppingCategoriesEl = document.getElementById('setting-character-shopping-categories');
+        if (shoppingCategoriesEl) e.characterShoppingAllowedCategories = shoppingCategoriesEl.value.trim();
+
+        e.videoCallEnabled = document.getElementById('setting-video-call-enabled').checked;
+        e.realCameraEnabled = document.getElementById('setting-real-camera-enabled').checked;
+        e.vcNovelAiEnabled = document.getElementById('setting-vc-novelai-enabled').checked;
+        const vcGptDrawSave = document.getElementById('setting-vc-gpt-draw-enabled');
+        e.vcGptDrawEnabled = vcGptDrawSave ? vcGptDrawSave.checked : false;
+        const vcGoogleImageSave = document.getElementById('setting-vc-google-image-enabled');
+        e.vcGoogleImageEnabled = vcGoogleImageSave ? vcGoogleImageSave.checked : false;
+        const vcStabilityImageSave = document.getElementById('setting-vc-stability-image-enabled');
+        e.vcStabilityImageEnabled = vcStabilityImageSave ? vcStabilityImageSave.checked : false;
+        const saveCallOnInterruptSave = document.getElementById('setting-save-call-on-interrupt');
+        e.saveCallOnInterrupt = saveCallOnInterruptSave ? saveCallOnInterruptSave.checked : false;
+
+        // === 保存 NovelAI 生图设置（模型/尺寸/画师串）回 db.novelAiSettings ===
+        {
+            const naiModelEl = document.getElementById('novelai-model');
+            const naiResEl = document.getElementById('novelai-resolution');
+            const naiArtistEl = document.getElementById('novelai-artist-tags');
+            if (!db.novelAiSettings) db.novelAiSettings = {};
+            if (naiModelEl) db.novelAiSettings.model = naiModelEl.value;
+            if (naiResEl) db.novelAiSettings.resolution = naiResEl.value;
+            if (naiArtistEl) db.novelAiSettings.artistTags = naiArtistEl.value.trim();
+        }
+
+        // === 保存 GPT 专属画师串 ===
+        const gptArtistEl = document.getElementById('gpt-artist-prompt');
+        if (gptArtistEl) {
+            e.gptArtistPrompt = gptArtistEl.value.trim();
+        }
+
+        if (!e.autoReply) e.autoReply = {};
+        e.autoReply.enabled = document.getElementById('setting-auto-reply-enabled').checked;
+        
+        const modeSelect = document.getElementById('setting-auto-reply-mode');
+        e.autoReply.mode = modeSelect ? modeSelect.value : 'fixed';
+        
+        const autoReplyIntervalInput = parseInt(document.getElementById('setting-auto-reply-interval').value, 10);
+        e.autoReply.interval = isNaN(autoReplyIntervalInput) ? 60 : autoReplyIntervalInput;
+        
+        const autoReplyMinInput = parseInt(document.getElementById('setting-auto-reply-min').value, 10);
+        e.autoReply.minInterval = isNaN(autoReplyMinInput) ? 60 : autoReplyMinInput;
+        
+        const autoReplyMaxInput = parseInt(document.getElementById('setting-auto-reply-max').value, 10);
+        e.autoReply.maxInterval = isNaN(autoReplyMaxInput) ? 180 : autoReplyMaxInput;
+
+        // === 保存角色回复后追发设置 ===
+        const followUp = window.FollowUpReply
+            ? window.FollowUpReply.ensureSettings(e)
+            : (e.followUpReply || (e.followUpReply = {}));
+        const followUpEnabledEl = document.getElementById('setting-follow-up-enabled');
+        const followUpModeEl = document.getElementById('setting-follow-up-mode');
+        const followUpFixedHoursEl = document.getElementById('setting-follow-up-fixed-hours');
+        const followUpMinHoursEl = document.getElementById('setting-follow-up-min-hours');
+        const followUpMaxHoursEl = document.getElementById('setting-follow-up-max-hours');
+        const followUpProbabilityEl = document.getElementById('setting-follow-up-probability');
+        const followUpMaxCountEl = document.getElementById('setting-follow-up-max-count');
+        const toMinutes = (input, fallback) => {
+            const hours = Number(input && input.value);
+            if (!Number.isFinite(hours)) return fallback;
+            return Math.min(10080, Math.max(5, Math.round(hours * 60)));
+        };
+        followUp.enabled = !!(followUpEnabledEl && followUpEnabledEl.checked);
+        followUp.delayMode = followUpModeEl && followUpModeEl.value === 'fixed' ? 'fixed' : 'random';
+        followUp.fixedDelayMinutes = toMinutes(followUpFixedHoursEl, 120);
+        followUp.minDelayMinutes = toMinutes(followUpMinHoursEl, 60);
+        followUp.maxDelayMinutes = toMinutes(followUpMaxHoursEl, 180);
+        if (followUp.minDelayMinutes > followUp.maxDelayMinutes) {
+            const oldMin = followUp.minDelayMinutes;
+            followUp.minDelayMinutes = followUp.maxDelayMinutes;
+            followUp.maxDelayMinutes = oldMin;
+        }
+        followUp.probability = Math.min(100, Math.max(0, parseInt(followUpProbabilityEl && followUpProbabilityEl.value, 10) || 0));
+        followUp.maxFollowUps = Math.min(3, Math.max(1, parseInt(followUpMaxCountEl && followUpMaxCountEl.value, 10) || 1));
+        if (!followUp.enabled) followUp.pending = null;
+
+        // === 保存消息弹窗通知设置 ===
+        const bgToastEl = document.getElementById('setting-bg-toast-enabled');
+        if (bgToastEl) e.bgToastEnabled = bgToastEl.checked;
+
+        // === 保存免打扰时段设置 ===
+        if (!e.autoReply.quietHours) e.autoReply.quietHours = {};
+        e.autoReply.quietHours.enabled = document.getElementById('setting-quiet-hours-enabled').checked;
+        e.autoReply.quietHours.start = document.getElementById('setting-quiet-hours-start').value || '23:00';
+        e.autoReply.quietHours.end = document.getElementById('setting-quiet-hours-end').value || '07:00';
+
+        e.useRealGallery = document.getElementById('setting-use-real-gallery').checked;
+
+        if (e.isBlocked) {
+            if (!e.blockReapply) e.blockReapply = {};
+            const blockModeEl = document.getElementById('block-reapply-mode');
+            const blockIntervalEl = document.getElementById('block-fixed-interval');
+            e.blockReapply.mode = (blockModeEl && blockModeEl.value) || 'fixed';
+            e.blockReapply.fixedInterval = blockIntervalEl ? Math.max(1, parseInt(blockIntervalEl.value, 10) || 30) : 30;
+        }
+        const canBlockUserCheckbox = document.getElementById('setting-can-block-user');
+        if (canBlockUserCheckbox) e.canBlockUser = canBlockUserCheckbox.checked;
+
+        const phoneControlEnabledCheckbox = document.getElementById('setting-phone-control-enabled');
+        if (phoneControlEnabledCheckbox) e.phoneControlEnabled = phoneControlEnabledCheckbox.checked;
+        const phoneControlViewLimitInput = document.getElementById('setting-phone-control-view-limit');
+        if (phoneControlViewLimitInput) e.phoneControlViewLimit = Math.min(50, Math.max(5, parseInt(phoneControlViewLimitInput.value, 10) || 10));
+        const phoneControlCharFilterCheckbox = document.getElementById('setting-phone-control-char-filter-enabled');
+        if (phoneControlCharFilterCheckbox) e.phoneControlCharFilterEnabled = phoneControlCharFilterCheckbox.checked;
+        if (window.McpManager && document.getElementById('chat-mcp-settings')) e.mcpSettings = window.McpManager.readPermissionEditor(document.getElementById('chat-mcp-settings'));
+        // phoneControlVisibleCharIds 的保存将在弹窗确认时直接操作 db 并触发 saveData，这里无需额外处理，只需保持状态同步
+
+        await saveData();
+        showToast('设置已保存！');
+        chatRoomTitle.textContent = e.remarkName;
+        renderChatList();
+        // updateCustomBubbleStyle(currentChatId, e.customBubbleCss, e.useCustomBubbleCss); // 移除实时应用以防污染设置页
+        currentPage = 1;
+        renderMessages(false, true);
+    }
+}
+

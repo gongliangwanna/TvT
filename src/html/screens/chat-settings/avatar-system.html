@@ -1,0 +1,365 @@
+                        <!-- 头像识别系统子页面（从拓展 Tab 进入） -->
+                        <div id="setting-avatar-system-panel" class="settings-tab-content" style="display:none;">
+                            <div class="kkt-item kkt-back-row" id="setting-avatar-system-back" style="cursor:pointer; padding:12px 16px; border-bottom:1px solid #eee; display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:18px;">‹</span>
+                                <span>头像识别系统</span>
+                            </div>
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">启用头像识别系统</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-avatar-system-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色感知头像变化</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-sense-avatar-change">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色可自主更换头像</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-can-switch-avatar">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色可收藏用户图片为头像</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-collect-image-as-avatar">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色可自主收藏情头</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-collect-couple-avatar">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色感知当前情头状态</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-sense-couple-avatar">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" id="setting-avatar-recognition-detail-row" style="cursor:pointer;">
+                                    <div class="kkt-item-label">头像识别字数</div>
+                                    <div class="kkt-item-control">
+                                        <span id="avatar-recognition-detail-display" style="color:#888;">详细（不限）</span>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">用户头像库</div>
+                                    <div class="kkt-item-control">
+                                        <button type="button" id="setting-avatar-library-btn" class="btn btn-small btn-secondary" style="padding:4px 10px;">管理</button>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色头像库</div>
+                                    <div class="kkt-item-control">
+                                        <button type="button" id="setting-char-avatar-library-btn" class="btn btn-small btn-secondary" style="padding:4px 10px;">管理</button>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">情头库</div>
+                                    <div class="kkt-item-control">
+                                        <button type="button" id="setting-couple-avatar-library-btn" class="btn btn-small btn-secondary" style="padding:4px 10px;">管理</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 【美化】Tab 内容 -->
+                        <div id="setting-tab-style" class="settings-tab-content">
+                            <!-- 聊天环境分组 -->
+                            <div class="kkt-group">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">聊天背景</div>
+                                    <div class="kkt-item-control" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                        <span onclick="document.getElementById('setting-chat-bg-upload').click()" style="cursor:pointer;">点击更换</span>
+                                        <span class="kkt-arrow">›</span>
+                                        <span id="reset-chat-bg-btn" style="margin-left:4px;color:#888;font-size:13px;cursor:pointer;">恢复默认</span>
+                                    </div>
+                                    <input type="file" id="setting-chat-bg-upload" accept="image/*"
+                                        style="display:none;">
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">通话壁纸</div>
+                                    <div class="kkt-item-control" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                        <span onclick="document.getElementById('setting-call-bg-upload').click()" style="cursor:pointer;">点击更换</span>
+                                        <span class="kkt-arrow">›</span>
+                                        <span id="reset-call-bg-btn" style="margin-left:4px;color:#888;font-size:13px;cursor:pointer;">恢复默认</span>
+                                    </div>
+                                    <input type="file" id="setting-call-bg-upload" accept="image/*"
+                                        style="display:none;">
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">主题颜色</div>
+                                    <div class="kkt-item-control">
+                                        <select id="setting-theme-color"
+                                            style="border:none; background:transparent; text-align:right;"></select>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">头像显示模式</div>
+                                    <div class="kkt-item-control">
+                                        <select id="setting-avatar-mode"
+                                            style="border:none; background:transparent; text-align:right;">
+                                            <option value="full">全部显示</option>
+                                            <option value="merge">气泡合并</option>
+                                            <option value="kkt">KKT模式</option>
+                                            <option value="hidden">隐藏头像</option>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">顶部标题布局</div>
+                                    <div class="kkt-item-control">
+                                        <select id="setting-title-layout"
+                                            style="border:none; background:transparent; text-align:right;">
+                                            <option value="left">居左 (默认)</option>
+                                            <option value="center">居中</option>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">显示时间戳</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-show-timestamp">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" id="setting-timestamp-style-container">
+                                    <div class="kkt-item-label">时间戳位置</div>
+                                    <div class="kkt-item-control">
+                                        <select id="setting-timestamp-style"
+                                            style="border:none; background:transparent; text-align:right;">
+                                            <option value="bubble">跟随气泡</option>
+                                            <option value="avatar">头像下方</option>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" id="setting-timestamp-format-container">
+                                    <div class="kkt-item-label">时间戳格式</div>
+                                    <div class="kkt-item-control">
+                                        <select id="setting-timestamp-format"
+                                            style="border:none; background:transparent; text-align:right;">
+                                            <option value="hm">时:分</option>
+                                            <option value="hms">时:分:秒</option>
+                                            <option value="ymd">年/月/日</option>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">顶部显示在线状态</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-show-status">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">聊天内显示状态更新消息</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-show-status-update-msg">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">聊天内显示提醒事项消息</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-show-reminder-msg" checked>
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">聊天内显示头像操作消息</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-show-avatar-action-msg">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">气泡磨砂效果</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-bubble-blur">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item"
+                                    style="flex-direction: column; align-items: stretch; padding-bottom: 15px;">
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; align-items: center;">
+                                        <div style="display: flex; align-items: center; gap: 8px;">
+                                            <div class="kkt-item-label">头像圆角</div>
+                                            <button type="button" id="reset-avatar-radius-btn" class="btn btn-small btn-secondary" style="padding: 2px 8px; font-size: 12px; height: auto; min-height: auto; border-radius: 4px;">重置</button>
+                                        </div>
+                                        <span id="setting-avatar-radius-value"
+                                            style="color: var(--primary-color); font-weight: bold;">50%</span>
+                                    </div>
+                                    <input type="range" id="setting-avatar-radius" min="0" max="50" step="1" value="50"
+                                        style="width: 100%; accent-color: var(--primary-color);">
+                                </div>
+                            </div>
+
+                            <!-- 气泡样式分组 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">自定义气泡样式</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-use-custom-css">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" style="display:block;">
+                                    <div id="private-bubble-css-preview" class="bubble-css-preview"
+                                        style="margin-bottom:10px;"></div>
+                                    <textarea id="setting-custom-bubble-css" rows="4" placeholder="CSS代码..."
+                                        style="width:100%; border:1px solid #eee; border-radius:8px; padding:5px;"
+                                        disabled></textarea>
+                                    <div style="display:flex; justify-content:flex-end; gap:5px; margin-top:5px;">
+                                        <button type="button" id="bubble-css-import-doc-btn" class="btn btn-small" style="padding:4px 8px;">导入文档</button>
+                                        <input type="file" id="bubble-css-import-file" accept=".txt,.docx" style="display:none;">
+                                        <select id="bubble-preset-select" style="width:100px;">
+                                            <option value="">预设</option>
+                                        </select>
+                                        <button type="button" id="apply-preset-btn" class="btn btn-small btn-primary"
+                                            style="padding:4px 8px;">应用</button>
+                                        <button type="button" id="save-preset-btn" class="btn btn-small"
+                                            style="padding:4px 8px;">存</button>
+                                        <button type="button" id="manage-presets-btn" class="btn btn-small"
+                                            style="padding:4px 8px;">管</button>
+                                        <button type="button" id="reset-custom-bubble-css-btn"
+                                            class="btn btn-small btn-neutral" style="padding:4px 8px;">重置</button>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" style="margin-top:12px;">
+                                    <div class="kkt-item-label">允许角色在对话中自主更换聊天主题</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-allow-char-switch-bubble-css">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div id="bubble-css-theme-bindings-wrap" class="kkt-item" style="display:none; margin-top:10px;">
+                                    <div class="bubble-theme-desc-card" style="background:var(--panel-bg-secondary, #f8f9fa); border-radius:12px; padding:14px; border:1px solid var(--border-color, #eee);">
+                                        <div style="font-weight:600; color:var(--text-color, #333); margin-bottom:6px;">描述库</div>
+                                        <p style="font-size:12px; color:#888; margin:0 0 10px 0;">为下方主题填写描述（选填），角色会看到这些描述并在合适时机提议更换<strong>你与TA共用的</strong>对话界面主题。</p>
+                                        <div id="bubble-css-theme-bindings-list" style="max-height:200px; overflow:auto;"></div>
+                                        <div id="bubble-css-theme-bindings-empty" style="display:none; text-align:center; padding:16px; color:#999; font-size:13px;">暂无主题，添加后角色可在对话中看到并主动更换</div>
+                                        <button type="button" id="bubble-css-add-theme-binding-btn" class="btn btn-small btn-primary" style="margin-top:10px; border-radius:8px;">+ 添加主题</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 【拓展】Tab 内容 -->
+                        <div id="setting-tab-ext" class="settings-tab-content">
+                            <!-- 环境与天气增强 -->
+                            <div class="kkt-group" style="margin-bottom:15px;">
+                                <div style="margin-bottom: 15px; padding-top: 5px; padding-left: 8px;">
+                                    <div class="kkt-item-label" style="font-weight: bold; color: var(--primary-color);">环境与天气增强</div>
+                                    <p style="font-size: 11px; color: #999; margin: 5px 0 0;">让角色感知所在地区的天气变化</p>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">开启角色所在地天气</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-weather-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" id="setting-char-weather-city-container" style="display:none; flex-direction:column; align-items:flex-start;">
+                                    <div class="kkt-item-label" style="margin-bottom:8px; font-size:12px;">角色所在城市 / 地区</div>
+                                    <input type="text" id="setting-char-weather-city" placeholder="例如：上海、北京、东京" style="width:100%; border:1px solid #eee; border-radius:8px; padding:8px;">
+                                </div>
+
+                                <div class="kkt-item" style="border-top:1px solid #f5f5f5; padding-top:12px;">
+                                    <div class="kkt-item-label">开启用户所在地天气</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-user-weather-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" id="setting-user-weather-city-container" style="display:none; flex-direction:column; align-items:flex-start;">
+                                    <div class="kkt-item-label" style="margin-bottom:8px; font-size:12px;">用户所在城市 / 地区</div>
+                                    <div style="display:flex; width:100%; gap:8px;">
+                                        <input type="text" id="setting-user-weather-city" placeholder="例如：上海、北京" style="flex:1; border:1px solid #eee; border-radius:8px; padding:8px;">
+                                        <button type="button" id="setting-user-weather-locate-btn" class="btn btn-secondary btn-small" style="white-space:nowrap; padding:0 12px;">📍 定位</button>
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item" style="border-top:1px solid #f5f5f5; padding-top:12px;">
+                                    <div class="kkt-item-label">使用独立天气 API</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-weather-custom-api-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div id="setting-char-weather-custom-api-container" style="display:none;">
+                                    <div class="kkt-item">
+                                        <div class="kkt-item-label">服务商</div>
+                                        <div class="kkt-item-control">
+                                            <select id="setting-char-weather-provider"
+                                                style="border:none; background:transparent; text-align:right; direction: rtl; appearance: none; -webkit-appearance: none; padding-right: 15px;">
+                                                <option value="openmeteo">Open-Meteo (免费免Key推荐)</option>
+                                                <option value="wttrin">wttr.in (免费免Key)</option>
+                                                <option value="qweather">和风天气</option>
+                                                <option value="seniverse">心知天气</option>
+                                            </select>
+                                            <span class="kkt-arrow">›</span>
+                                        </div>
+                                    </div>
+                                    <div class="kkt-item" id="setting-char-weather-key-container" style="display:none;">
+                                        <div class="kkt-item-label">密钥 (Key)</div>
+                                        <div class="kkt-item-control">
+                                            <input type="password" id="setting-char-weather-key" autocomplete="new-password"
+                                                placeholder="输入独立 API Key"
+                                                style="text-align:right; border:none; background:transparent; width: 100%;">
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+

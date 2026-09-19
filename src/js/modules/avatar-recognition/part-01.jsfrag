@@ -1,0 +1,810 @@
+// --- 用户头像识别与头像库模块 ---
+// 复用主API视觉能力，识别用户头像并缓存，角色可感知头像更换（系统级通知）
+
+(function () {
+    'use strict';
+
+    function getAvatarRecognitionPrompt() {
+        const level = (db && db.avatarRecognitionDetailLevel) !== undefined && db.avatarRecognitionDetailLevel !== null
+            ? db.avatarRecognitionDetailLevel : 'detailed';
+        const num = typeof level === 'number' ? level : (typeof level === 'string' ? parseInt(level, 10) : NaN);
+        if (!isNaN(num) && num > 0) {
+            return '请用约' + num + '字的中文描述这张头像的主要内容，只输出描述不要其他内容。';
+        }
+        if (level === 'brief') {
+            return '请用10-20字简洁概括这张头像的主要内容，只输出描述不要其他内容。例如：黑猫、海边自拍、穿白裙的少女。';
+        }
+        if (level === 'standard') {
+            return '请用30-50字描述这张头像的画面，包括主体、服装或配饰、背景、色调。只输出描述不要其他内容。例如：穿白裙的动漫少女，粉色蝴蝶结，背景是梦幻的粉色云朵。';
+        }
+        return '请详细描述这张头像画面的内容。包括：人物外貌与发型、服装与配饰、动作与表情、背景与氛围、整体色调等。用完整的中文描述，不要省略，不要只输出一个词或半句话。只输出描述文字，不要其他内容。';
+    }
+
+    async function callVisionAPI(imageUrl) {
+        if (!db || !db.apiSettings) throw new Error('API未配置');
+        const apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('avatarVision', db.apiSettings) : db.apiSettings;
+        let { url, key, model } = apiConfig;
+        if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!url || !key || !model)) throw new Error('请先在 API 应用中完成设置');
+        if (url.endsWith('/')) url = url.slice(0, -1);
+
+        const promptText = getAvatarRecognitionPrompt();
+        const messages = [
+            {
+                role: 'user',
+                content: [
+                    { type: 'text', text: promptText },
+                    { type: 'image_url', image_url: { url: imageUrl } }
+                ]
+            }
+        ];
+
+        const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` };
+        const text = await fetchAiResponse(apiConfig, { model, messages, temperature: 0.3, stream: false }, headers, `${url}/chat/completions`, false);
+        return (text && text.trim()) ? text.trim() : '未命名头像';
+    }
+
+    function getChar(charOrCharId) {
+        if (!charOrCharId) return null;
+        if (typeof charOrCharId === 'object' && charOrCharId.id) return charOrCharId;
+        return db.characters.find(c => c.id === charOrCharId) || null;
+    }
+
+    function ensureUserAvatarLibrary(charOrCharId) {
+        const char = getChar(charOrCharId);
+        if (!char) return [];
+        if (!char.userAvatarLibrary || !Array.isArray(char.userAvatarLibrary)) {
+            char.userAvatarLibrary = [];
+        }
+        return char.userAvatarLibrary;
+    }
+
+    function ensureCharAvatarLibrary(charOrCharId) {
+        const char = getChar(charOrCharId);
+        if (!char) return [];
+        if (!char.charAvatarLibrary || !Array.isArray(char.charAvatarLibrary)) {
+            char.charAvatarLibrary = [];
+        }
+        return char.charAvatarLibrary;
+    }
+
+    function ensureCoupleAvatarLibrary(charOrCharId) {
+        const char = getChar(charOrCharId);
+        if (!char) return [];
+        if (!char.coupleAvatarLibrary || !Array.isArray(char.coupleAvatarLibrary)) {
+            char.coupleAvatarLibrary = [];
+        }
+        return char.coupleAvatarLibrary;
+    }
+
+    function ensureAvatarRelationshipHistory(charOrCharId) {
+        const char = getChar(charOrCharId);
+        if (!char) return [];
+        if (!Array.isArray(char.avatarRelationshipHistory)) char.avatarRelationshipHistory = [];
+        return char.avatarRelationshipHistory;
+    }
+
+    function createAvatarId(prefix) {
+        return prefix + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    }
+
+    function describeAvatarItem(item, fallback) {
+        if (!item) return fallback || '未命名头像';
+        var name = (item.name || fallback || '未命名头像').trim();
+        var description = (item.description || '').trim().replace(/\s+/g, ' ');
+        if (!description || description === name) return name;
+        return name + '（' + (description.length > 80 ? description.slice(0, 80) + '…' : description) + '）';
+    }
+
+    function addAvatarRelationshipEvent(charOrCharId, event) {
+        var history = ensureAvatarRelationshipHistory(charOrCharId);
+        if (!history.length && !getChar(charOrCharId)) return;
+        history.push(Object.assign({ id: createAvatarId('avatar_event'), timestamp: Date.now() }, event || {}));
+        if (history.length > 100) history.splice(0, history.length - 100);
+    }
+
+    function getActiveCouple(char) {
+        if (!char || !char.activeCoupleAvatarId) return null;
+        return ensureCoupleAvatarLibrary(char).find(function (item) { return item && item.id === char.activeCoupleAvatarId; }) || null;
+    }
+
+    function clearActiveCoupleIfBroken(char, nextUserAvatar, nextCharAvatar, reason) {
+        var active = getActiveCouple(char);
+        if (!active) {
+            if (char && char.activeCoupleAvatarId) char.activeCoupleAvatarId = null;
+            return false;
+        }
+        var expectedUser = active.userAvatar && active.userAvatar.url;
+        var expectedChar = active.charAvatar && active.charAvatar.url;
+        var userChanged = nextUserAvatar !== undefined && nextUserAvatar !== expectedUser;
+        var charChanged = nextCharAvatar !== undefined && nextCharAvatar !== expectedChar;
+        if (!userChanged && !charChanged) return false;
+        char.activeCoupleAvatarId = null;
+        addAvatarRelationshipEvent(char, {
+            type: 'couple-broken',
+            coupleId: active.id,
+            coupleName: active.name || '未命名',
+            reason: reason || (userChanged ? 'user-avatar-changed' : 'character-avatar-changed')
+        });
+        return true;
+    }
+
+    function syncManualAvatarChange(charId, nextUserAvatar, nextCharAvatar) {
+        var char = getChar(charId);
+        if (!char) return false;
+        return clearActiveCoupleIfBroken(char, nextUserAvatar, nextCharAvatar, 'manual-avatar-changed');
+    }
+
+    function normalizeCropRect(values) {
+        if (!Array.isArray(values) || values.length < 4) throw new Error('裁剪坐标不完整');
+        var rect = values.slice(0, 4).map(function (value) { return Number(value); });
+        if (!rect.every(Number.isFinite)) throw new Error('裁剪坐标包含无效数字');
+        rect = rect.map(function (value) { return Math.max(0, Math.min(100, value)); });
+        if (rect[2] <= rect[0] || rect[3] <= rect[1]) throw new Error('裁剪区域宽高必须大于 0');
+        return rect;
+    }
+
+    function fingerprintDistance(left, right) {
+        if (!left || !right) return Infinity;
+        var leftParts = String(left).split(':');
+        var rightParts = String(right).split(':');
+        if (leftParts.length !== 2 || rightParts.length !== 2 || leftParts[1].length !== rightParts[1].length) return Infinity;
+        var leftColor = [leftParts[0].slice(0, 2), leftParts[0].slice(2, 4), leftParts[0].slice(4, 6)].map(function (part) { return parseInt(part, 16); });
+        var rightColor = [rightParts[0].slice(0, 2), rightParts[0].slice(2, 4), rightParts[0].slice(4, 6)].map(function (part) { return parseInt(part, 16); });
+        if (leftColor.some(function (value) { return !Number.isFinite(value); }) || rightColor.some(function (value) { return !Number.isFinite(value); })) return Infinity;
+        var colorDistance = Math.sqrt(leftColor.reduce(function (sum, value, index) {
+            return sum + Math.pow(value - rightColor[index], 2);
+        }, 0));
+        if (colorDistance > 45) return Infinity;
+        var bitCounts = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4];
+        var distance = 0;
+        for (var i = 0; i < leftParts[1].length; i++) {
+            var a = parseInt(leftParts[1][i], 16);
+            var b = parseInt(rightParts[1][i], 16);
+            if (!Number.isFinite(a) || !Number.isFinite(b)) return Infinity;
+            distance += bitCounts[a ^ b];
+        }
+        return distance;
+    }
+
+    function computeAvatarFingerprint(imageUrl) {
+        return new Promise(function (resolve) {
+            if (!imageUrl) {
+                resolve(null);
+                return;
+            }
+            var img = new Image();
+            if (/^https?:/i.test(imageUrl)) img.crossOrigin = 'anonymous';
+            img.onload = function () {
+                try {
+                    var canvas = document.createElement('canvas');
+                    canvas.width = 8;
+                    canvas.height = 8;
+                    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    if (!ctx) throw new Error('Canvas unavailable');
+                    ctx.drawImage(img, 0, 0, 8, 8);
+                    var pixels = ctx.getImageData(0, 0, 8, 8).data;
+                    var values = [];
+                    var total = 0;
+                    var redTotal = 0;
+                    var greenTotal = 0;
+                    var blueTotal = 0;
+                    for (var i = 0; i < pixels.length; i += 4) {
+                        var value = Math.round(pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114);
+                        values.push(value);
+                        total += value;
+                        redTotal += pixels[i];
+                        greenTotal += pixels[i + 1];
+                        blueTotal += pixels[i + 2];
+                    }
+                    var average = total / values.length;
+                    var hex = '';
+                    for (var offset = 0; offset < values.length; offset += 4) {
+                        var nibble = 0;
+                        for (var bit = 0; bit < 4; bit++) nibble = (nibble << 1) | (values[offset + bit] >= average ? 1 : 0);
+                        hex += nibble.toString(16);
+                    }
+                    var colorHex = [redTotal, greenTotal, blueTotal].map(function (sum) {
+                        return Math.round(sum / values.length).toString(16).padStart(2, '0');
+                    }).join('');
+                    resolve(colorHex + ':' + hex);
+                } catch (error) {
+                    resolve(null);
+                }
+            };
+            img.onerror = function () { resolve(null); };
+            img.src = imageUrl;
+        });
+    }
+
+    /** 按百分比裁剪图片，坐标 0–100。返回 dataURL */
+    function cropImageByPercent(imageUrl, x1Pct, y1Pct, x2Pct, y2Pct) {
+        return new Promise(function (resolve, reject) {
+            var rect;
+            try {
+                rect = normalizeCropRect([x1Pct, y1Pct, x2Pct, y2Pct]);
+            } catch (error) {
+                reject(error);
+                return;
+            }
+            var img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = function () {
+                var w = img.naturalWidth || img.width;
+                var h = img.naturalHeight || img.height;
+                if (!w || !h) {
+                    reject(new Error('无法读取图片尺寸'));
+                    return;
+                }
+                var x1 = Math.round(w * rect[0] / 100);
+                var y1 = Math.round(h * rect[1] / 100);
+                var x2 = Math.round(w * rect[2] / 100);
+                var y2 = Math.round(h * rect[3] / 100);
+                var sw = Math.max(1, x2 - x1);
+                var sh = Math.max(1, y2 - y1);
+                var canvas = document.createElement('canvas');
+                canvas.width = sw;
+                canvas.height = sh;
+                var ctx = canvas.getContext('2d');
+                ctx.drawImage(img, x1, y1, sw, sh, 0, 0, sw, sh);
+                try {
+                    resolve(canvas.toDataURL('image/jpeg', 0.85));
+                } catch (e) {
+                    reject(e);
+                }
+            };
+            img.onerror = function () { reject(new Error('图片加载失败；若使用网络链接，图片来源可能不允许跨域裁剪，请改用本地上传')); };
+            img.src = imageUrl;
+        });
+    }
+
+    function showRecognitionModal(avatarUrl, recognizedText, charId) {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('avatar-recognition-modal');
+            const preview = document.getElementById('ar-preview-img');
+            const nameInput = document.getElementById('ar-name-input');
+            const descInput = document.getElementById('ar-description-input');
+            const cancelBtn = document.getElementById('ar-cancel-btn');
+            const confirmBtn = document.getElementById('ar-confirm-btn');
+
+            if (!modal || !preview) {
+                resolve(recognizedText || '新头像');
+                return;
+            }
+            var hasNameInput = nameInput && nameInput.nodeName;
+            var hasDescInput = descInput && descInput.nodeName;
+
+            preview.src = avatarUrl;
+            if (hasNameInput) nameInput.value = '';
+            if (hasDescInput) descInput.value = recognizedText || '';
+            if (hasNameInput) nameInput.disabled = false;
+            if (hasDescInput) descInput.disabled = false;
+            modal.classList.add('visible');
+
+            const finish = (nameVal) => {
+                modal.classList.remove('visible');
+                if (cancelBtn) cancelBtn.onclick = null;
+                if (confirmBtn) confirmBtn.onclick = null;
+                resolve(nameVal || '新头像');
+            };
+
+            if (cancelBtn) cancelBtn.onclick = () => finish('新头像');
+            if (confirmBtn) confirmBtn.onclick = () => {
+                var nameVal = hasNameInput && nameInput.value && nameInput.value.trim() ? nameInput.value.trim() : null;
+                if (!nameVal) {
+                    if (typeof showToast === 'function') showToast('请填写名称（如：开心、生气）');
+                    return;
+                }
+                var descVal = hasDescInput && descInput.value && descInput.value.trim() ? descInput.value.trim() : (recognizedText || '');
+                const lib = ensureUserAvatarLibrary(charId);
+                const existing = lib.find(a => a.url === avatarUrl);
+                if (existing) {
+                    existing.name = nameVal;
+                    existing.description = descVal || existing.description;
+                    existing.isEdited = true;
+                } else {
+                    lib.push({
+                        id: createAvatarId('avatar'),
+                        url: avatarUrl,
+                        name: nameVal,
+                        description: descVal || '',
+                        recognizedAt: Date.now(),
+                        usedCount: 0,
+                        lastUsedAt: Date.now(),
+                        isEdited: !!recognizedText && (nameVal !== recognizedText || descVal !== recognizedText)
+                    });
+                }
+                if (typeof saveData === 'function') saveData();
+                finish(nameVal);
+            };
+        });
+    }
+
+    async function getOrRecognizeAvatar(avatarUrl, charId) {
+        const lib = ensureUserAvatarLibrary(charId);
+        const cached = lib.find(a => a.url === avatarUrl);
+        if (cached) {
+            if (!cached.fingerprint) {
+                cached.fingerprint = await computeAvatarFingerprint(avatarUrl);
+                if (cached.fingerprint && typeof saveData === 'function') saveData();
+            }
+            return cached.name;
+        }
+
+        const fingerprint = await computeAvatarFingerprint(avatarUrl);
+        const visuallySimilar = fingerprint ? lib.find(function (item) {
+            return item && item.fingerprint && fingerprintDistance(item.fingerprint, fingerprint) <= 5;
+        }) : null;
+        if (visuallySimilar) {
+            lib.push({
+                id: createAvatarId('avatar'),
+                url: avatarUrl,
+                name: visuallySimilar.name || '未命名头像',
+                description: visuallySimilar.description || '',
+                recognizedAt: Date.now(),
+                usedCount: 0,
+                lastUsedAt: Date.now(),
+                fingerprint: fingerprint,
+                duplicateOf: visuallySimilar.id
+            });
+            if (typeof saveData === 'function') await saveData();
+            return visuallySimilar.name || '未命名头像';
+        }
+
+        let recognizedText = '未命名头像';
+        try {
+            recognizedText = await callVisionAPI(avatarUrl);
+        } catch (e) {
+            console.warn('Avatar recognition API error:', e);
+            if (typeof showToast === 'function') showToast('识别失败，可手动输入描述');
+        }
+        const result = await showRecognitionModal(avatarUrl, recognizedText, charId);
+        const added = lib.find(a => a.url === avatarUrl);
+        if (added && fingerprint) {
+            added.fingerprint = fingerprint;
+            if (typeof saveData === 'function') await saveData();
+        }
+        return result;
+    }
+
+    function notifyUserAvatarChange(charId, oldDesc, newDesc) {
+        const char = db.characters.find(c => c.id === charId);
+        if (!char || !char.history) return;
+        const msg = {
+            id: createAvatarId('msg'),
+            sender: 'system',
+            content: '[avatar-action: 用户更换头像：从「' + (oldDesc || '旧头像') + '」换成「' + (newDesc || '新头像') + '」]',
+            timestamp: Date.now(),
+            isAvatarAction: true
+        };
+        char.history.push(msg);
+        addAvatarRelationshipEvent(char, { type: 'user-avatar-changed', oldDescription: oldDesc || '', newDescription: newDesc || '' });
+    }
+
+    async function recognizeAndNotifyUserAvatarChange(charId, oldAvatarUrl, newAvatarUrl) {
+        const char = getChar(charId);
+        if (!char || !char.charSenseAvatarChangeEnabled) return;
+
+        const lib = ensureUserAvatarLibrary(char);
+        let oldDesc = '旧头像';
+        const oldInLib = lib.find(a => a.url === oldAvatarUrl);
+        if (oldInLib) oldDesc = describeAvatarItem(oldInLib, '旧头像');
+
+        const newDesc = await getOrRecognizeAvatar(newAvatarUrl, charId);
+        const newInLib = lib.find(a => a.url === newAvatarUrl);
+        if (newInLib) {
+            newInLib.usedCount = (newInLib.usedCount || 0) + 1;
+            newInLib.lastUsedAt = Date.now();
+        }
+
+        notifyUserAvatarChange(charId, oldDesc, newInLib ? describeAvatarItem(newInLib, newDesc) : newDesc);
+
+        if (char.activeCoupleAvatarId) {
+            var activeCouple = getActiveCouple(char);
+            if (activeCouple && activeCouple.userAvatar && oldAvatarUrl === activeCouple.userAvatar.url) {
+                if (char.charSenseCoupleAvatarEnabled) {
+                var breakMsg = {
+                    id: createAvatarId('msg_break'),
+                    sender: 'system',
+                    content: '[avatar-action: 用户在使用情头「' + (activeCouple.name || '未命名') + '」期间更换了头像，情头已被拆开]',
+                    timestamp: Date.now(),
+                    isAvatarAction: true
+                };
+                char.history.push(breakMsg);
+                }
+                clearActiveCoupleIfBroken(char, newAvatarUrl, undefined, 'user-avatar-changed');
+            }
+        }
+
+        if (typeof saveData === 'function') await saveData();
+    }
+
+    function generateAvatarSystemPrompt(character) {
+        if (!character || !character.avatarSystemEnabled) return '';
+        var body = '';
+        if (character.charSenseAvatarChangeEnabled) {
+            const url = character.myAvatar;
+            const lib = ensureUserAvatarLibrary(character);
+            const current = lib.find(a => a.url === url);
+            const currentDesc = describeAvatarItem(current, '用户头像');
+            body += '【用户头像】当前: ' + currentDesc + '\n';
+            const others = lib.filter(a => a.url !== url).sort((a, b) => (b.lastUsedAt || 0) - (a.lastUsedAt || 0)).slice(0, 5);
+            if (others.length) body += '用户历史头像: ' + others.map(a => describeAvatarItem(a, '未命名')).join('、') + '\n';
+            body += '你能感知用户的头像变化。当用户换头像时，系统会通过隐藏消息通知你，格式为 [avatar-action: 用户更换头像：从「旧头像」换成「新头像」]。你可以在合适时机自然地提及这一变化。\n';
+        }
+        if (character.charCanSwitchAvatarEnabled) {
+            const charLib = ensureCharAvatarLibrary(character);
+            const curCharAvatar = character.avatar;
+            const curCharItem = charLib.find(a => a.url === curCharAvatar);
+            const curCharName = curCharItem ? curCharItem.name : '当前头像';
+            body += '【你的头像库】当前使用: ' + curCharName + '\n';
+            const charOthers = charLib.slice(0, 8).map(a => (a.description ? a.name + '（' + (a.description.length > 30 ? a.description.slice(0, 30) + '…' : a.description) + '）' : a.name));
+            if (charOthers.length) body += '可选: ' + charOthers.join('、') + '\n';
+            body += '你可以根据情绪或情境切换自己的头像，格式: [avatar-switch-self: 头像名称]\n';
+            body += '你也可以帮用户更换头像，格式: [avatar-switch-user: 用户头像名称]。请区分：换自己的头像是 [avatar-switch-self]，帮用户换头像是 [avatar-switch-user]。\n';
+        }
+        if (character.charCollectImageAsAvatarEnabled) {
+            body += '【收藏图片为头像】当用户发来一张图片时，你可以凭自己的喜好决定是否将这张图片收藏为你的头像。若你喜欢并想加入自己的头像库，请使用格式: [avatar-collect: 头像名称 | 头像描述]\n';
+            body += '例如: [avatar-collect: 樱花树下 | 粉色樱花飘落的春日午后]\n';
+            body += '只在你真正喜欢这张图片时才收藏，不必每张都收藏。收藏后会出现在你的头像库中，你可随时用 [avatar-switch-self: 头像名称] 切换使用。\n';
+        }
+        if (character.charCollectCoupleAvatarEnabled) {
+            var coupleLib = ensureCoupleAvatarLibrary(character);
+            body += '【情头库】情头是成对的头像，你和用户各用一张，让别人能看出你们是一对。\n';
+            if (coupleLib.length) {
+                body += '已收藏情头: ' + coupleLib.slice(0, 8).map(function (c) { return c.name + (c.description ? '（' + (c.description.length > 15 ? c.description.slice(0, 15) + '…' : c.description) + '）' : ''); }).join('、') + '\n';
+            }
+            body += '当用户发来图片时，你可判断是否适合作为情头收藏。请区分：用 [avatar-collect] 是收藏为你的个人头像；用下面指令是收藏为情头（成对）。\n';
+            body += '1) 用户发来两张图（已裁好或单人图）：直接配对，【绝对不要使用裁剪指令】。格式: [couple-avatar-collect: 情头名称 | 描述 | user:1 char:2]\n';
+            body += '   表示第1张给用户用、第2张给你用。收集后若想立即换上，请紧跟着写 [couple-avatar-apply: 情头名称]。\n';
+            body += '2) 用户发来一张图且图中有两人：可裁剪为重叠式情头。格式: [couple-avatar-crop: 情头名称 | 描述 | mode:overlap | user:0,0,55,100 char:45,0,100,100]\n';
+            body += '   坐标为占整图宽高的百分比：左,上,右,下(0-100)。用户那张以左半为主稍带一点右，你的那张以右半为主稍带一点左，这样能看出关联。使用 [couple-avatar-crop] 后系统会自动换上这对情头，无需再写 [couple-avatar-apply]。\n';
+            body += '3) 用户发来一张图适合边角料情头（如一人抱玩偶）：用户用原图，你用局部。格式: [couple-avatar-crop: 情头名称 | 描述 | mode:corner | user:0,0,100,100 char:30,40,80,90]\n';
+            body += '   user:0,0,100,100 表示用户用整图；char 的四个数为裁剪区域占整图宽高的百分比(左,上,右,下)。同上，裁剪后会自动换上。\n';
+            body += '仅当使用 [couple-avatar-collect] 存了两张图时，若想换上需再写: [couple-avatar-apply: 情头名称]。\n';
+        }
+        if (character.charSenseCoupleAvatarEnabled) {
+            var coupleLibSense = ensureCoupleAvatarLibrary(character);
+            var activeId = character.activeCoupleAvatarId;
+            var activeCouple = activeId ? coupleLibSense.find(function (c) { return c.id === activeId; }) : null;
+            if (activeCouple) {
+                body += '【当前情头状态】你和用户正在使用情头「' + (activeCouple.name || '未命名') + '」';
+                if (activeCouple.description && activeCouple.description.trim()) {
+                    body += '（' + activeCouple.description.trim() + '）';
+                }
+                body += '。\n';
+                body += '若用户在使用情头期间换掉了头像，系统会通知你「用户在情头状态下更换了头像」，你可自然地对此做出反应（如问为什么拆情头、闹小脾气等）。\n';
+                body += '你也可以主动取消情头状态（例如生气时拆掉情头），格式: [couple-avatar-remove]。取消后头像图片不变，只是不再处于「使用情头」状态；你仍可用 [avatar-switch-self] 等换头像。\n';
+                body += '你也可以换成另一对情头，格式: [couple-avatar-apply: 情头名称]。\n';
+            } else {
+                body += '【当前情头状态】你和用户当前没有使用任何情头。\n';
+            }
+        }
+        var relationshipHistory = (character.charSenseAvatarChangeEnabled || character.charSenseCoupleAvatarEnabled)
+            ? ensureAvatarRelationshipHistory(character).slice(-6) : [];
+        if (relationshipHistory.length) {
+            body += '【最近头像关系事件】\n';
+            relationshipHistory.forEach(function (event) {
+                if (event.type === 'user-avatar-changed') body += '- 用户头像从「' + (event.oldDescription || '旧头像') + '」换成「' + (event.newDescription || '新头像') + '」\n';
+                else if (event.type === 'couple-applied') body += '- 你们使用了情头「' + (event.coupleName || '未命名') + '」\n';
+                else if (event.type === 'couple-removed' || event.type === 'couple-broken') body += '- 情头「' + (event.coupleName || '未命名') + '」已取消\n';
+            });
+            body += '只在与当前话题自然相关时提及，不要机械重复评论头像变化。\n';
+        }
+        if (!body) return '';
+        return '\n<avatar_system>\n' + body + '</avatar_system>\n';
+    }
+
+    let _avatarLibraryCurrentCharId = null;
+
+    function renderLibraryList(char, listEl) {
+        if (!char || !listEl) return;
+        listEl.classList.remove('ar-delete-mode');
+        const lib = ensureUserAvatarLibrary(char);
+        listEl.innerHTML = '';
+        if (!lib.length) {
+            listEl.innerHTML = '<div class="ar-library-empty">暂无用户头像，可通过上方按钮上传</div>';
+            return;
+        }
+        lib.forEach((item, idx) => {
+            const card = document.createElement('div');
+            card.className = 'ar-library-card ar-library-row-clickable';
+            if (item.url && item.url === char.myAvatar) card.classList.add('is-current');
+            card.dataset.idx = String(idx);
+            const timeStr = item.recognizedAt ? new Date(item.recognizedAt).toLocaleDateString() : '';
+            const safeUrl = (item.url || '').replace(/"/g, '&quot;');
+            const safeName = (item.name || '未命名').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            card.innerHTML =
+                '<label class="ar-library-check"><input type="checkbox" class="ar-library-cb" data-idx="' + idx + '"></label>' +
+                '<div class="ar-library-card-wrap">' +
+                '<img class="ar-library-thumb" src="' + safeUrl + '" alt="">' +
+                '<div class="ar-library-info"><span class="ar-library-name-text">' + safeName + '</span><span class="ar-library-meta">' + (item.usedCount || 0) + '次 ' + timeStr + '</span></div>' +
+                (item.url && item.url === char.myAvatar ? '<span class="ar-current-badge">使用中</span>' : '') +
+                '</div>';
+            listEl.appendChild(card);
+            card.addEventListener('click', function (e) {
+                if (e.target.closest('.ar-library-check')) return;
+                openAvatarLibraryEditModal(char.id, idx);
+            });
+        });
+    }
+
+    function openAvatarLibraryEditModal(charId, itemIndex) {
+        const modal = document.getElementById('avatar-library-edit-modal');
+        const previewImg = document.getElementById('ar-edit-preview-img');
+        const nameInput = document.getElementById('ar-edit-name-input');
+        const descInput = document.getElementById('ar-edit-description-input');
+        const metaEl = document.getElementById('ar-edit-meta');
+        const applyBtn = document.getElementById('ar-edit-apply-btn');
+        const saveBtn = document.getElementById('ar-edit-save-btn');
+        const deleteBtn = document.getElementById('ar-edit-delete-btn');
+        const closeBtn = document.getElementById('ar-edit-close-btn');
+        if (!modal || !previewImg) return;
+        const char = getChar(charId);
+        if (!char) return;
+        const lib = ensureUserAvatarLibrary(char);
+        const item = lib[itemIndex];
+        if (!item) return;
+
+        previewImg.src = item.url || '';
+        if (nameInput) nameInput.value = item.name || '';
+        if (descInput) descInput.value = item.description || '';
+        if (metaEl) {
+            const timeStr = item.recognizedAt ? new Date(item.recognizedAt).toLocaleDateString() : '';
+            metaEl.textContent = '使用 ' + (item.usedCount || 0) + ' 次 · ' + timeStr;
+        }
+        modal.classList.add('visible');
+
+        const closeEditModal = () => modal.classList.remove('visible');
+
+        if (applyBtn) applyBtn.onclick = () => {
+            clearActiveCoupleIfBroken(char, item.url, undefined, 'manual-user-avatar-changed');
+            char.myAvatar = item.url;
+            item.usedCount = (item.usedCount || 0) + 1;
+            item.lastUsedAt = Date.now();
+            if (typeof saveData === 'function') saveData();
+            if (typeof showToast === 'function') showToast('已应用为当前头像');
+            const preview = document.getElementById('setting-my-avatar-preview');
+            if (preview) preview.src = item.url;
+            if (typeof renderMessages === 'function') renderMessages(false, true);
+            closeEditModal();
+        };
+        if (saveBtn) saveBtn.onclick = () => {
+            if (nameInput && nameInput.value && nameInput.value.trim()) item.name = nameInput.value.trim();
+            if (descInput) item.description = (descInput.value && descInput.value.trim()) ? descInput.value.trim() : '';
+            if (typeof saveData === 'function') saveData();
+            if (typeof showToast === 'function') showToast('已保存');
+            const listEl = document.getElementById('ar-library-list');
+            if (listEl && _avatarLibraryCurrentCharId === charId) renderLibraryList(char, listEl);
+            closeEditModal();
+        };
+        if (deleteBtn) deleteBtn.onclick = () => {
+            lib.splice(itemIndex, 1);
+            if (typeof saveData === 'function') saveData();
+            if (typeof showToast === 'function') showToast('已删除');
+            const listEl = document.getElementById('ar-library-list');
+            if (listEl && _avatarLibraryCurrentCharId === charId) renderLibraryList(char, listEl);
+            closeEditModal();
+        };
+        if (closeBtn) closeBtn.onclick = closeEditModal;
+        modal.onclick = (e) => { if (e.target === modal) closeEditModal(); };
+    }
+
+    function openUserAvatarAddModal(charId, imageUrl) {
+        const modal = document.getElementById('user-avatar-add-modal');
+        const previewImg = document.getElementById('ar-user-add-preview-img');
+        const useAiCheck = document.getElementById('ar-user-add-use-ai');
+        const recognizeBtn = document.getElementById('ar-user-add-recognize-btn');
+        const nameInput = document.getElementById('ar-user-add-name-input');
+        const descInput = document.getElementById('ar-user-add-description-input');
+        const cancelBtn = document.getElementById('ar-user-add-cancel-btn');
+        const confirmBtn = document.getElementById('ar-user-add-confirm-btn');
+        if (!modal || !previewImg) return;
+        const char = getChar(charId);
+        if (!char) return;
+
+        previewImg.src = imageUrl || '';
+        if (useAiCheck) useAiCheck.checked = false;
+        if (nameInput) nameInput.value = '';
+        if (descInput) descInput.value = '';
+        modal.classList.add('visible');
+
+        const finish = () => modal.classList.remove('visible');
+
+        if (cancelBtn) cancelBtn.onclick = () => finish();
+
+        const doAdd = (nameVal, descVal) => {
+            const lib = ensureUserAvatarLibrary(char);
+            const duplicate = lib.find(item => item && item.url === imageUrl);
+            if (duplicate) {
+                duplicate.name = nameVal || duplicate.name;
+                duplicate.description = descVal || duplicate.description || '';
+                duplicate.lastUsedAt = Date.now();
+                if (typeof saveData === 'function') saveData();
+                const duplicateListEl = document.getElementById('ar-library-list');
+                if (duplicateListEl && _avatarLibraryCurrentCharId === charId) renderLibraryList(char, duplicateListEl);
+                if (typeof showToast === 'function') showToast('这张图片已在用户头像库中，已更新信息');
+                finish();
+                return;
+            }
+            lib.push({
+                id: createAvatarId('avatar'),
+                url: imageUrl,
+                name: nameVal || '未命名头像',
+                description: descVal || '',
+                recognizedAt: Date.now(),
+                usedCount: 0,
+                lastUsedAt: Date.now(),
+                isEdited: false
+            });
+            computeAvatarFingerprint(imageUrl).then(function (fingerprint) {
+                var added = lib.find(function (item) { return item && item.url === imageUrl; });
+                if (added && fingerprint) {
+                    added.fingerprint = fingerprint;
+                    if (typeof saveData === 'function') saveData();
+                }
+            });
+            if (typeof saveData === 'function') saveData();
+            const listEl = document.getElementById('ar-library-list');
+            if (listEl && _avatarLibraryCurrentCharId === charId) renderLibraryList(char, listEl);
+            if (typeof showToast === 'function') showToast('已添加到用户头像库');
+            finish();
+        };
+
+        if (recognizeBtn) {
+            recognizeBtn.onclick = () => {
+                if (!imageUrl) return;
+                recognizeBtn.disabled = true;
+                if (typeof showToast === 'function') showToast('正在识别…');
+                callVisionAPI(imageUrl).then((text) => {
+                    if (descInput) descInput.value = text || '';
+                    if (typeof showToast === 'function') showToast('已填入描述，可修改后填写名称并添加');
+                }).catch((e) => {
+                    console.warn('User avatar recognition failed', e);
+                    if (typeof showToast === 'function') showToast('识别失败，请手动填写');
+                }).finally(() => { recognizeBtn.disabled = false; });
+            };
+        }
+
+        if (confirmBtn) {
+            confirmBtn.onclick = () => {
+                if (useAiCheck && useAiCheck.checked) {
+                    confirmBtn.disabled = true;
+                    callVisionAPI(imageUrl).then((recognizedText) => {
+                        if (descInput) descInput.value = recognizedText || '';
+                        useAiCheck.checked = false;
+                        if (typeof showToast === 'function') showToast('已识别，请填写名称后点击添加');
+                    }).catch((e) => {
+                        console.warn('User avatar recognition failed', e);
+                        if (typeof showToast === 'function') showToast('识别失败，请手动填写名称');
+                    }).finally(() => { confirmBtn.disabled = false; });
+                    return;
+                }
+                const nameVal = nameInput && nameInput.value && nameInput.value.trim() ? nameInput.value.trim() : null;
+                if (!nameVal) {
+                    if (typeof showToast === 'function') showToast('请填写头像名称（如：开心、生气）');
+                    return;
+                }
+                const descVal = descInput && descInput.value && descInput.value.trim() ? descInput.value.trim() : '';
+                doAdd(nameVal, descVal);
+            };
+        }
+        modal.onclick = (e) => { if (e.target === modal) finish(); };
+    }
+
+    function openAvatarLibraryModal(charId) {
+        const modal = document.getElementById('avatar-library-modal');
+        const list = document.getElementById('ar-library-list');
+        const batchDeleteBtn = document.getElementById('ar-library-batch-delete');
+        const clearAllBtn = document.getElementById('ar-library-clear-all');
+        const uploadLocalBtn = document.getElementById('ar-user-library-upload-local');
+        const uploadUrlBtn = document.getElementById('ar-user-library-upload-url');
+        const urlInput = document.getElementById('ar-user-library-url-input');
+        if (!modal || !list) return;
+        const char = getChar(charId);
+        if (!char) {
+            if (typeof showToast === 'function') showToast('请先选择角色');
+            return;
+        }
+
+        _avatarLibraryCurrentCharId = charId;
+        renderLibraryList(char, list);
+        modal.classList.add('visible');
+
+        if (uploadLocalBtn) {
+            uploadLocalBtn.onclick = () => {
+                const input = document.getElementById('ar-user-library-file-input');
+                if (input) input.click();
+            };
+        }
+        const fileInput = document.getElementById('ar-user-library-file-input');
+        if (fileInput) {
+            fileInput.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                if (typeof compressImage !== 'function') {
+                    if (typeof showToast === 'function') showToast('请使用图片链接上传或检查环境');
+                    return;
+                }
+                compressImage(file, { quality: 0.8, maxWidth: 400, maxHeight: 400 }).then((dataUrl) => {
+                    openUserAvatarAddModal(charId, dataUrl);
+                }).catch(() => {
+                    if (typeof showToast === 'function') showToast('图片处理失败');
+                });
+                e.target.value = '';
+            };
+        }
+        if (uploadUrlBtn && urlInput) {
+            uploadUrlBtn.onclick = () => {
+                const url = (urlInput.value || '').trim();
+                if (!url) {
+                    if (typeof showToast === 'function') showToast('请输入图片链接');
+                    return;
+                }
+                urlInput.value = '';
+                openUserAvatarAddModal(charId, url);
+            };
+        }
+
+        batchDeleteBtn.onclick = () => {
+            if (list.classList.contains('ar-delete-mode')) {
+                const lib = ensureUserAvatarLibrary(char);
+                const checked = list.querySelectorAll('.ar-library-cb:checked');
+                if (!checked.length) {
+                    if (typeof showToast === 'function') showToast('请先勾选要删除的项');
+                    return;
+                }
+                const indices = Array.from(checked).map(cb => parseInt(cb.dataset.idx, 10)).sort((a, b) => b - a);
+                indices.forEach(i => lib.splice(i, 1));
+                if (typeof saveData === 'function') saveData();
+                renderLibraryList(char, list);
+                if (typeof showToast === 'function') showToast('已删除选中项');
+                list.classList.remove('ar-delete-mode');
+                batchDeleteBtn.textContent = '批量删除';
+            } else {
+                list.classList.add('ar-delete-mode');
+                batchDeleteBtn.textContent = '删除选中';
+            }
+        };
+
+        clearAllBtn.onclick = () => {
+            if (!confirm('确定清除本角色全部头像缓存？清除后再次使用这些头像时会重新识别。')) return;
+            char.userAvatarLibrary = [];
+            if (typeof saveData === 'function') saveData();
+            list.classList.remove('ar-delete-mode');
+            batchDeleteBtn.textContent = '批量删除';
+            renderLibraryList(char, list);
+            modal.classList.remove('visible');
+            if (typeof showToast === 'function') showToast('已清除全部缓存');
+        };
+
+        const closeBtn = modal.querySelector('.ar-library-close-btn') || modal.querySelector('.ar-library-close');
+        if (closeBtn) closeBtn.onclick = () => {
+            list.classList.remove('ar-delete-mode');
+            if (batchDeleteBtn) batchDeleteBtn.textContent = '批量删除';
+            modal.classList.remove('visible');
+            _avatarLibraryCurrentCharId = null;
+        };
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                list.classList.remove('ar-delete-mode');
+                if (batchDeleteBtn) batchDeleteBtn.textContent = '批量删除';
+                modal.classList.remove('visible');
+                _avatarLibraryCurrentCharId = null;
+            }
+        });
+    }
+
+    var avatarCommandRegex = /\[avatar-switch-self:\s*([^\]]+)\]/gi;
+    var avatarUserCommandRegex = /\[avatar-switch-user:\s*([^\]]+)\]/gi;
+    var avatarCollectRegex = /\[avatar-collect:\s*([^\|\]]+?)(?:\s*\|\s*([^\]]*))?\]/gi;
+    var coupleCollectRegex = /\[couple-avatar-collect:\s*([^\|\]]+?)(?:\s*\|\s*([^\|\]]*?))?(?:\s*\|\s*user:(\d+)\s+char:(\d+))?\]/gi;
+    var coupleCropRegex = /\[couple-avatar-crop:\s*([^\|\]]+?)(?:\s*\|\s*([^\|\]]*?))?(?:\s*\|\s*mode:(\w+))?(?:\s*\|\s*user:([\d,]+)\s+char:([\d,]+))?\]/gi;
+    var coupleApplyRegex = /\[couple-avatar-apply:\s*([^\]]+)\]/gi;
+    var coupleRemoveRegex = /\[couple-avatar-remove\]/gi;
+
+    function parseAvatarCommands(text, charId) {
+        var actions = [];
+        var cleaned = text;
+        var m;
+        avatarCommandRegex.lastIndex = 0;
+        while ((m = avatarCommandRegex.exec(text)) !== null) {

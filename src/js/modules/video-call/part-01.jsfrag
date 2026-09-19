@@ -1,0 +1,752 @@
+// js/modules/video_call.js
+
+const CAMERA_ON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-camera-video" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 5a2 2 0 0 1 2-2h7.5a2 2 0 0 1 1.983 1.738l3.11-1.382A1 1 0 0 1 16 4.269v7.462a1 1 0 0 1-1.406.913l-3.111-1.382A2 2 0 0 1 9.5 13H2a2 2 0 0 1-2-2V5zm11.5 5.175 3.5 1.556V4.269l-3.5 1.556v4.35zM2 4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1H2z"/></svg>`;
+const CAMERA_OFF_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-camera-video-off" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M10.961 12.365a1.99 1.99 0 0 0 .522-1.103l3.11 1.382A1 1 0 0 0 16 11.731V4.269a1 1 0 0 0-1.406-.913l-3.111 1.382A2 2 0 0 0 9.5 3H4.272l.714 1H9.5a1 1 0 0 1 1 1v6a1 1 0 0 1-.144.518l.605.847zM1.428 4.18A.999.999 0 0 0 1 5v6a1 1 0 0 0 1 1h5.014l.714 1H2a2 2 0 0 1-2-2V5c0-.675.334-1.272.847-1.634l.58.814zM15 11.73l-3.5-1.555v-4.35L15 4.269v7.462zm-4.407 3.56-10-14 .814-.58 10 14-.814.58z"/></svg>`;
+
+const VideoCallModule = {
+    state: {
+        isCallActive: false,
+        callType: 'video', // 'video' or 'voice'
+        timerInterval: null,
+        seconds: 0,
+        currentChat: null,
+        currentCallContext: [], // 存储当前通话的消息记录
+        startTime: 0,
+        isAiSpeaking: false, // 防止用户连续输入
+        isGenerating: false, // 标记是否正在请求AI生成
+        replyRequestId: 0, // 防止已结束通话的旧回复写入新状态
+        replyAbortController: null,
+        initialAiResponse: null, // 存储开场白
+        incomingChat: null, // 暂存来电对象
+        isMinimized: false, // 是否处于悬浮窗模式
+        hasEnteredCallScene: false, // 是否已进入通话界面（区分「等待中」与「已接通」）
+        ringAudio: null, // 来电铃声 Audio 实例，用于循环播放与接通/拒绝时停止
+        // 真实摄像头相关
+        cameraStream: null,
+        facingMode: 'user', // 'user' = 前置, 'environment' = 后置
+        realCameraActive: false
+    },
+
+    stopRingSound: function() {
+        if (this.state.ringAudio) {
+            try {
+                this.state.ringAudio.pause();
+                this.state.ringAudio.currentTime = 0;
+                this.state.ringAudio.src = '';
+                this.state.ringAudio.load();
+            } catch (e) {}
+            this.state.ringAudio = null;
+        }
+    },
+
+    // --- 真实摄像头相关 ---
+
+    startRealCamera: async function() {
+        const chat = this.state.currentChat;
+        if (!chat || !chat.realCameraEnabled) return;
+        if (this.state.callType !== 'video') return;
+
+        const pip = document.getElementById('vc-user-camera-pip');
+        const video = document.getElementById('vc-user-camera-video');
+        if (!pip || !video) return;
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: this.state.facingMode, width: { ideal: 480 }, height: { ideal: 640 } },
+                audio: false
+            });
+            this.state.cameraStream = stream;
+            this.state.realCameraActive = true;
+            video.srcObject = stream;
+            pip.style.display = 'block';
+
+            // 初始化PIP拖拽
+            this.initDraggable(pip);
+
+            // 点击翻转摄像头
+            pip.addEventListener('click', (e) => {
+                if (pip.dataset.isDragging === 'true') return;
+                this.flipCamera();
+            });
+        } catch (err) {
+            console.error('[VideoCall] 摄像头启动失败:', err);
+            showToast('摄像头启动失败，请检查权限设置');
+            this.state.realCameraActive = false;
+        }
+    },
+
+    stopRealCamera: function() {
+        if (this.state.cameraStream) {
+            this.state.cameraStream.getTracks().forEach(t => t.stop());
+            this.state.cameraStream = null;
+        }
+        this.state.realCameraActive = false;
+        this.state.facingMode = 'user';
+        const pip = document.getElementById('vc-user-camera-pip');
+        if (pip) {
+            pip.style.display = 'none';
+            pip.classList.remove('rear-camera');
+        }
+        const video = document.getElementById('vc-user-camera-video');
+        if (video) video.srcObject = null;
+    },
+
+    flipCamera: async function() {
+        if (!this.state.realCameraActive) return;
+
+        // 切换方向
+        this.state.facingMode = this.state.facingMode === 'user' ? 'environment' : 'user';
+
+        // 停掉旧流
+        if (this.state.cameraStream) {
+            this.state.cameraStream.getTracks().forEach(t => t.stop());
+        }
+
+        const pip = document.getElementById('vc-user-camera-pip');
+        const video = document.getElementById('vc-user-camera-video');
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: this.state.facingMode, width: { ideal: 480 }, height: { ideal: 640 } },
+                audio: false
+            });
+            this.state.cameraStream = stream;
+            video.srcObject = stream;
+
+            if (this.state.facingMode === 'environment') {
+                pip.classList.add('rear-camera');
+            } else {
+                pip.classList.remove('rear-camera');
+            }
+            showToast(this.state.facingMode === 'user' ? '已切换到前置摄像头' : '已切换到后置摄像头');
+        } catch (err) {
+            console.error('[VideoCall] 翻转摄像头失败:', err);
+            showToast('切换摄像头失败');
+            // 回退
+            this.state.facingMode = this.state.facingMode === 'user' ? 'environment' : 'user';
+        }
+    },
+
+    captureFrame: function() {
+        if (!this.state.realCameraActive) return null;
+
+        const video = document.getElementById('vc-user-camera-video');
+        const canvas = document.getElementById('vc-camera-capture-canvas');
+        if (!video || !canvas || video.readyState < 2) return null;
+
+        // 压缩到 480 宽度
+        const maxW = 480;
+        const scale = Math.min(maxW / video.videoWidth, 1);
+        canvas.width = Math.round(video.videoWidth * scale);
+        canvas.height = Math.round(video.videoHeight * scale);
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL('image/jpeg', 0.6);
+    },
+
+    init: function() {
+        // 绑定悬浮窗点击恢复
+        const floatWindow = document.getElementById('vc-floating-window');
+        if (floatWindow) {
+            floatWindow.addEventListener('click', (e) => {
+                // 如果是拖拽结束的点击，不触发恢复
+                if (floatWindow.dataset.isDragging === 'true') return;
+                this.maximizeCall();
+            });
+            
+            // 初始化拖拽
+            this.initDraggable(floatWindow);
+        }
+
+        // 绑定弹窗关闭按钮
+        const closeBtn = document.getElementById('vc-type-close-btn');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => this.hideCallTypeModal());
+        }
+
+        // 绑定发起通话按钮
+        const videoBtn = document.getElementById('vc-start-video-btn');
+        if (videoBtn) {
+            videoBtn.addEventListener('click', () => this.startCall('video'));
+        }
+
+        const voiceBtn = document.getElementById('vc-start-voice-btn');
+        if (voiceBtn) {
+            voiceBtn.addEventListener('click', () => this.startCall('voice'));
+        }
+        
+        const historyBtn = document.getElementById('vc-history-btn');
+        if (historyBtn) {
+            historyBtn.addEventListener('click', () => {
+                this.hideCallTypeModal();
+                this.showHistoryModal();
+            });
+        }
+
+        // 绑定挂断按钮
+        const loadingHangupBtn = document.getElementById('vc-loading-hangup-btn');
+        if (loadingHangupBtn) {
+            loadingHangupBtn.addEventListener('click', () => this.endCall(true));
+        }
+
+        // 绑定加载场景最小化按钮（一拨出即可最小化）
+        const loadingMinimizeBtn = document.getElementById('vc-loading-minimize-btn');
+        if (loadingMinimizeBtn) {
+            loadingMinimizeBtn.addEventListener('click', () => this.minimizeCall());
+        }
+
+        const callHangupBtn = document.getElementById('vc-call-hangup-btn');
+        if (callHangupBtn) {
+            callHangupBtn.addEventListener('click', () => this.endCall());
+        }
+
+        // 绑定摄像头开关 (模拟)
+        const cameraBtn = document.getElementById('vc-camera-toggle-btn');
+        if (cameraBtn) {
+            cameraBtn.addEventListener('click', () => {
+                const icon = cameraBtn.querySelector('.vc-c-icon-box');
+                const isOff = icon.innerHTML.includes('bi-camera-video-off');
+                
+                if (isOff) {
+                    icon.innerHTML = CAMERA_ON_SVG;
+                    showToast('摄像头已开启');
+                } else {
+                    icon.innerHTML = CAMERA_OFF_SVG;
+                    showToast('摄像头已关闭');
+                }
+            });
+        }
+
+        // 绑定说话按钮 -> 显示输入框
+        const actionVoiceBtn = document.getElementById('vc-action-voice-btn');
+        if (actionVoiceBtn) {
+            actionVoiceBtn.addEventListener('click', () => {
+                const overlay = document.getElementById('vc-input-overlay');
+                const input = document.getElementById('vc-input-text');
+                const chatArea = document.getElementById('vc-chat-container');
+                
+                overlay.style.display = 'flex';
+                if (chatArea) {
+                    // 稍微延迟滚动，等待 transition 开始
+                    setTimeout(() => {
+                        chatArea.scrollTo({ top: chatArea.scrollHeight, behavior: 'smooth' });
+                    }, 50);
+                }
+                input.focus();
+            });
+        }
+
+        // 绑定输入框发送 (仅回车) 和 帮助按钮
+        const helpBtn = document.getElementById('vc-input-help-btn');
+        const inputText = document.getElementById('vc-input-text');
+        
+        // 独立绑定帮助按钮
+        if (helpBtn) {
+            helpBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                showToast('括号()用来描述画面/环境音、点击头像触发回复');
+            });
+        }
+
+        if (inputText) {
+            const sendHandler = () => {
+                const text = inputText.value.trim();
+                if (text) {
+                    this.sendUserAction(text);
+                    inputText.value = '';
+                    inputText.focus(); // 发送后保持聚焦
+                }
+            };
+
+            // 绑定回车发送
+            inputText.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendHandler();
+            });
+            
+            // 点击遮罩层关闭
+            document.getElementById('vc-input-overlay').addEventListener('click', (e) => {
+                if (e.target.id === 'vc-input-overlay') {
+                    e.target.style.display = 'none';
+                }
+            });
+        }
+
+        // 绑定历史记录弹窗关闭按钮
+        const historyCloseBtn = document.getElementById('vc-history-close-btn');
+        if (historyCloseBtn) {
+            historyCloseBtn.addEventListener('click', () => {
+                document.getElementById('vc-history-modal').classList.remove('visible');
+                setTimeout(() => {
+                    document.getElementById('vc-history-modal').style.display = 'none';
+                }, 300);
+            });
+        }
+
+        // 绑定保存NovelAI图片按钮
+        const naiSaveBtn = document.getElementById('vc-nai-save-btn');
+        if (naiSaveBtn) {
+            naiSaveBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.saveNaiImage();
+            });
+        }
+
+        // 绑定聊天区域收起/展开
+        const chatToggleBtn = document.getElementById('vc-chat-toggle-btn');
+        if (chatToggleBtn) {
+            chatToggleBtn.addEventListener('click', () => this.toggleChatArea());
+        }
+
+        // 绑定头像点击触发回复
+        const avatarBtn = document.getElementById('vc-call-avatar');
+        if (avatarBtn) {
+            avatarBtn.addEventListener('click', () => this.triggerAiReply());
+        }
+
+        // 绑定来电弹窗按钮
+        const incomingAcceptBtn = document.getElementById('vc-incoming-accept-btn');
+        if (incomingAcceptBtn) {
+            incomingAcceptBtn.addEventListener('click', () => this.acceptCall());
+        }
+
+        const incomingRejectBtn = document.getElementById('vc-incoming-reject-btn');
+        if (incomingRejectBtn) {
+            incomingRejectBtn.addEventListener('click', () => this.rejectCall());
+        }
+
+        // --- 通话中断保护：监听页面退出/隐藏事件 ---
+        const self = this;
+        window.addEventListener('beforeunload', () => {
+            self._saveInterruptData();
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                self._saveInterruptData();
+            }
+        });
+        // 启动时检查是否有中断的通话需要恢复
+        this.restoreInterruptedCall();
+    },
+
+    // --- 通话中断保护方法 ---
+
+    _saveInterruptData: function() {
+        if (!this.state.isCallActive || !this.state.currentChat) return;
+        if (!this.state.currentChat.saveCallOnInterrupt) return;
+        if (this.state.currentCallContext.length === 0) return;
+
+        const data = {
+            chatId: this.state.currentChat.id,
+            callType: this.state.callType,
+            startTime: this.state.startTime,
+            seconds: this.state.seconds,
+            context: this.state.currentCallContext,
+            savedAt: Date.now()
+        };
+        try {
+            localStorage.setItem('vc_interrupt_data', JSON.stringify(data));
+        } catch (e) {
+            console.warn('[VideoCall] 保存中断数据失败:', e);
+        }
+    },
+
+    _clearInterruptData: function() {
+        try {
+            localStorage.removeItem('vc_interrupt_data');
+        } catch (e) {}
+    },
+
+    restoreInterruptedCall: async function() {
+        let raw;
+        try {
+            raw = localStorage.getItem('vc_interrupt_data');
+        } catch (e) { return; }
+        if (!raw) return;
+
+        // 立即清除，防止重复恢复
+        this._clearInterruptData();
+
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (e) { return; }
+
+        if (!data || !data.chatId || !data.context || data.context.length === 0) return;
+
+        // 等待 db 加载完成
+        const waitForDb = () => new Promise(resolve => {
+            const check = () => {
+                if (typeof db !== 'undefined' && db.characters) resolve();
+                else setTimeout(check, 200);
+            };
+            check();
+        });
+        await waitForDb();
+
+        let chat = db.characters.find(c => c.id === data.chatId);
+        if (!chat) chat = (db.groups || []).find(g => g.id === data.chatId);
+        if (!chat) return;
+        if (!chat.saveCallOnInterrupt) return;
+
+        // 检查是否已经有这个时间段的记录（避免重复）
+        if (chat.callHistory && chat.callHistory.some(r => r.startTime === data.startTime)) return;
+
+        const startTimeDate = new Date(data.startTime);
+        const dateStr = `${startTimeDate.getFullYear()}/${startTimeDate.getMonth()+1}/${startTimeDate.getDate()} ${startTimeDate.getHours().toString().padStart(2,'0')}:${startTimeDate.getMinutes().toString().padStart(2,'0')}`;
+        const durationStr = this.formatDuration(data.seconds);
+
+        const callRecord = {
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+            startTime: data.startTime,
+            duration: data.seconds,
+            type: data.callType,
+            context: [...data.context],
+            summary: "",
+            interrupted: true
+        };
+
+        if (!chat.callHistory) chat.callHistory = [];
+        chat.callHistory.push(callRecord);
+
+        const summaryMsg = {
+            id: `msg_${Date.now()}_${Math.random()}`,
+            role: 'assistant',
+            content: `[通话记录（非正常中断）：${dateStr}；${durationStr}；]`,
+            timestamp: Date.now(),
+            callRecordId: callRecord.id
+        };
+        chat.history.push(summaryMsg);
+
+        if (typeof saveData === 'function') await saveData();
+
+        if (typeof showToast === 'function') showToast('已恢复中断的通话记录，正在生成总结...');
+
+        if (typeof renderMessages === 'function' && typeof currentChatId !== 'undefined' && currentChatId === chat.id) {
+            renderMessages(false, true);
+        }
+
+        if (typeof generateCallSummary === 'function') {
+            generateCallSummary(chat, data.context).then(async (summary) => {
+                if (summary) {
+                    callRecord.summary = summary;
+                    summaryMsg.content = `[通话记录（非正常中断）：${dateStr}；${durationStr}；${summary}]`;
+                    if (typeof saveData === 'function') await saveData();
+                    if (typeof renderMessages === 'function' && typeof currentChatId !== 'undefined' && currentChatId === chat.id) {
+                        renderMessages(false, false);
+                    }
+                    if (typeof showToast === 'function') showToast('中断通话总结已生成');
+                }
+            });
+        }
+    },
+
+    // --- 悬浮窗逻辑 ---
+
+    minimizeCall: function() {
+        if (!this.state.isCallActive) return;
+
+        this.state.isMinimized = true;
+
+        const floatWindow = document.getElementById('vc-floating-window');
+        const floatAvatar = document.getElementById('vc-float-avatar');
+        const floatStatus = document.getElementById('vc-float-status');
+
+        // 同步头像
+        if (this.state.currentChat && floatAvatar) {
+            const avatarUrl = this.state.currentChat.avatar || 'https://i.postimg.cc/1zsGZ85M/Camera_1040g3k831o3b7f1bkq105oaltnigkev8gp3kia8.jpg';
+            floatAvatar.style.backgroundImage = `url('${avatarUrl}')`;
+        }
+
+        if (!this.state.hasEnteredCallScene) {
+            // 拨出后等待中：隐藏加载场景，显示悬浮窗「正在连线…」
+            const loadingScene = document.getElementById('vc-scene-loading');
+            loadingScene.classList.add('vc-hidden');
+            loadingScene.style.display = 'none';
+            if (floatStatus) floatStatus.textContent = '正在连线...';
+            if (floatWindow) {
+                floatWindow.classList.remove('vc-float-connected');
+                floatWindow.style.display = 'block';
+            }
+        } else {
+            // 已接通：隐藏全屏通话界面，显示悬浮窗（计时）
+            const callScene = document.getElementById('vc-scene-call');
+            callScene.classList.add('vc-hidden');
+            callScene.style.display = 'none';
+            if (floatWindow) {
+                floatWindow.classList.add('vc-float-connected');
+                floatWindow.style.display = 'block';
+            }
+        }
+    },
+
+    maximizeCall: function() {
+        if (!this.state.isCallActive) return;
+
+        this.state.isMinimized = false;
+
+        const floatWindow = document.getElementById('vc-floating-window');
+        if (floatWindow) floatWindow.style.display = 'none';
+
+        if (!this.state.hasEnteredCallScene) {
+            // 等待中：恢复显示加载场景
+            const loadingScene = document.getElementById('vc-scene-loading');
+            loadingScene.style.display = 'flex';
+            loadingScene.classList.remove('vc-hidden');
+            loadingScene.style.opacity = 1;
+        } else {
+            // 已接通：检查是否需要切换回聊天室并显示通话界面
+            if (this.state.currentChat && typeof currentChatId !== 'undefined') {
+                if (currentChatId !== this.state.currentChat.id) {
+                    if (typeof openChatRoom === 'function') {
+                        let type = 'private';
+                        if (this.state.currentChat.members) type = 'group';
+                        openChatRoom(this.state.currentChat.id, type);
+                    }
+                }
+            }
+            const callScene = document.getElementById('vc-scene-call');
+            callScene.style.display = 'flex';
+            callScene.classList.remove('vc-hidden');
+            callScene.style.opacity = 1;
+        }
+    },
+
+    initDraggable: function(el) {
+        let isDragging = false;
+        let startX, startY, initialLeft, initialTop;
+        let hasMoved = false;
+
+        const onStart = (e) => {
+            if (e.target.closest('.vc-minimize-btn')) return; // 忽略按钮点击
+            
+            isDragging = true;
+            hasMoved = false;
+            el.style.transition = 'none';
+            
+            const clientX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
+            
+            startX = clientX;
+            startY = clientY;
+            
+            const rect = el.getBoundingClientRect();
+            initialLeft = rect.left;
+            initialTop = rect.top;
+            
+            // 转换为 fixed 定位的 left/top (移除 right/bottom 影响)
+            el.style.right = 'auto';
+            el.style.bottom = 'auto';
+            el.style.left = initialLeft + 'px';
+            el.style.top = initialTop + 'px';
+        };
+
+        const onMove = (e) => {
+            if (!isDragging) return;
+            e.preventDefault();
+            
+            const clientX = e.type === 'touchmove' ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type === 'touchmove' ? e.touches[0].clientY : e.clientY;
+            
+            const dx = clientX - startX;
+            const dy = clientY - startY;
+            
+            if (Math.abs(dx) > 5 || Math.abs(dy) > 5) hasMoved = true;
+            
+            el.style.left = (initialLeft + dx) + 'px';
+            el.style.top = (initialTop + dy) + 'px';
+        };
+
+        const onEnd = () => {
+            if (!isDragging) return;
+            isDragging = false;
+            el.style.transition = 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)';
+            
+            // 标记是否发生了拖拽，用于区分点击事件
+            el.dataset.isDragging = hasMoved ? 'true' : 'false';
+            setTimeout(() => el.dataset.isDragging = 'false', 100);
+
+            // 吸附边缘逻辑
+            const rect = el.getBoundingClientRect();
+            const winWidth = window.innerWidth;
+            const winHeight = window.innerHeight;
+            
+            let targetLeft = rect.left;
+            let targetTop = rect.top;
+            
+            // 左右吸附
+            if (rect.left + rect.width / 2 < winWidth / 2) {
+                targetLeft = 10; // 左边距
+            } else {
+                targetLeft = winWidth - rect.width - 10; // 右边距
+            }
+            
+            // 上下限制
+            if (targetTop < 60) targetTop = 60; // 避开顶栏
+            if (targetTop > winHeight - rect.height - 80) targetTop = winHeight - rect.height - 80; // 避开底栏
+            
+            el.style.left = targetLeft + 'px';
+            el.style.top = targetTop + 'px';
+        };
+
+        el.addEventListener('mousedown', onStart);
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onEnd);
+        
+        el.addEventListener('touchstart', onStart, {passive: false});
+        document.addEventListener('touchmove', onMove, {passive: false});
+        document.addEventListener('touchend', onEnd);
+    },
+
+    showCallTypeModal: function() {
+        if (!currentChatId) {
+            showToast('请先进入一个聊天室');
+            return;
+        }
+        
+        // 动态构建极简菜单
+        const modal = document.getElementById('vc-type-modal');
+        const sheet = modal.querySelector('.vc-type-sheet');
+        
+        // 重写内容为极简风格
+        sheet.innerHTML = `
+            <div class="vc-type-group">
+                <button class="vc-type-btn" id="vc-start-video-btn-new">视频通话</button>
+                <button class="vc-type-btn" id="vc-start-voice-btn-new">语音通话</button>
+                <button class="vc-type-btn" id="vc-history-btn-new">通话记录</button>
+            </div>
+            <button class="vc-type-cancel" id="vc-type-cancel-btn">取消</button>
+        `;
+        
+        // 重新绑定事件
+        document.getElementById('vc-start-video-btn-new').addEventListener('click', () => this.startCall('video'));
+        document.getElementById('vc-start-voice-btn-new').addEventListener('click', () => this.startCall('voice'));
+        document.getElementById('vc-history-btn-new').addEventListener('click', () => {
+            this.hideCallTypeModal();
+            this.showHistoryModal();
+        });
+        document.getElementById('vc-type-cancel-btn').addEventListener('click', () => this.hideCallTypeModal());
+
+        modal.style.display = 'flex';
+        modal.offsetHeight; 
+        modal.classList.add('visible');
+    },
+
+    hideCallTypeModal: function() {
+        const modal = document.getElementById('vc-type-modal');
+        modal.classList.remove('visible');
+        setTimeout(() => {
+            modal.style.display = 'none';
+        }, 300);
+    },
+
+    // 接收来电
+    receiveCall: function(type, chatId) {
+        let chat;
+        if (chatId) {
+            chat = db.characters.find(c => c.id === chatId);
+            if (!chat) {
+                chat = db.groups.find(g => g.id === chatId);
+            }
+        }
+        
+        if (!chat && typeof currentChatId !== 'undefined' && currentChatId) {
+            if (currentChatType === 'private') {
+                chat = db.characters.find(c => c.id === currentChatId);
+            } else if (currentChatType === 'group') {
+                chat = db.groups.find(g => g.id === currentChatId);
+            }
+        }
+
+        if (!chat) return;
+        
+        this.state.incomingChat = chat;
+        this.state.callType = type;
+
+        const avatarUrl = chat.avatar || 'https://i.postimg.cc/1zsGZ85M/Camera_1040g3k831o3b7f1bkq105oaltnigkev8gp3kia8.jpg';
+        const name = chat.remarkName || chat.name;
+        const typeText = type === 'video' ? '邀请你进行视频通话...' : '邀请你进行语音通话...';
+
+        document.getElementById('vc-incoming-avatar').style.backgroundImage = `url('${avatarUrl}')`;
+        document.getElementById('vc-incoming-name').textContent = name;
+        document.getElementById('vc-incoming-type').textContent = typeText;
+
+        const modal = document.getElementById('vc-incoming-modal');
+        modal.style.display = 'flex';
+        modal.offsetHeight;
+        modal.classList.add('visible');
+
+        this.stopRingSound();
+        if (db.globalIncomingCallSound) {
+            try {
+                const ring = new Audio();
+                ring.preload = 'auto';
+                ring.loop = true;
+                ring.volume = 1;
+                // 等待音频元数据加载完成后再播放，避免播放中断
+                ring.addEventListener('canplaythrough', () => {
+                    if (this.state.ringAudio === ring) {
+                        ring.play().catch(() => {});
+                    }
+                }, { once: true });
+                // 某些浏览器 loop 不可靠，手动监听 ended 事件兜底循环
+                ring.addEventListener('ended', () => {
+                    if (this.state.ringAudio === ring) {
+                        try {
+                            ring.currentTime = 0;
+                            ring.play().catch(() => {});
+                        } catch (e) {}
+                    }
+                });
+                // 处理加载错误
+                ring.addEventListener('error', () => {
+                    console.warn('[VideoCall] 来电铃声加载失败');
+                });
+                ring.src = db.globalIncomingCallSound;
+                ring.load();
+                this.state.ringAudio = ring;
+            } catch (e) {}
+        }
+    },
+
+    acceptCall: function() {
+        this.stopRingSound();
+        const modal = document.getElementById('vc-incoming-modal');
+        modal.classList.remove('visible');
+        setTimeout(() => {
+            modal.style.display = 'none';
+        }, 300);
+
+        const chat = this.state.incomingChat || this.state.currentChat;
+        if (!chat) return;
+
+        this.startCall(this.state.callType, true, chat);
+        
+        if (typeof currentChatId === 'undefined' || currentChatId !== chat.id) {
+            if (typeof loadChat === 'function') {
+                loadChat(chat.id);
+            }
+        }
+    },
+
+    rejectCall: async function() {
+        this.stopRingSound();
+        const modal = document.getElementById('vc-incoming-modal');
+        modal.classList.remove('visible');
+        setTimeout(() => {
+            modal.style.display = 'none';
+        }, 300);
+
+        const chat = this.state.incomingChat || this.state.currentChat;
+
+        if (chat) {
+            const myName = chat.myName || (chat.me ? chat.me.nickname : '我');
+            const targetName = chat.realName || chat.name;
+            const typeText = this.state.callType === 'video' ? '视频' : '语音';
+
+            const msg = {
+                id: `msg_${Date.now()}`,
+                role: 'system',
+                content: `[${myName}拒绝了${targetName}的${typeText}通话]`,
+                timestamp: Date.now()

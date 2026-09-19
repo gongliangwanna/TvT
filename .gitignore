@@ -1,0 +1,7 @@
+node_modules/
+
+# Generated or local-only artifacts
+*.log
+.DS_Store
+Thumbs.db
+

@@ -1,0 +1,586 @@
+        const callSceneEl = document.getElementById('vc-scene-call');
+        if (callSceneEl) {
+            callSceneEl.classList.remove('vc-nai-active');
+            callSceneEl.style.backgroundImage = 'none';
+        }
+
+        // 恢复聊天区域展开状态
+        const chatArea = document.getElementById('vc-chat-container');
+        if (chatArea) chatArea.classList.remove('vc-chat-collapsed');
+        const chatToggleBtn = document.getElementById('vc-chat-toggle-btn');
+        if (chatToggleBtn) {
+            const iconDown = chatToggleBtn.querySelector('.vc-toggle-icon-down');
+            const iconUp = chatToggleBtn.querySelector('.vc-toggle-icon-up');
+            if (iconDown) iconDown.style.display = 'block';
+            if (iconUp) iconUp.style.display = 'none';
+        }
+
+        if (this.state.timerInterval) {
+            clearInterval(this.state.timerInterval);
+            this.state.timerInterval = null;
+        }
+
+        const loadingScene = document.getElementById('vc-scene-loading');
+        const callScene = document.getElementById('vc-scene-call');
+        const floatWindow = document.getElementById('vc-floating-window');
+
+        // 隐藏悬浮窗
+        if (floatWindow) floatWindow.style.display = 'none';
+
+        if (isLoading) {
+            loadingScene.style.opacity = 0;
+            setTimeout(() => {
+                loadingScene.classList.add('vc-hidden');
+                loadingScene.style.display = 'none';
+            }, 500);
+        } else {
+            callScene.style.opacity = 0;
+            setTimeout(() => {
+                callScene.classList.add('vc-hidden');
+                callScene.style.display = 'none';
+                callScene.style.opacity = 1;
+            }, 500);
+        }
+        
+        document.getElementById('vc-status-main').style.color = "rgba(255,255,255,0.9)";
+
+        if (this.state.currentCallContext.length > 0) {
+            const startTimeDate = new Date(this.state.startTime);
+            const dateStr = `${startTimeDate.getFullYear()}/${startTimeDate.getMonth()+1}/${startTimeDate.getDate()} ${startTimeDate.getHours().toString().padStart(2,'0')}:${startTimeDate.getMinutes().toString().padStart(2,'0')}`;
+            const durationStr = this.formatDuration(this.state.seconds);
+
+            const callRecord = {
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                startTime: this.state.startTime,
+                duration: this.state.seconds,
+                type: this.state.callType,
+                context: [...this.state.currentCallContext],
+                summary: ""
+            };
+
+            if (!this.state.currentChat.callHistory) {
+                this.state.currentChat.callHistory = [];
+            }
+            this.state.currentChat.callHistory.push(callRecord);
+            
+            const summaryMsg = {
+                id: `msg_${Date.now()}_${Math.random()}`,
+                role: 'assistant',
+                content: `[视频通话记录：${dateStr}；${durationStr}；]`, 
+                timestamp: Date.now(),
+                callRecordId: callRecord.id
+            };
+            this.state.currentChat.history.push(summaryMsg);
+
+            await saveData();
+            showToast('通话结束，正在生成总结...');
+            
+            if (typeof renderMessages === 'function' && currentChatId === this.state.currentChat.id) {
+                renderMessages(false, true);
+            }
+
+            if (typeof generateCallSummary === 'function') {
+                generateCallSummary(this.state.currentChat, this.state.currentCallContext).then(async (summary) => {
+                    if (summary) {
+                        callRecord.summary = summary;
+                        summaryMsg.content = `[视频通话记录：${dateStr}；${durationStr}；${summary}]`;
+                        
+                        await saveData();
+                        
+                        if (typeof renderMessages === 'function' && currentChatId === this.state.currentChat.id) {
+                            renderMessages(false, false);
+                        }
+                        showToast('通话总结已生成');
+                    } else {
+                        showToast('通话总结生成失败，可稍后重试');
+                    }
+                });
+            }
+        }
+    },
+
+    // --- 历史记录相关 (重构版 - iOS 风格 + 长按删除) ---
+
+    showHistoryModal: function() {
+        if (!currentChatId) return;
+        
+        let chat;
+        if (currentChatType === 'private') {
+            chat = db.characters.find(c => c.id === currentChatId);
+        } else if (currentChatType === 'group') {
+            chat = db.groups.find(g => g.id === currentChatId);
+        }
+
+        if (!chat) return;
+        this.state.currentChat = chat;
+
+        const modal = document.getElementById('vc-history-modal');
+        const listContainer = document.getElementById('vc-history-list');
+        listContainer.innerHTML = '';
+
+        const history = chat.callHistory || [];
+
+        if (history.length === 0) {
+            listContainer.innerHTML = '<div class="vc-history-empty">暂无通话记录</div>';
+        } else {
+            const sortedHistory = [...history].sort((a, b) => b.startTime - a.startTime);
+            
+            sortedHistory.forEach((record, index) => {
+                const date = new Date(record.startTime);
+                const now = new Date();
+                let dateStr;
+                if (date.toDateString() === now.toDateString()) {
+                    dateStr = `${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+                } else {
+                    dateStr = `${date.getMonth()+1}/${date.getDate()}`;
+                }
+                
+                const durationStr = this.formatDuration(record.duration);
+                const typeIcon = record.type === 'video' ? 
+                    `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M0 5a2 2 0 0 1 2-2h7.5a2 2 0 0 1 1.983 1.738l3.11-1.382A1 1 0 0 1 16 4.269v7.462a1 1 0 0 1-1.406.913l-3.111-1.382A2 2 0 0 1 9.5 13H2a2 2 0 0 1-2-2V5z"/></svg>` : 
+                    `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M3.654 1.328a.678.678 0 0 0-1.015-.063L1.605 2.3c-.483.484-.661 1.169-.45 1.77a17.568 17.568 0 0 0 4.168 6.608 17.569 17.569 0 0 0 6.608 4.168c.601.211 1.286.033 1.77-.45l1.034-1.034a.678.678 0 0 0-.063-1.015l-2.307-1.794a.678.678 0 0 0-.58-.122l-2.19.547a1.745 1.745 0 0 1-1.657-.459L5.482 8.062a1.745 1.745 0 0 1-.46-1.657l.548-2.19a.678.678 0 0 0-.122-.58L3.654 1.328z"/></svg>`;
+                
+                const typeTitle = record.type === 'video' ? '视频通话' : '语音通话';
+                const typeClass = record.type;
+
+                // 创建容器
+                const container = document.createElement('div');
+                container.className = `vc-history-item-container ${typeClass}`;
+
+                // 内容包裹层
+                const contentWrapper = document.createElement('div');
+                contentWrapper.className = 'vc-history-content-wrapper';
+
+                // 头部 (点击区域)
+                const header = document.createElement('div');
+                header.className = 'vc-history-header';
+                header.innerHTML = `
+                    <div class="vc-history-icon">${typeIcon}</div>
+                    <div class="vc-history-info">
+                        <div class="vc-history-title">${typeTitle}</div>
+                        <div class="vc-history-subtitle">${durationStr}</div>
+                    </div>
+                    <div class="vc-history-right">
+                        <div class="vc-history-date">${dateStr}</div>
+                        <div class="vc-history-info-icon">i</div>
+                    </div>
+                `;
+
+                // 详情区域 (默认折叠)
+                const detail = document.createElement('div');
+                detail.className = 'vc-history-detail';
+                
+                // 预先生成详情内容
+                const detailContent = document.createElement('div');
+                detailContent.className = 'vc-detail-content';
+                
+                // 1. 总结
+                const generateBtnId = `vc-gen-summary-${record.id}`;
+                const summaryText = record.summary || '';
+                const btnText = record.summary ? '重新总结' : '生成总结';
+                
+                detailContent.innerHTML += `
+                    <div class="vc-detail-summary" id="vc-summary-container-${record.id}">
+                        <div class="vc-summary-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <div class="vc-summary-label" style="margin-bottom: 0;">通话总结</div>
+                            <button class="vc-type-btn small" id="${generateBtnId}" style="margin: 0; width: auto; padding: 4px 12px; font-size: 12px;">${btnText}</button>
+                        </div>
+                        <div class="vc-summary-text" style="${summaryText ? '' : 'display:none;'}">${summaryText}</div>
+                    </div>
+                `;
+                
+                // 绑定生成事件
+                setTimeout(() => {
+                    const genBtn = document.getElementById(generateBtnId);
+                    if (genBtn) {
+                        genBtn.addEventListener('click', async (e) => {
+                            e.stopPropagation(); // 防止触发折叠
+                            
+                            if (genBtn.disabled) return;
+                            genBtn.disabled = true;
+                            const originalText = genBtn.textContent;
+                            genBtn.textContent = "生成中...";
+                            
+                            try {
+                                if (typeof generateCallSummary === 'function') {
+                                    const summary = await generateCallSummary(this.state.currentChat, record.context);
+                                    
+                                    if (summary) {
+                                        // 1. 更新数据
+                                        record.summary = summary;
+                                        
+                                        // 2. 更新聊天记录中的消息
+                                        const chat = this.state.currentChat;
+                                        const summaryMsg = chat.history.find(m => m.callRecordId === record.id);
+                                        if (summaryMsg) {
+                                            const date = new Date(record.startTime);
+                                            const dateStr = `${date.getFullYear()}/${date.getMonth()+1}/${date.getDate()} ${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+                                            const durationStr = this.formatDuration(record.duration);
+                                            summaryMsg.content = `[视频通话记录：${dateStr}；${durationStr}；${summary}]`;
+                                        }
+                                        
+                                        await saveData();
+                                        
+                                        // 3. 更新界面
+                                        const container = document.getElementById(`vc-summary-container-${record.id}`);
+                                        if (container) {
+                                            const textEl = container.querySelector('.vc-summary-text');
+                                            if (textEl) {
+                                                textEl.textContent = summary;
+                                                textEl.style.display = 'block';
+                                            }
+                                            
+                                            // 更新按钮文本
+                                            genBtn.textContent = "重新总结";
+                                            
+                                            // 重新计算高度
+                                            const detail = container.closest('.vc-history-detail');
+                                            if (detail && detail.style.height !== '0px') {
+                                                detail.style.height = 'auto';
+                                            }
+                                        }
+                                        
+                                        showToast('通话总结已生成');
+                                        
+                                        // 4. 刷新聊天界面
+                                        if (typeof renderMessages === 'function' && currentChatId === chat.id) {
+                                            renderMessages(false, false);
+                                        }
+                                    } else {
+                                        showToast('生成失败，请重试');
+                                        genBtn.textContent = originalText;
+                                    }
+                                } else {
+                                    showToast('生成功能不可用');
+                                    genBtn.textContent = originalText;
+                                }
+                            } catch (err) {
+                                console.error(err);
+                                showToast('发生错误');
+                                genBtn.textContent = originalText;
+                            } finally {
+                                genBtn.disabled = false;
+                            }
+                        });
+                    }
+                }, 0);
+
+                // 2. 对话记录 (合并显示)
+                let logHtml = '<div class="vc-detail-log">';
+                if (record.context && record.context.length > 0) {
+                    record.context.forEach(msg => {
+                        const roleName = msg.role === 'ai' ? 'TA' : 'YOU';
+                        const roleClass = msg.role;
+                        
+                        if (msg.type === 'visual') {
+                            logHtml += `<span class="vc-log-line"><span class="vc-log-role ${roleClass}">${roleName}</span><span class="vc-log-visual">${msg.content}</span></span>`;
+                        } else {
+                            logHtml += `<span class="vc-log-line"><span class="vc-log-role ${roleClass}">${roleName}</span><span class="vc-log-text">${msg.content}</span></span>`;
+                        }
+                    });
+                } else {
+                    logHtml += '<span style="color:#999; font-style:italic;">无详细记录</span>';
+                }
+                logHtml += '</div>';
+                
+                detailContent.innerHTML += logHtml;
+                detail.appendChild(detailContent);
+
+                // 绑定点击事件 (展开/收起)
+                header.addEventListener('click', () => {
+                    const isExpanded = container.classList.contains('expanded');
+                    if (isExpanded) {
+                        // 收起
+                        detail.style.height = detail.scrollHeight + 'px'; // 先设为具体高度
+                        detail.offsetHeight; // 强制重绘
+                        container.classList.remove('expanded');
+                        detail.style.height = '0';
+                        detail.style.overflow = 'hidden';
+                    } else {
+                        // 展开
+                        container.classList.add('expanded');
+                        detail.style.height = detailContent.scrollHeight + 'px';
+                        
+                        // 动画结束后设为 auto
+                        const transitionEndHandler = () => {
+                            if (container.classList.contains('expanded')) {
+                                detail.style.height = 'auto';
+                                detail.style.overflow = 'visible';
+                            }
+                            detail.removeEventListener('transitionend', transitionEndHandler);
+                        };
+                        detail.addEventListener('transitionend', transitionEndHandler);
+                        // 兜底
+                        setTimeout(() => {
+                             if (container.classList.contains('expanded')) {
+                                detail.style.height = 'auto';
+                                detail.style.overflow = 'visible';
+                            }
+                        }, 350);
+                    }
+                });
+
+                // 长按删除逻辑
+                let pressTimer;
+                const startPress = (e) => {
+                    // 如果已展开，不触发长按（或者也可以触发，看需求，这里暂定不触发以免混淆）
+                    // if (container.classList.contains('expanded')) return;
+                    
+                    pressTimer = setTimeout(() => {
+                        if (typeof navigator.vibrate === 'function') navigator.vibrate(50);
+                        this.showDeleteConfirm(record.id, container);
+                    }, 600);
+                };
+                
+                const cancelPress = () => {
+                    if (pressTimer) clearTimeout(pressTimer);
+                };
+
+                header.addEventListener('touchstart', startPress, { passive: true });
+                header.addEventListener('touchend', cancelPress);
+                header.addEventListener('touchmove', cancelPress); // 滚动时取消长按
+
+                contentWrapper.appendChild(header);
+                contentWrapper.appendChild(detail);
+                
+                container.appendChild(contentWrapper);
+                listContainer.appendChild(container);
+            });
+        }
+
+        modal.style.display = 'flex';
+        modal.offsetHeight;
+        modal.classList.add('visible');
+    },
+
+    showDeleteConfirm: function(recordId, domElement) {
+        // 复用 vc-type-modal 结构，但临时修改内容
+        const modal = document.getElementById('vc-type-modal');
+        const sheet = modal.querySelector('.vc-type-sheet');
+        
+        // 备份原始内容（虽然每次 showCallTypeModal 都会重写，但为了安全）
+        // 这里直接重写即可，因为 showCallTypeModal 会再次重写
+        
+        sheet.innerHTML = `
+            <div class="vc-type-group">
+                <div class="vc-type-label" style="padding: 16px; text-align: center; font-size: 13px; color: #8e8e93; border-bottom: 1px solid rgba(0,0,0,0.1);">
+                    确定要删除这条通话记录吗？
+                </div>
+                <button class="vc-type-btn" id="vc-confirm-delete-btn" style="color: #ff3b30; font-weight: 600;">删除记录</button>
+            </div>
+            <button class="vc-type-cancel" id="vc-cancel-delete-btn">取消</button>
+        `;
+        
+        const deleteBtn = document.getElementById('vc-confirm-delete-btn');
+        const cancelBtn = document.getElementById('vc-cancel-delete-btn');
+        
+        // 绑定事件
+        const handleDelete = () => {
+            this.deleteCallRecord(recordId, domElement);
+            this.hideCallTypeModal(); // 关闭确认弹窗
+        };
+        
+        const handleCancel = () => {
+            this.hideCallTypeModal();
+        };
+        
+        deleteBtn.onclick = handleDelete;
+        cancelBtn.onclick = handleCancel;
+
+        modal.style.display = 'flex';
+        modal.offsetHeight; 
+        modal.classList.add('visible');
+    },
+
+    deleteCallRecord: async function(recordId, domElement) {
+        if (!this.state.currentChat) return;
+
+        // 1. 从数据中移除
+        const index = this.state.currentChat.callHistory.findIndex(r => r.id === recordId);
+        if (index !== -1) {
+            this.state.currentChat.callHistory.splice(index, 1);
+            
+            // 2. 尝试删除对应的聊天消息
+            const msgIndex = this.state.currentChat.history.findIndex(m => m.callRecordId === recordId);
+            if (msgIndex !== -1) {
+                this.state.currentChat.history.splice(msgIndex, 1);
+            }
+
+            await saveData();
+            
+            // 3. 移除 DOM
+            domElement.style.height = domElement.offsetHeight + 'px';
+            domElement.style.transition = 'height 0.3s ease, opacity 0.3s ease';
+            requestAnimationFrame(() => {
+                domElement.style.height = '0';
+                domElement.style.opacity = '0';
+            });
+            setTimeout(() => {
+                domElement.remove();
+                // 如果列表空了，显示提示
+                const listContainer = document.getElementById('vc-history-list');
+                if (listContainer.children.length === 0) {
+                    listContainer.innerHTML = '<div class="vc-history-empty">暂无通话记录</div>';
+                }
+            }, 300);
+
+            // 刷新聊天界面
+            if (typeof renderMessages === 'function' && currentChatId === this.state.currentChat.id) {
+                renderMessages(false, false);
+            }
+        }
+    },
+
+    formatDuration: function(seconds) {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        if (m === 0) return `${s}秒`;
+        return `${m}分${s}秒`;
+    },
+
+    // === 保存 NovelAI 生成的图片 ===
+    saveNaiImage: function() {
+        const imgEl = document.getElementById('vc-nai-bg-img');
+        if (!imgEl || !imgEl.src || imgEl.src === '' || imgEl.src === window.location.href) {
+            showToast('当前没有可保存的图片');
+            return;
+        }
+
+        try {
+            const link = document.createElement('a');
+            link.href = imgEl.src;
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            link.download = `videocall_${timestamp}.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast('图片已保存');
+        } catch (err) {
+            console.error('[VideoCall] 保存图片失败:', err);
+            // 如果是 blob/data URL，尝试 open 新窗口
+            try {
+                window.open(imgEl.src, '_blank');
+                showToast('已在新窗口打开图片，请长按保存');
+            } catch (e2) {
+                showToast('保存失败，请截图保存');
+            }
+        }
+    },
+
+    // === 收起/展开聊天文本内容 ===
+    toggleChatArea: function() {
+        const chatArea = document.getElementById('vc-chat-container');
+        const toggleBtn = document.getElementById('vc-chat-toggle-btn');
+        if (!chatArea || !toggleBtn) return;
+
+        const iconDown = toggleBtn.querySelector('.vc-toggle-icon-down');
+        const iconUp = toggleBtn.querySelector('.vc-toggle-icon-up');
+
+        if (chatArea.classList.contains('vc-chat-collapsed')) {
+            // 当前是收起状态 → 展开
+            chatArea.classList.remove('vc-chat-collapsed');
+            iconDown.style.display = 'block';
+            iconUp.style.display = 'none';
+            toggleBtn.title = '收起聊天';
+            setTimeout(() => {
+                chatArea.scrollTo({ top: chatArea.scrollHeight, behavior: 'smooth' });
+            }, 100);
+        } else {
+            // 当前是展开状态 → 收起
+            chatArea.classList.add('vc-chat-collapsed');
+            iconDown.style.display = 'none';
+            iconUp.style.display = 'block';
+            toggleBtn.title = '展开聊天';
+        }
+    },
+
+    // === TTS 功能 ===
+    // fromAutoPlay:  true = 通话中自动播放，使用排队接口且不弹 toast
+    handleTTSClick: async function(content, fromAutoPlay) {
+        try {
+            if (typeof MinimaxTTSService === 'undefined') {
+                console.error('[VideoCall] MinimaxTTSService 未加载');
+                showToast('TTS 服务未加载');
+                return;
+            }
+
+            // 两个开关必须同时打开才进行 TTS，任一未开启则静默忽略
+            if (!MinimaxTTSService.config.enabled) return;
+
+            const chatId = this.state.currentChat?.id;
+            if (!chatId) {
+                showToast('无法获取角色配置');
+                return;
+            }
+
+            if (typeof db !== 'undefined' && db.characters) {
+                const _chat = db.characters.find(c => c.id === chatId);
+                if (!_chat || !_chat.ttsConfig || !_chat.ttsConfig.chatTtsEnabled) return;
+            }
+
+            // 两个开关都开了，但 API 配置不完整时才提示
+            if (!MinimaxTTSService.isConfigured()) {
+                showToast('TTS 配置不完整，请检查 API 设置');
+                return;
+            }
+
+            if (typeof VoiceSelector === 'undefined') {
+                console.error('[VideoCall] VoiceSelector 未加载');
+                showToast('音色选择器未加载');
+                return;
+            }
+
+            const voiceConfig = VoiceSelector.getVoiceConfig(chatId);
+            if (!voiceConfig || !voiceConfig.voiceId) {
+                showToast('请先为角色设置语音音色');
+                return;
+            }
+
+            const voiceId = voiceConfig.voiceId;
+            const language = voiceConfig.language;
+            const speed = voiceConfig.speed;
+            const opts = speed != null ? { speed: speed } : {};
+
+            // 通话中：排队播放，播完一句再播下一句，不打断、不重复消耗
+            if (fromAutoPlay && this.state.isCallActive) {
+                MinimaxTTSService.synthesizeAndPlayQueued(content, voiceId, language, opts);
+                return;
+            }
+
+            // 手动点击：立即播放并提示
+            if (!fromAutoPlay) {
+                showToast('🔊 正在播放...');
+            }
+            await MinimaxTTSService.synthesizeAndPlay(content, voiceId, language, opts);
+
+        } catch (err) {
+            console.error('[VideoCall] TTS 播放失败:', err);
+            
+            // 如果是自动播放被浏览器拦截
+            if (fromAutoPlay && (err.name === 'NotAllowedError' || err.message.includes('play() request was interrupted'))) {
+                // 首次失败时给出提示
+                if (typeof MinimaxTTSService !== 'undefined' && !MinimaxTTSService.hasShownAutoplayTip) {
+                    MinimaxTTSService.hasShownAutoplayTip = true;
+                    showToast('浏览器阻止了自动播放，请点击消息手动播放，或在浏览器设置中允许本网站自动播放声音', 5000);
+                }
+                return; // 静默失败，不打断通话
+            }
+            
+            // 手动点击时才显示详细错误提示
+            if (!fromAutoPlay) {
+                if (err.message.includes('TTS 未配置')) {
+                    showToast('请先在 API 设置中配置 TTS');
+                } else if (err.message.includes('API 请求失败')) {
+                    showToast('TTS 服务请求失败，请检查配置');
+                } else if (err.message.includes('文本为空')) {
+                    showToast('无可播放的内容');
+                } else {
+                    showToast('播放失败，请重试');
+                }
+            }
+        }
+    }
+};
+
+// 导出全局变量
+window.VideoCallModule = VideoCallModule;

@@ -1,0 +1,366 @@
+<!-- TAB 4: 专用与扩展能力 (Specialized) Part 2 -->
+                        <!-- 补齐人设专用 API -->
+                        <section class="kkt-group api-section-card">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 class="api-card-title">补齐人设专用 API</h2>
+                                    <p class="api-card-desc">论坛好友开启「AI 补齐人设」后，优先使用此配置提取角色设定</p>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">服务商</div>
+                                <div class="kkt-item-control">
+                                    <select id="supplementPersona-api-provider">
+                                        <option value="newapi">NewAPI (自定义)</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                        <option value="claude">Claude</option>
+                                        <option value="gemini">Gemini</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API 地址</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="supplementPersona-api-url" autocomplete="off" placeholder="https://...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">密钥 (Key)</div>
+                                <div class="kkt-item-control">
+                                    <input type="password" id="supplementPersona-api-key" autocomplete="new-password" placeholder="sk-...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">选择模型</div>
+                                <div class="kkt-item-control">
+                                    <select id="supplementPersona-api-model">
+                                        <option value="">请先拉取</option>
+                                    </select>
+                                    <button type="button" class="btn btn-small btn-secondary api-fetch-btn" id="supplementPersona-fetch-models-btn">
+                                        <span class="btn-text">拉取</span>
+                                        <div class="spinner"></div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="api-actions-row">
+                                <button type="button" class="btn btn-primary" id="supplementPersona-api-save-btn">
+                                    <span class="btn-text">保存补齐人设 API 设置</span>
+                                    <div class="spinner"></div>
+                                </button>
+                            </div>
+
+                            <!-- 补齐人设预设紧凑条 -->
+                            <div class="api-sub-presets-strip" id="supplementPersona-api-presets-control">
+                                <span class="api-sub-presets-label">预设:</span>
+                                <select id="supplementPersona-api-preset-select" class="api-sub-preset-select">
+                                    <option value="">— 选择 —</option>
+                                </select>
+                                <div class="api-sub-preset-btns">
+                                    <button type="button" id="supplementPersona-api-apply-preset" class="btn btn-small btn-primary">应用</button>
+                                    <button type="button" id="supplementPersona-api-save-preset" class="btn btn-small btn-secondary">另存</button>
+                                    <button type="button" id="supplementPersona-api-manage-presets" class="btn btn-small btn-neutral">管理</button>
+                                    <button type="button" id="supplementPersona-api-import-presets" class="btn btn-small btn-neutral">导入</button>
+                                    <button type="button" id="supplementPersona-api-export-presets" class="btn btn-small btn-neutral">导出</button>
+                                </div>
+                            </div>
+                            <div id="supplementPersona-api-presets-modal" class="api-modal-backdrop">
+                                <div class="api-clean-modal">
+                                    <h3>补齐人设预设管理</h3>
+                                    <div id="supplementPersona-api-presets-list" class="api-modal-scroll-list"></div>
+                                    <div class="api-modal-footer">
+                                        <button type="button" id="supplementPersona-api-close-modal" class="btn btn-primary">完成</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 偷看手机专用 API -->
+                        <section class="kkt-group api-section-card">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 class="api-card-title">偷看手机专用 API</h2>
+                                    <p class="api-card-desc">偷看手机与探索事件专属生成接口；留空则使用主 API</p>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">服务商</div>
+                                <div class="kkt-item-control">
+                                    <select id="peek-api-provider">
+                                        <option value="newapi">NewAPI (自定义)</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                        <option value="claude">Claude</option>
+                                        <option value="gemini">Gemini</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API 地址</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="peek-api-url" autocomplete="off" placeholder="https://...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">密钥 (Key)</div>
+                                <div class="kkt-item-control">
+                                    <input type="password" id="peek-api-key" autocomplete="new-password" placeholder="sk-...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">选择模型</div>
+                                <div class="kkt-item-control">
+                                    <select id="peek-api-model">
+                                        <option value="">请先拉取</option>
+                                    </select>
+                                    <button type="button" class="btn btn-small btn-secondary api-fetch-btn" id="peek-fetch-models-btn">
+                                        <span class="btn-text">拉取</span>
+                                        <div class="spinner"></div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="api-actions-row">
+                                <button type="button" class="btn btn-primary" id="peek-api-save-btn">
+                                    <span class="btn-text">保存偷看手机 API 设置</span>
+                                    <div class="spinner"></div>
+                                </button>
+                            </div>
+
+                            <!-- 偷看手机预设紧凑条 -->
+                            <div class="api-sub-presets-strip" id="peek-api-presets-control">
+                                <span class="api-sub-presets-label">预设:</span>
+                                <select id="peek-api-preset-select" class="api-sub-preset-select">
+                                    <option value="">— 选择 —</option>
+                                </select>
+                                <div class="api-sub-preset-btns">
+                                    <button type="button" id="peek-api-apply-preset" class="btn btn-small btn-primary">应用</button>
+                                    <button type="button" id="peek-api-save-preset" class="btn btn-small btn-secondary">另存</button>
+                                    <button type="button" id="peek-api-manage-presets" class="btn btn-small btn-neutral">管理</button>
+                                    <button type="button" id="peek-api-import-presets" class="btn btn-small btn-neutral">导入</button>
+                                    <button type="button" id="peek-api-export-presets" class="btn btn-small btn-neutral">导出</button>
+                                </div>
+                            </div>
+                            <div id="peek-api-presets-modal" class="api-modal-backdrop">
+                                <div class="api-clean-modal">
+                                    <h3>偷看手机预设管理</h3>
+                                    <div id="peek-api-presets-list" class="api-modal-scroll-list"></div>
+                                    <div class="api-modal-footer">
+                                        <button type="button" id="peek-api-close-modal" class="btn btn-primary">完成</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 自动识图专用 API -->
+                        <section class="kkt-group api-section-card" id="guide-image-recognition-section">
+                            <div class="api-card-header" id="guide-image-recognition-header">
+                                <div>
+                                    <h2 class="api-card-title">后台自动识图 API</h2>
+                                    <p class="api-card-desc">发送图片时在后台自动转换文字描述提供给 AI</p>
+                                </div>
+                                <label class="kkt-switch">
+                                    <input type="checkbox" id="imageRecognition-enabled-switch">
+                                    <span class="kkt-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">服务商</div>
+                                <div class="kkt-item-control">
+                                    <select id="imageRecognition-api-provider">
+                                        <option value="newapi">NewAPI (自定义)</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                        <option value="claude">Claude</option>
+                                        <option value="gemini">Gemini</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API 地址</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="imageRecognition-api-url" autocomplete="off" placeholder="https://...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">密钥 (Key)</div>
+                                <div class="kkt-item-control">
+                                    <input type="password" id="imageRecognition-api-key" autocomplete="new-password" placeholder="sk-...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">选择模型</div>
+                                <div class="kkt-item-control">
+                                    <select id="imageRecognition-api-model">
+                                        <option value="">请先拉取</option>
+                                    </select>
+                                    <button type="button" class="btn btn-small btn-secondary api-fetch-btn" id="imageRecognition-fetch-models-btn">
+                                        <span class="btn-text">拉取</span>
+                                        <div class="spinner"></div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="api-actions-row">
+                                <button type="button" class="btn btn-primary" id="imageRecognition-api-save-btn">
+                                    <span class="btn-text">保存自动识图 API 设置</span>
+                                    <div class="spinner"></div>
+                                </button>
+                            </div>
+
+                            <!-- 自动识图预设紧凑条 -->
+                            <div class="api-sub-presets-strip" id="imageRecognition-api-presets-control">
+                                <span class="api-sub-presets-label">预设:</span>
+                                <select id="imageRecognition-api-preset-select" class="api-sub-preset-select">
+                                    <option value="">— 选择 —</option>
+                                </select>
+                                <div class="api-sub-preset-btns">
+                                    <button type="button" id="imageRecognition-api-apply-preset" class="btn btn-small btn-primary">应用</button>
+                                    <button type="button" id="imageRecognition-api-save-preset" class="btn btn-small btn-secondary">另存</button>
+                                    <button type="button" id="imageRecognition-api-manage-presets" class="btn btn-small btn-neutral">管理</button>
+                                    <button type="button" id="imageRecognition-api-import-presets" class="btn btn-small btn-neutral">导入</button>
+                                    <button type="button" id="imageRecognition-api-export-presets" class="btn btn-small btn-neutral">导出</button>
+                                </div>
+                            </div>
+                            <div id="imageRecognition-api-presets-modal" class="api-modal-backdrop">
+                                <div class="api-clean-modal">
+                                    <h3>自动识图预设管理</h3>
+                                    <div id="imageRecognition-api-presets-list" class="api-modal-scroll-list"></div>
+                                    <div class="api-modal-footer">
+                                        <button type="button" id="imageRecognition-api-close-modal" class="btn btn-primary">完成</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 表情包识图专用 API -->
+                        <section class="kkt-group api-section-card">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 class="api-card-title">表情包识图专用 API</h2>
+                                    <p class="api-card-desc">在表情包仓库中手动或批量识别图片内容；留空则使用主 API</p>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">服务商</div>
+                                <div class="kkt-item-control">
+                                    <select id="stickerRecognition-api-provider">
+                                        <option value="newapi">NewAPI (自定义)</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                        <option value="claude">Claude</option>
+                                        <option value="gemini">Gemini</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API 地址</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="stickerRecognition-api-url" autocomplete="off" placeholder="https://...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">密钥 (Key)</div>
+                                <div class="kkt-item-control">
+                                    <input type="password" id="stickerRecognition-api-key" autocomplete="new-password" placeholder="sk-...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">选择模型</div>
+                                <div class="kkt-item-control">
+                                    <select id="stickerRecognition-api-model">
+                                        <option value="">请先拉取</option>
+                                    </select>
+                                    <button type="button" class="btn btn-small btn-secondary api-fetch-btn" id="stickerRecognition-fetch-models-btn">
+                                        <span class="btn-text">拉取</span>
+                                        <div class="spinner"></div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="api-actions-row">
+                                <button type="button" class="btn btn-primary" id="stickerRecognition-api-save-btn">
+                                    <span class="btn-text">保存表情包识图 API 设置</span>
+                                    <div class="spinner"></div>
+                                </button>
+                            </div>
+
+                            <!-- 表情包识图预设紧凑条 -->
+                            <div class="api-sub-presets-strip" id="stickerRecognition-api-presets-control">
+                                <span class="api-sub-presets-label">预设:</span>
+                                <select id="stickerRecognition-api-preset-select" class="api-sub-preset-select">
+                                    <option value="">— 选择 —</option>
+                                </select>
+                                <div class="api-sub-preset-btns">
+                                    <button type="button" id="stickerRecognition-api-apply-preset" class="btn btn-small btn-primary">应用</button>
+                                    <button type="button" id="stickerRecognition-api-save-preset" class="btn btn-small btn-secondary">另存</button>
+                                    <button type="button" id="stickerRecognition-api-manage-presets" class="btn btn-small btn-neutral">管理</button>
+                                    <button type="button" id="stickerRecognition-api-import-presets" class="btn btn-small btn-neutral">导入</button>
+                                    <button type="button" id="stickerRecognition-api-export-presets" class="btn btn-small btn-neutral">导出</button>
+                                </div>
+                            </div>
+                            <div id="stickerRecognition-api-presets-modal" class="api-modal-backdrop">
+                                <div class="api-clean-modal">
+                                    <h3>表情包识图预设管理</h3>
+                                    <div id="stickerRecognition-api-presets-list" class="api-modal-scroll-list"></div>
+                                    <div class="api-modal-footer">
+                                        <button type="button" id="stickerRecognition-api-close-modal" class="btn btn-primary">完成</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 全局天气服务 API -->
+                        <section class="kkt-group api-section-card">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 class="api-card-title">全局天气服务 API</h2>
+                                    <p class="api-card-desc">为角色聊天赋予实时感知现实天气的环境数据源</p>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">服务商</div>
+                                <div class="kkt-item-control">
+                                    <select id="weather-api-provider">
+                                        <option value="openmeteo">Open-Meteo (免费免Key)</option>
+                                        <option value="wttrin">wttr.in (免费免Key)</option>
+                                        <option value="qweather">和风天气</option>
+                                        <option value="seniverse">心知天气</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item" id="weather-api-key-container" style="display:none;">
+                                <div class="kkt-item-label">密钥 (Key)</div>
+                                <div class="kkt-item-control">
+                                    <input type="password" id="weather-api-key" autocomplete="new-password" placeholder="输入天气 API Key">
+                                </div>
+                            </div>
+
+                            <div class="api-actions-row">
+                                <button type="button" class="btn btn-primary" id="weather-api-save-btn">
+                                    <span class="btn-text">保存全局天气 API 设置</span>
+                                    <div class="spinner"></div>
+                                </button>
+                            </div>
+                        </section>
+                    </div>

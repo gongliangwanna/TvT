@@ -1,0 +1,539 @@
+                        <!-- 【功能】Tab 内容 -->
+                        <div id="setting-tab-func" class="settings-tab-content">
+                            <!-- 聊天增强 -->
+                            <div class="kkt-group">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">最大记忆轮数</div>
+                                    <div class="kkt-item-control">
+                                        <input type="number" id="setting-max-memory" value="100" min="1"
+                                            style="width:50px; text-align:right; border:none;">
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">与所在群聊记忆互通</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-sync-group-memory">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div id="setting-sync-group-list"
+                                    style="display:none; padding: 10px 15px; background-color: #f9f9f9; border-top: 1px solid #f0f0f0; border-bottom: 1px solid #f0f0f0;"></div>
+                                <div class="kkt-item" id="setting-group-memory-container" style="display: none;">
+                                    <div class="kkt-item-label">群聊聊天记录条数</div>
+                                    <div class="kkt-item-control">
+                                        <input type="number" id="setting-group-memory-history-count" value="20" min="1"
+                                            max="100" style="width:50px; text-align:right; border:none;"
+                                            title="从每个群聊读取的最近聊天记录条数">
+                                    </div>
+                                </div>
+                                <div class="kkt-item" id="setting-group-summary-container" style="display: none;">
+                                    <div class="kkt-item-label">群聊总结数量</div>
+                                    <div class="kkt-item-control">
+                                        <input type="number" id="setting-group-memory-summary-count" value="0" min="0"
+                                            max="50" style="width:50px; text-align:right; border:none;"
+                                            title="0表示读取全部已收藏的总结，大于0则只读取最近的N条">
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">双语聊天模式</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-bilingual-mode">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" id="setting-bilingual-style-container">
+                                    <div class="kkt-item-label">翻译显示样式</div>
+                                    <div class="kkt-item-control">
+                                        <select id="setting-bilingual-style"
+                                            style="border:none; background:transparent; text-align:right;">
+                                            <option value="under">气泡外 (默认)</option>
+                                            <option value="inner">气泡内</option>
+                                            <option value="inner-no-line">气泡内 (无分割线)</option>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">自定义回复条数</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-reply-count-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">表情包智能匹配</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-sticker-smart-match">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" id="setting-reply-count-container" style="display: none;">
+                                    <div class="kkt-item-label">回复条数范围</div>
+                                    <div class="kkt-item-control" style="gap: 5px;">
+                                        <input type="number" id="setting-reply-count-min" value="3" min="1"
+                                            style="width:30px; text-align:center; border:none; background: rgba(0,0,0,0.05); border-radius: 4px;">
+                                        <span style="color:#999;">-</span>
+                                        <input type="number" id="setting-reply-count-max" value="8" min="1"
+                                            style="width:30px; text-align:center; border:none; background: rgba(0,0,0,0.05); border-radius: 4px;">
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">自动生成日记总结</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-auto-journal-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">长期记忆模式</div>
+                                    <div class="kkt-item-control">
+                                        <select id="setting-memory-mode" style="border:none; background:transparent; text-align:right;">
+                                            <option value="journal">日记模式</option>
+                                            <option value="table">表格模式</option>
+                                            <option value="vector">向量模式</option>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">向量记忆面板</div>
+                                    <div class="kkt-item-control">
+                                        <button type="button" id="setting-open-vector-memory-btn" class="btn btn-small btn-secondary" style="min-width: 132px;">打开向量记忆</button>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">结构化记忆面板</div>
+                                    <div class="kkt-item-control">
+                                        <button type="button" id="setting-open-memory-table-btn" class="btn btn-small btn-secondary" style="min-width: 132px;">打开结构记忆</button>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" id="setting-auto-journal-interval-container" style="display: none;">
+                                    <div class="kkt-item-label">自动总结间隔(条)</div>
+                                    <div class="kkt-item-control">
+                                        <input type="number" id="setting-auto-journal-interval" value="100" min="10"
+                                            style="width:60px; text-align:right; border:none; background: rgba(0,0,0,0.05); border-radius: 4px;">
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">拍一拍<p class="kkt-item-hint">开启后连点头像两次即可互动</p></div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-poke-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div id="setting-poke-options" class="poke-settings-options" style="display:none;">
+                                    <div class="kkt-item">
+                                        <div class="kkt-item-label">允许角色主动拍我</div>
+                                        <div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-poke-character-initiated"><span class="kkt-slider"></span></label></div>
+                                    </div>
+                                    <div class="kkt-item">
+                                        <div class="kkt-item-label">我拍后立即触发回复</div>
+                                        <div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-poke-trigger-reply"><span class="kkt-slider"></span></label></div>
+                                    </div>
+                                    <div class="kkt-item">
+                                        <label class="kkt-item-label" for="setting-poke-char-suffix">角色被拍后缀</label>
+                                        <div class="kkt-item-control poke-setting-input-wrap"><input type="text" id="setting-poke-char-suffix" maxlength="20" placeholder="例如：的肩膀"></div>
+                                    </div>
+                                    <div class="kkt-item">
+                                        <label class="kkt-item-label" for="setting-poke-user-suffix">我的被拍后缀</label>
+                                        <div class="kkt-item-control poke-setting-input-wrap"><input type="text" id="setting-poke-user-suffix" maxlength="20" placeholder="例如：的猫耳朵"></div>
+                                    </div>
+                                    <div class="kkt-item">
+                                        <div class="kkt-item-label">动效强度</div>
+                                        <div class="kkt-item-control"><select id="setting-poke-effect-mode"><option value="full">完整</option><option value="light">轻量</option><option value="off">关闭</option></select><span class="kkt-arrow">›</span></div>
+                                    </div>
+                                    <div class="kkt-item">
+                                        <div class="kkt-item-label">震动反馈</div>
+                                        <div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-poke-vibration"><span class="kkt-slider"></span></label></div>
+                                    </div>
+                                    <div class="kkt-item">
+                                        <div class="kkt-item-label">离开会话时提醒</div>
+                                        <div class="kkt-item-control"><select id="setting-poke-notification-mode"><option value="in_chat">仅聊天内记录</option><option value="normal">按普通消息提醒</option></select><span class="kkt-arrow">›</span></div>
+                                    </div>
+                                    <div class="kkt-item">
+                                        <div class="kkt-item-label">参与 AI 上下文</div>
+                                        <div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-poke-context"><span class="kkt-slider"></span></label></div>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">自动总结进度</div>
+                                    <div class="kkt-item-control">
+                                        <button type="button" id="setting-auto-journal-visual-btn"
+                                            class="btn btn-small btn-secondary auto-journal-visual-entry"
+                                            data-auto-journal-chat-type="private">
+                                            <span class="auto-journal-visual-entry-text">查看进度</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">自动总结补救</div>
+                                    <div class="kkt-item-control">
+                                        <button type="button" id="setting-auto-journal-retry-btn" class="btn btn-small btn-secondary" style="min-width: 132px;">重试自动总结</button>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">总结到最新</div>
+                                    <div class="kkt-item-control">
+                                        <button type="button" id="setting-summarize-latest-btn" class="btn btn-small btn-secondary" style="min-width: 132px;">总结到最新</button>
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">收藏日记置顶</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-journal-favorite-top">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色自主收藏</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-auto-favorite">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" style="padding-top: 0;">
+                                    <p class="kkt-item-hint" style="font-size: 12px; color: #999; margin: 0;">
+                                        开启后，该角色可自主收藏认为重要的用户消息，可在「收藏」→「角色收藏」中查看</p>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色知晓我的收藏</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-aware-user-favorites">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div id="setting-aware-favorite-scope-container" style="display: none; padding: 12px 15px; margin: 0 15px 15px; background: #f9f9f9; border-radius: 8px; border: 1px solid #f0f0f0;">
+                                    <div class="radio-group-pills" style="margin-bottom: 8px;">
+                                        <input type="radio" name="setting-aware-favorite-scope" id="setting-aware-favorite-scope-current" value="current" checked>
+                                        <label for="setting-aware-favorite-scope-current" style="font-size: 13px; padding: 6px 16px;">仅当前角色</label>
+                                        <input type="radio" name="setting-aware-favorite-scope" id="setting-aware-favorite-scope-all" value="all">
+                                        <label for="setting-aware-favorite-scope-all" style="font-size: 13px; padding: 6px 16px;">所有角色的收藏</label>
+                                    </div>
+                                    <p style="font-size: 12px; color: #999; margin: 0; line-height: 1.4;">开启后角色能看到你收藏的内容，借此了解你的喜好</p>
+                                </div>
+                            </div>
+
+                            <!-- 角色单人思维链设置 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item" style="flex-direction:column; align-items:flex-start;">
+                                    <div style="width:100%; display:flex; justify-content:space-between; align-items:center;">
+                                        <div class="kkt-item-label">启用单人思维链配置</div>
+                                        <div class="kkt-item-control">
+                                            <label class="kkt-switch">
+                                                <input type="checkbox" id="setting-char-cot-enabled">
+                                                <span class="kkt-slider"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <p style="font-size:12px; color:#999; margin:4px 0 0 0;">开启后，本角色的思维链配置将独立于全局设置</p>
+                                </div>
+                                <div id="setting-char-cot-options" style="display:none;">
+                                    
+                                    <!-- 聊天模式卡片 -->
+                                    <div style="background:#f9f9f9; padding:10px 15px; border-radius:8px; margin: 10px 15px; border: 1px solid #f0f0f0;">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div class="kkt-item-label" style="font-weight:600; color:#555;">聊天模式</div>
+                                            <label class="kkt-switch kkt-switch-small">
+                                                <input type="checkbox" id="setting-char-cot-chat-enabled">
+                                                <span class="kkt-slider"></span>
+                                            </label>
+                                        </div>
+                                        <div id="setting-char-cot-chat-preset-container" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #e0e0e0;">
+                                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                                <span style="font-size:13px; color:#666;">聊天预设</span>
+                                                <div class="kkt-item-control">
+                                                    <select id="setting-char-cot-chat-preset" style="border:none; background:transparent; text-align:right; direction: rtl; appearance: none; padding-right: 15px; max-width: 150px; font-size:13px; color:#333;">
+                                                        <option value="">默认预设</option>
+                                                    </select>
+                                                    <span class="kkt-arrow">›</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 通话模式卡片 -->
+                                    <div style="background:#f9f9f9; padding:10px 15px; border-radius:8px; margin: 10px 15px; border: 1px solid #f0f0f0;">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div class="kkt-item-label" style="font-weight:600; color:#555;">通话模式</div>
+                                            <label class="kkt-switch kkt-switch-small">
+                                                <input type="checkbox" id="setting-char-cot-call-enabled">
+                                                <span class="kkt-slider"></span>
+                                            </label>
+                                        </div>
+                                        <div id="setting-char-cot-call-preset-container" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #e0e0e0;">
+                                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                                <span style="font-size:13px; color:#666;">通话预设</span>
+                                                <div class="kkt-item-control">
+                                                    <select id="setting-char-cot-call-preset" style="border:none; background:transparent; text-align:right; direction: rtl; appearance: none; padding-right: 15px; max-width: 150px; font-size:13px; color:#333;">
+                                                        <option value="">默认通话预设</option>
+                                                    </select>
+                                                    <span class="kkt-arrow">›</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 线下模式卡片 -->
+                                    <div style="background:#f9f9f9; padding:10px 15px; border-radius:8px; margin: 10px 15px 15px 15px; border: 1px solid #f0f0f0;">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div class="kkt-item-label" style="font-weight:600; color:#555;">线下模式</div>
+                                            <label class="kkt-switch kkt-switch-small">
+                                                <input type="checkbox" id="setting-char-cot-offline-enabled">
+                                                <span class="kkt-slider"></span>
+                                            </label>
+                                        </div>
+                                        <div id="setting-char-cot-offline-preset-container" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #e0e0e0;">
+                                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                                <span style="font-size:13px; color:#666;">线下预设</span>
+                                                <div class="kkt-item-control">
+                                                    <select id="setting-char-cot-offline-preset" style="border:none; background:transparent; text-align:right; direction: rtl; appearance: none; padding-right: 15px; max-width: 150px; font-size:13px; color:#333;">
+                                                        <option value="">默认线下预设</option>
+                                                    </select>
+                                                    <span class="kkt-arrow">›</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+
+                            <!-- 角色相册设置 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">启用真实相册匹配</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-use-real-gallery">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 商城互动设置 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">启用商城互动</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-shop-interaction-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 允许角色赠送亲属卡 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">允许角色赠送亲属卡</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-family-card-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 角色自主购物：保留原商城互动能力，以下权限仅约束真实扣款行为 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">允许角色自主购物</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-autonomous-shopping-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">使用角色自己的钱包</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-character-own-wallet-shopping-enabled" checked>
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">允许角色使用我的亲属卡</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-character-family-card-spending-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">允许给自己买东西</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-character-self-shopping-enabled" checked>
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">允许给我买东西</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-character-gift-shopping-enabled" checked>
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">允许向我发起代付</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-character-pay-request-enabled" checked>
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">单笔消费上限</div>
+                                    <div class="kkt-item-control" style="gap:4px;">
+                                        <input type="number" id="setting-character-shopping-single-limit" value="200" min="0" step="1" style="width:66px;text-align:right;border:none;background:rgba(0,0,0,0.05);border-radius:4px;padding:4px 6px;">
+                                        <span style="font-size:12px;color:#999;">元</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">周期消费预算</div>
+                                    <div class="kkt-item-control" style="gap:4px;">
+                                        <input type="number" id="setting-character-shopping-period-budget" value="1000" min="0" step="1" style="width:66px;text-align:right;border:none;background:rgba(0,0,0,0.05);border-radius:4px;padding:4px 6px;">
+                                        <span style="font-size:12px;color:#999;">元</span>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">自主购物频率</div>
+                                    <div class="kkt-item-control">
+                                        <select id="setting-character-shopping-frequency" style="border:none;background:transparent;text-align:right;font-size:13px;color:#555;">
+                                            <option value="rare">偶尔</option>
+                                            <option value="normal">适中</option>
+                                            <option value="active">活跃</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">允许购买类型</div>
+                                    <div class="kkt-item-control" style="flex:1;justify-content:flex-end;min-width:0;">
+                                        <input type="text" id="setting-character-shopping-categories" placeholder="留空不限制" style="width:132px;max-width:100%;min-width:0;text-align:right;border:none;background:rgba(0,0,0,0.05);border-radius:4px;padding:4px 6px;font-size:12px;">
+                                    </div>
+                                </div>
+                                <div class="kkt-item" style="padding-top:0;">
+                                    <p class="kkt-item-hint" style="font-size:11px;color:#aaa;margin:0;line-height:1.5;">角色只会在正常聊天或原本触发的后台消息中购物，不会因消费额外触发后台回复。使用你的亲属卡默认关闭。</p>
+                                </div>
+                            </div>
+
+                            <!-- 提醒事项设置 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">允许角色管理提醒事项</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-reminder-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 视频通话设置 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">允许角色主动发起通话</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-video-call-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">视频通话真实摄像头</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-real-camera-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item-hint" id="real-camera-hint" style="padding: 0 16px 12px; font-size: 12px; color: #8e8e93; line-height: 1.4;">
+                                    开启后，视频通话时会在右上角显示你的真实摄像头画面，角色可以通过API识别你的画面内容。
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">视频通话 NovelAI 生图</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-vc-novelai-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item-hint" style="padding: 0 16px 12px; font-size: 12px; color: #8e8e93; line-height: 1.4;">
+                                    开启后，视频通话中角色每轮回复会生成 NovelAI 图片作为通话画面背景。需先在 API 设置中配置 NovelAI。
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">视频通话 GPT 生图</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-vc-gpt-draw-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item-hint" style="padding: 0 16px 12px; font-size: 12px; color: #8e8e93; line-height: 1.4;">
+                                    开启后，视频通话中角色每轮回复会生成 GPT 图片作为通话画面背景（独立于 NovelAI）。
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">视频通话 Google 生图</div>
+                                    <div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-vc-google-image-enabled"><span class="kkt-slider"></span></label></div>
+                                </div>
+                                <div class="kkt-item-hint" style="padding:0 16px 12px;font-size:12px;color:#8e8e93;line-height:1.4;">
+                                    使用已配置并启用的 Google Gemini 图片模型生成通话背景。
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">视频通话 Stability 生图</div>
+                                    <div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-vc-stability-image-enabled"><span class="kkt-slider"></span></label></div>
+                                </div>
+                                <div class="kkt-item-hint" style="padding:0 16px 12px;font-size:12px;color:#8e8e93;line-height:1.4;">
+                                    使用已配置并启用的 Stability 服务生成通话背景。
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">通话中断时保存记录</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-save-call-on-interrupt">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item-hint" style="padding: 0 16px 12px; font-size: 12px; color: #8e8e93; line-height: 1.4;">
+                                    开启后，通话因闪退、退后台或刷新等非正常挂断中断时，仍会自动保存通话记录并生成总结。
+                                </div>
+                            </div>
+
+                            <!-- 小剧场设置 -->

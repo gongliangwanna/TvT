@@ -1,0 +1,541 @@
+        <div id="piggy-bank-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="home-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">存钱罐</h1>
+                </div>
+                <div class="action-btn-group">
+                    <button type="button" class="action-btn" id="piggy-bank-delete-btn" title="删除账单">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                    </button>
+                </div>
+            </header>
+            <main class="content piggy-bank-content">
+                <div class="piggy-bank-delete-toolbar" id="piggy-bank-delete-toolbar" style="display: none;">
+                    <button type="button" class="btn btn-neutral btn-small" id="piggy-bank-select-all-btn">全选</button>
+                    <button type="button" class="btn btn-danger btn-small" id="piggy-bank-delete-selected-btn">删除选中</button>
+                    <button type="button" class="btn btn-neutral btn-small" id="piggy-bank-delete-cancel-btn">取消</button>
+                </div>
+                <div class="piggy-bank-balance-card">
+                    <div class="piggy-bank-balance-label">当前余额</div>
+                    <div class="piggy-bank-balance-value" id="piggy-bank-balance-display">520</div>
+                    <div class="piggy-bank-balance-actions">
+                        <button type="button" class="btn btn-primary piggy-btn-add" id="piggy-bank-add-btn">存入</button>
+                        <button type="button" class="btn btn-neutral piggy-btn-edit" id="piggy-bank-edit-btn">修改余额</button>
+                    </div>
+                </div>
+                <div class="family-card-entry" id="family-card-entry-row">
+                    <span class="family-card-entry-label">亲属卡</span>
+                    <span class="family-card-entry-arrow">›</span>
+                </div>
+                <div class="piggy-bank-tabs">
+                    <button type="button" class="piggy-tab active" data-piggy-tab="all">全部</button>
+                    <button type="button" class="piggy-tab" data-piggy-tab="income">收入</button>
+                    <button type="button" class="piggy-tab" data-piggy-tab="expense">支出</button>
+                </div>
+                <ul class="piggy-bank-list" id="piggy-bank-transaction-list"></ul>
+                <p class="piggy-bank-empty" id="piggy-bank-empty-hint" style="display: none;">暂无收支记录</p>
+            </main>
+        </div>
+        <!-- 存入 / 修改余额 弹窗 -->
+        <div id="piggy-bank-balance-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3 id="piggy-bank-modal-title">存入</h3>
+                <form id="piggy-bank-balance-form">
+                    <div class="form-group">
+                        <label for="piggy-bank-amount-input">金额 (元)</label>
+                        <input type="number" id="piggy-bank-amount-input" placeholder="0.00" step="0.01" min="0">
+                    </div>
+                    <div class="form-group" id="piggy-bank-remark-group">
+                        <label for="piggy-bank-remark-input">备注（选填）</label>
+                        <input type="text" id="piggy-bank-remark-input" placeholder="例如：工资、红包">
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button type="button" class="btn btn-neutral" id="piggy-bank-modal-cancel" style="flex:1;">取消</button>
+                        <button type="submit" class="btn btn-primary" id="piggy-bank-modal-submit" style="flex:1;">确定</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <!-- 亲属卡创建弹窗 -->
+        <div id="family-card-create-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>创建亲属卡</h3>
+                <form id="family-card-create-form">
+                    <div class="form-group">
+                        <label for="family-card-bank-name">银行名称</label>
+                        <input type="text" id="family-card-bank-name" placeholder="手动输入银行名称" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="family-card-limit">额度 (元)</label>
+                        <input type="number" id="family-card-limit" placeholder="5000" step="1" min="1" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="family-card-refresh">刷新周期</label>
+                        <select id="family-card-refresh">
+                            <option value="daily">每天</option>
+                            <option value="weekly">每周</option>
+                            <option value="monthly" selected>每月</option>
+                            <option value="custom">自定义天数</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="family-card-refresh-days-wrap" style="display:none;">
+                        <label for="family-card-refresh-days">刷新天数</label>
+                        <input type="number" id="family-card-refresh-days" placeholder="30" min="1" value="30">
+                    </div>
+                    <div class="form-group">
+                        <label>卡面封面（选填）</label>
+                        <input type="url" id="family-card-cover-url" placeholder="输入图片链接" class="family-card-cover-input">
+                        <div class="family-card-cover-actions">
+                            <label class="btn btn-neutral btn-small family-card-cover-file-label">
+                                <input type="file" id="family-card-cover-file" accept="image/*" style="display:none;">本地上传
+                            </label>
+                            <button type="button" class="btn btn-neutral btn-small" id="family-card-cover-clear">清除封面</button>
+                        </div>
+                        <input type="hidden" id="family-card-cover-data">
+                        <div class="family-card-cover-preview-wrap" id="family-card-cover-preview-wrap" style="display:none;">
+                            <img id="family-card-cover-preview" class="family-card-cover-preview" alt="封面预览">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button type="button" class="btn btn-neutral" id="family-card-create-cancel" style="flex:1;">取消</button>
+                        <button type="submit" class="btn btn-primary" id="family-card-create-submit" style="flex:1;">创建并发送</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <!-- 创建后选择角色发送 -->
+        <div id="family-card-send-char-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>选择发送给谁</h3>
+                <p class="family-card-send-hint">选择一名角色，亲属卡将发送到与该角色的聊天中</p>
+                <ul id="family-card-send-char-list" class="family-card-char-list"></ul>
+                <button type="button" class="btn btn-neutral" id="family-card-send-skip-btn" style="margin-top:10px;width:100%;">暂不发送</button>
+            </div>
+        </div>
+        <!-- 亲属卡列表页（从存钱罐点击亲属卡入口进入） -->
+        <div id="family-card-list-screen" class="screen">
+            <header class="app-header">
+                <button type="button" class="back-btn" data-target="piggy-bank-screen">&#8249;</button>
+                <div class="title-container"><h1 class="title">亲属卡</h1></div>
+                <div class="header-actions">
+                    <button type="button" class="btn btn-neutral btn-small" id="family-card-manage-btn">管理</button>
+                    <button type="button" class="btn btn-primary btn-small" id="family-card-create-btn-in-list">创建</button>
+                </div>
+            </header>
+            <main class="content">
+                <div class="family-card-display-setting">
+                    <label for="family-card-narration-mode">消费后聊天旁白</label>
+                    <select id="family-card-narration-mode" aria-label="亲属卡消费旁白显示方式">
+                        <option value="detailed">显示详情</option>
+                        <option value="brief">仅提示使用</option>
+                        <option value="none">不显示</option>
+                    </select>
+                </div>
+                <div class="family-card-scroll-list" id="family-card-list-container"></div>
+            </main>
+            <div class="family-card-delete-toolbar" id="family-card-delete-toolbar" style="display:none;">
+                <button type="button" class="btn btn-neutral btn-small" id="fc-select-all-btn">全选</button>
+                <button type="button" class="btn btn-danger btn-small" id="fc-delete-selected-btn">删除</button>
+                <button type="button" class="btn btn-neutral btn-small" id="fc-delete-cancel-btn">取消</button>
+            </div>
+        </div>
+        <!-- 亲属卡详情页 -->
+        <div id="family-card-detail-screen" class="screen">
+            <header class="app-header">
+                <button type="button" class="back-btn" data-target="family-card-list-screen">&#8249;</button>
+                <div class="title-container"><h1 class="title">亲属卡详情</h1></div>
+                <div class="placeholder"></div>
+            </header>
+            <main class="content family-card-detail-content" id="family-card-detail-content"></main>
+        </div>
+        <div id="pomodoro-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="home-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">专注任务</h1>
+                </div>
+                <div class="action-btn-group">
+                    <button class="action-btn" id="pomodoro-settings-btn" title="设置">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22"
+                            height="22">
+                            <path
+                                d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.44,0.17-0.48,0.41L9.2,5.77C8.61,6.01,8.08,6.33,7.58,6.71L5.19,5.75C4.97,5.68,4.72,5.75,4.6,5.97L2.68,9.29 c-0.11,0.2-0.06,0.47,0.12,0.61l2.03,1.58C4.78,11.66,4.76,11.97,4.76,12.3c0,0.32,0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.04,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.48-0.41l0.36-2.54c0.59-0.24,1.12-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0.01,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z" />
+                        </svg>
+                    </button>
+                    <button class="action-btn" id="pomodoro-create-task-btn" title="创建任务">+</button>
+                </div>
+            </header>
+            <main class="content">
+                <div class="task-list-container" id="pomodoro-task-list">
+                    <!-- Task cards will be rendered here by JS -->
+                </div>
+                <p class="placeholder-text" id="pomodoro-no-tasks-placeholder">还没有专注任务，点击右上角“+”创建一个吧。</p>
+            </main>
+        </div>
+        <!-- Pomodoro Focus Screen -->
+        <div id="pomodoro-focus-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="pomodoro-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">专注中</h1>
+                </div>
+                <div class="action-btn-group">
+                    <button class="action-btn" id="pomodoro-focus-settings-btn" title="设置">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22"
+                            height="22">
+                            <path
+                                d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.44,0.17-0.48,0.41L9.2,5.77C8.61,6.01,8.08,6.33,7.58,6.71L5.19,5.75C4.97,5.68,4.72,5.75,4.6,5.97L2.68,9.29 c-0.11,0.2-0.06,0.47,0.12,0.61l2.03,1.58C4.78,11.66,4.76,11.97,4.76,12.3c0,0.32,0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.04,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.48-0.41l0.36-2.54c0.59-0.24,1.12-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0.01,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z" />
+                        </svg>
+                    </button>
+                </div>
+            </header>
+            <main class="content">
+                <div class="focus-timer-container">
+                    <h2 class="focus-task-title">阅读一章《JavaScript高级程序设计》</h2>
+                    <div class="focus-timer-display">24:32</div>
+                    <div class="focus-timer-mode">倒计时</div>
+                    <div class="focus-total-time" id="pomodoro-total-focused-time">已专注 0 分钟</div>
+                </div>
+
+                <div class="focus-footer">
+                    <div class="focus-message-bubble">
+                        <p>保持专注，你做得很好！</p>
+                    </div>
+                    <div class="focus-bottom-controls">
+                        <div class="focus-controls-group">
+                            <button class="control-btn" id="pomodoro-start-btn" title="开始">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"
+                                    stroke="currentColor" stroke-width="0">
+                                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                </svg>
+                            </button>
+                            <button class="control-btn" id="pomodoro-pause-btn" title="暂停" style="display: none;">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"
+                                    stroke="currentColor" stroke-width="1">
+                                    <rect x="6" y="4" width="4" height="16"></rect>
+                                    <rect x="14" y="4" width="4" height="16"></rect>
+                                </svg>
+                            </button>
+                        </div>
+                        <img src="https://i.postimg.cc/Y96LPskq/o-o-2.jpg" class="focus-avatar" alt="avatar">
+                        <button class="control-btn" id="pomodoro-giveup-btn" title="放弃">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Shop Screen -->
+        <div id="shop-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="chat-room-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">商城</h1>
+                </div>
+                <div class="action-btn-group">
+                    <button class="action-btn" id="shop-refresh-btn" title="重新进货">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" style="width: 22px; height: 22px;">
+                            <path d="M23 4v6h-6"></path>
+                            <path d="M1 20v-6h6"></path>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                    </button>
+                    <button class="action-btn" id="shop-more-btn" title="更多">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" style="width: 24px; height: 24px;">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+            <div class="shop-tabs"></div>
+            <main class="content" id="shop-content-container"></main>
+            <div id="shop-delivery-modal" class="modal-overlay">
+                <div class="modal-window">
+                    <h3 id="shop-delivery-item-name">确认订单</h3>
+                    <p style="color: #666; font-size: 14px; margin-bottom: 15px;">请选择配送方式：</p>
+                    <div class="delivery-options">
+                        <div class="delivery-option-card active" data-type="timed"
+                            onclick="selectDeliveryOption('timed')">
+                            <div class="delivery-icon">🛵</div>
+                            <div class="delivery-info">
+                                <div class="delivery-title">定时送达</div>
+                                <div class="delivery-desc">预计 30 分钟内送达</div>
+                            </div>
+                            <div class="delivery-check"></div>
+                        </div>
+                        <div class="delivery-option-card" data-type="instant" onclick="selectDeliveryOption('instant')">
+                            <div class="delivery-icon">⚡</div>
+                            <div class="delivery-info">
+                                <div class="delivery-title">即时送达</div>
+                                <div class="delivery-desc">加急配送，立即送出</div>
+                            </div>
+                            <div class="delivery-check"></div>
+                        </div>
+                        <div class="delivery-option-card" data-type="pickup" onclick="selectDeliveryOption('pickup')">
+                            <div class="delivery-icon">🏪</div>
+                            <div class="delivery-info">
+                                <div class="delivery-title">门店自提</div>
+                                <div class="delivery-desc">凭口令到店领取</div>
+                            </div>
+                            <div class="delivery-check"></div>
+                        </div>
+                        <div class="delivery-option-card" data-type="pay-for-me"
+                            onclick="selectDeliveryOption('pay-for-me')">
+                            <div class="delivery-icon">🥺</div>
+                            <div class="delivery-info">
+                                <div class="delivery-title">让Ta买单</div>
+                                <div class="delivery-desc">发送代付请求</div>
+                            </div>
+                            <div class="delivery-check"></div>
+                        </div>
+                    </div>
+
+                    <div id="pickup-code-input-container" style="display: none; margin-top: 15px;">
+                        <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">自提口令</label>
+                        <input type="text" id="shop-pickup-code" placeholder="输入取货码/口令"
+                            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; outline: none;">
+                    </div>
+
+                    <div class="form-group" id="shop-payment-method-group" style="margin-top: 15px;">
+                        <label style="font-size: 12px; color: #666;">支付方式</label>
+                        <div class="payment-method-list" id="shop-payment-methods"></div>
+                    </div>
+
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button id="shop-delivery-confirm" class="btn btn-primary" style="flex: 1;">确认下单</button>
+                        <button id="shop-delivery-cancel" class="btn btn-neutral" style="flex: 1;">取消</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Shop More ActionSheet -->
+            <div id="shop-more-actionsheet" class="action-sheet-overlay">
+                <div class="action-sheet">
+                    <button class="action-sheet-button" id="shop-pickup-btn">🎁 提取商品 (输入口令)</button>
+                    <button class="action-sheet-button" id="shop-category-manage-btn">🏷️ 自定义分类</button>
+                    <button class="action-sheet-button danger" id="shop-more-cancel-btn">取消</button>
+                </div>
+            </div>
+
+            <!-- Shop Category Manage Modal -->
+            <div id="shop-category-manage-modal" class="modal-overlay">
+                <div class="modal-window" style="max-height: 85vh; overflow-y: auto;">
+                    <h3>商城分类管理</h3>
+                    <div
+                        style="font-size: 12px; color: #666; margin-bottom: 10px; background: #f9f9f9; padding: 8px; border-radius: 6px;">
+                        添加自定义分类后，下次进货时 AI 将会根据你的提示词生成对应商品。
+                    </div>
+
+                    <div class="form-group"
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #eee;">
+                        <label for="shop-item-count" style="margin: 0;">每个分类生成数量</label>
+                        <input type="number" id="shop-item-count" value="8" min="1" max="20"
+                            style="width: 60px; text-align: center;">
+                    </div>
+
+                    <div id="shop-category-list"
+                        style="margin-bottom: 15px; border: 1px solid #eee; border-radius: 8px; padding: 10px; min-height: 100px;">
+                        <!-- JS populated list -->
+                    </div>
+
+                    <div class="form-group" style="border-top: 1px solid #eee; padding-top: 15px;">
+                        <label style="font-weight: bold; margin-bottom: 10px; display: block;">添加新分类</label>
+                        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                            <input type="text" id="shop-cat-id" placeholder="英文id (如: flower)"
+                                style="flex: 1; min-width: 0;" required>
+                            <input type="text" id="shop-cat-name" placeholder="显示名称 (如: 🌸 花)"
+                                style="flex: 1; min-width: 0;" required>
+                        </div>
+                        <textarea id="shop-cat-prompt" rows="2" placeholder="简短的提示词：描述这个分类下应该卖什么商品..."
+                            style="width: 100%; margin-bottom: 10px;" required></textarea>
+                        <button id="shop-add-category-btn" class="btn btn-secondary" style="width: 100%;">+
+                            添加分类</button>
+                    </div>
+
+                    <div style="margin-top: 10px; text-align: right;">
+                        <button id="shop-category-close-btn" class="btn btn-primary" style="width: 100%;">完成</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Shop Pickup Modal -->
+            <div id="shop-pickup-modal" class="modal-overlay">
+                <div class="modal-window">
+                    <h3>提取商品</h3>
+                    <p style="color: #666; font-size: 14px; margin-bottom: 15px;">请输入订单中的自提口令或暗号：</p>
+                    <div class="form-group">
+                        <input type="text" id="shop-pickup-input" placeholder="例如：888888 或 汪汪汪"
+                            style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; outline: none; font-size: 16px; text-align: center;">
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button id="shop-pickup-confirm" class="btn btn-primary" style="flex: 1;">确认提取</button>
+                        <button id="shop-pickup-cancel" class="btn btn-neutral" style="flex: 1;">取消</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pomodoro Settings Modal -->
+        <div id="pomodoro-settings-modal" class="modal-overlay">
+            <div class="modal-window" style="max-height: 80vh; overflow-y: auto;">
+                <h3>专注设置</h3>
+                <form id="pomodoro-settings-form">
+                    <div class="form-group">
+                        <label for="pomodoro-char-select">绑定陪伴角色</label>
+                        <select id="pomodoro-char-select" class="form-group"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="pomodoro-user-persona-select">选择你的设定</label>
+                        <select id="pomodoro-user-persona-select" class="form-group"></select>
+                    </div>
+                    <hr style="margin: 15px 0; border: 0; border-top: 1px solid #eee;">
+                    <div class="form-group">
+                        <label for="pomodoro-encouragement-minutes">鼓励机制 (分钟)</label>
+                        <input type="number" id="pomodoro-encouragement-minutes" class="form-group"
+                            placeholder="专注多少分钟后收到鼓励" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="pomodoro-poke-limit">“戳一戳”次数上限</label>
+                        <input type="number" id="pomodoro-poke-limit" class="form-group" placeholder="每次专注允许戳几次"
+                            min="0">
+                    </div>
+                    <hr style="margin: 15px 0; border: 0; border-top: 1px solid #eee;">
+                    <div class="form-group">
+                        <label for="pomodoro-focus-bg-url">专注界面背景 URL</label>
+                        <input type="url" id="pomodoro-focus-bg-url" class="form-group" placeholder="粘贴图片URL">
+                    </div>
+                    <div class="form-group">
+                        <label for="pomodoro-focus-bg-upload" class="btn btn-secondary">或从本地上传</label>
+                        <input type="file" id="pomodoro-focus-bg-upload" accept="image/*" style="display:none;">
+                    </div>
+                    <hr style="margin: 15px 0; border: 0; border-top: 1px solid #eee;">
+                    <div class="form-group">
+                        <label for="pomodoro-task-card-bg-url">任务卡片背景 URL</label>
+                        <input type="url" id="pomodoro-task-card-bg-url" class="form-group" placeholder="粘贴图片URL">
+                    </div>
+                    <div class="form-group">
+                        <label for="pomodoro-task-card-bg-upload" class="btn btn-secondary">或从本地上传</label>
+                        <input type="file" id="pomodoro-task-card-bg-upload" accept="image/*" style="display:none;">
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary" style="flex: 1;">保存设置</button>
+                        <button type="button" id="close-pomodoro-settings-btn" class="btn btn-neutral"
+                            style="flex: 1;">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Pomodoro Global Settings ActionSheet -->
+        <div id="pomodoro-global-settings-actionsheet" class="action-sheet-overlay">
+            <div class="action-sheet">
+                <div
+                    style="padding: 15px; text-align: center; color: #888; font-size: 12px; border-bottom: 1px solid #eee;">
+                    全局专注设置<br>
+                    (作用于所有番茄钟任务)
+                </div>
+                <button class="action-sheet-button" id="link-global-pomodoro-world-book-btn">关联世界书</button>
+                <button class="action-sheet-button danger" id="close-pomodoro-global-settings-btn">取消</button>
+            </div>
+        </div>
+
+        <!-- Pomodoro Certificate Modal -->
+        <div id="pomodoro-certificate-modal" class="modal-overlay">
+            <div class="modal-window" style="text-align: center;">
+                <h3>专注完成！</h3>
+                <div id="pomodoro-certificate-content"
+                    style="border: 2px dashed var(--primary-color); padding: 20px; margin: 15px 0; border-radius: 10px; background: #fff8fa;">
+                    <p><strong>任务名称:</strong> <span id="cert-task-name"></span></p>
+                    <p><strong>专注时长:</strong> <span id="cert-duration"></span></p>
+                    <p><strong>“戳一戳”次数:</strong> <span id="cert-poke-count"></span></p>
+                </div>
+                <p>做的很棒！要不要把这次的专注成果分享一下？</p>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="forward-certificate-btn" class="btn btn-primary" style="flex: 1;">转发到聊天框</button>
+                    <button id="close-certificate-btn" class="btn btn-neutral" style="flex: 1;">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pomodoro Record Detail Modal -->
+
+        <!-- Pomodoro Create Task Modal -->
+        <div id="pomodoro-create-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>创建专注任务</h3>
+                <form id="pomodoro-create-form">
+                    <div class="form-group">
+                        <label for="pomodoro-task-name">任务名称</label>
+                        <input type="text" id="pomodoro-task-name" class="form-group"
+                            placeholder="例如：阅读一章《JavaScript高级程序设计》" required>
+                    </div>
+                    <div class="form-group">
+                        <label>计时模式</label>
+                        <div class="radio-group-pills">
+                            <input type="radio" id="mode-countdown" name="pomodoro-mode" value="countdown" checked>
+                            <label for="mode-countdown">倒计时</label>
+                            <input type="radio" id="mode-stopwatch" name="pomodoro-mode" value="stopwatch">
+                            <label for="mode-stopwatch">正计时</label>
+                        </div>
+                    </div>
+                    <div id="pomodoro-duration-options" class="visible">
+                        <button type="button" class="duration-pill active" data-duration="30">30分钟</button>
+                        <button type="button" class="duration-pill" data-duration="45">45分钟</button>
+                        <button type="button" class="duration-pill" data-duration="60">60分钟</button>
+                        <button type="button" class="duration-pill" data-duration="custom">自定义</button>
+                        <input type="number" id="pomodoro-custom-duration-input" class="form-group" placeholder="输入分钟数">
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="margin-top: 20px;">创建任务</button>
+                </form>
+            </div>
+        </div>
+        <div id="peek-photo-modal" class="modal-overlay">
+            <div class="modal-window">
+                <div id="peek-photo-image-container">
+                    <span class="placeholder-icon">🖼️</span>
+                </div>
+                <div id="peek-photo-description"></div>
+            </div>
+        </div>
+        <!-- 消息版本管理弹窗 -->
+        <div id="msg-version-modal" class="modal-overlay">
+            <div class="modal-window" style="max-width: 400px; padding: 20px; max-height: 80vh; display: flex; flex-direction: column;">
+                <h3 style="margin-top: 0; margin-bottom: 16px; text-align: center;">消息版本管理</h3>
+                <div id="msg-version-list" style="flex: 1; overflow-y: auto; min-height: 100px;"></div>
+                <button type="button" class="btn btn-secondary" id="msg-version-close-btn" style="margin-top: 16px; width: 100%;">关闭</button>
+            </div>
+        </div>
+
+        <!-- 消息版本详情弹窗 -->
+        <div id="msg-version-detail-modal" class="modal-overlay">
+            <div class="modal-window" style="max-width: 400px; padding: 20px; max-height: 80vh; display: flex; flex-direction: column;">
+                <h3 style="margin-top: 0; margin-bottom: 12px; text-align: center;" id="msg-version-detail-title">版本列表</h3>
+                <div id="msg-version-detail-list" style="flex: 1; overflow-y: auto; min-height: 100px;"></div>
+                <div style="display: flex; gap: 10px; margin-top: 16px;">
+                    <button type="button" class="btn btn-secondary" id="msg-version-detail-back-btn" style="flex: 1;">返回</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 重说保留确认弹窗 -->
+        <div id="regen-save-confirm-modal" class="modal-overlay">
+            <div class="modal-window" style="max-width: 320px; padding: 24px 20px;">
+                <h3 style="margin-top: 0; margin-bottom: 12px; text-align: center;">保留当前回复？</h3>
+                <p style="font-size: 13px; color: #666; text-align: center; margin-bottom: 20px;">重说前是否保存当前AI回复为历史版本？</p>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <button type="button" class="btn btn-primary" id="regen-save-yes-btn" style="padding: 12px;">保存并重说</button>
+                    <button type="button" class="btn btn-secondary" id="regen-save-no-btn" style="padding: 12px;">直接重说</button>
+                    <button type="button" class="btn btn-neutral" id="regen-save-cancel-btn" style="padding: 10px; font-size: 13px;">取消</button>
+                </div>
+            </div>
+        </div>
+

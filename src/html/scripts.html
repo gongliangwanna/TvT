@@ -1,0 +1,114 @@
+    <!-- 
+  === JS文件索引说明 ===
+  未来修改代码时，请参考以下注释找到对应的文件：
+-->
+
+    <!-- [1. 基础层] -->
+    <script src="js/core/ui-and-content-utils.js"></script>
+    <script src="js/core/centered-select.js"></script> <!-- 统一居中选择弹窗：接管原生 select 展开交互 -->
+    <script src="js/core/api-and-image-utils.js"></script> <!-- 工具函数：图片压缩、Toast提示、随机数等 -->
+    <script src="js/data/defaults-and-state.js"></script>
+    <script src="js/data/indexed-db.js"></script> <!-- 数据层：Dexie数据库配置、全局变量定义、数据存取 -->
+    <script src="js/modules/novelai-vibe.js"></script> <!-- NovelAI 原生 VIBE 素材、编码与组管理 -->
+
+    <!-- [2. 核心交互层] -->
+    <script src="js/ui.js"></script> <!-- UI交互：界面切换、主屏幕逻辑、右键菜单 -->
+    <!-- Chat Modules -->
+    <script src="js/modules/chat_list.js"></script>
+    <script src="js/modules/character_import.js"></script>
+    <script src="js/modules/chat-render/message-list.js"></script>
+    <script src="js/modules/chat-render/message-bubble.js"></script>
+    <script src="js/modules/chat-render/message-actions.js"></script>
+    <script src="js/modules/chat-render/image-generation.js"></script>
+    <script src="js/modules/chat-ai/context-and-image.js"></script>
+    <script src="js/modules/mcp/protocol.js"></script>
+    <script src="js/modules/mcp/manager.js"></script>
+    <script src="js/modules/chat-ai/mcp-orchestrator.js"></script>
+    <script src="js/modules/chat-ai/reply-resilience.js"></script>
+    <script src="js/modules/chat-ai/request-and-stream.js"></script>
+    <script src="js/modules/chat-ai/response-and-control.js"></script>
+    <script src="js/modules/chat-ai/prompt-helpers.js"></script>
+    <script src="js/modules/chat-ai/prompt-studio.js"></script>
+    <script src="js/modules/chat-ai/private-prompt.js"></script>
+    <script src="js/modules/chat-ai/token-stats.js"></script>
+    <script src="js/modules/chat-ai/call-reply.js"></script>
+    <script src="js/modules/chat_features.js"></script>
+    <script src="js/modules/poke.js"></script> <!-- 拍一拍：单聊/群聊轻互动 -->
+    <script src="js/modules/avatar_recognition.js"></script>
+    <script src="js/modules/chat_ops.js"></script>
+    <script src="js/chat.js"></script> <!-- 聊天核心入口 -->
+    <script src="js/group-chat/runtime-and-private-chat.js"></script>
+    <script src="js/group-chat/settings-and-prompt.js"></script> <!-- 群聊系统：群聊管理、设置、Prompt生成 -->
+    <script src="js/contacts.js"></script> <!-- 联系人：好友列表、名片 -->
+    <script src="js/settings/chat-settings.js"></script>
+    <script src="js/settings/prompt-studio-settings.js"></script>
+    <script src="js/settings/magic-room-settings.js"></script>
+    <script src="js/modules/vector-memory-core.js"></script>
+    <script src="js/settings/api-settings.js"></script>
+    <script src="js/settings/api-presets.js"></script>
+    <script src="js/settings/image-api-settings.js"></script>
+    <script src="js/settings/style-presets.js"></script>
+    <script src="js/settings/general-presets.js"></script>
+    <script src="js/settings/widget-presets.js"></script>
+    <script src="js/settings/customize-settings.js"></script>
+    <script src="js/settings/appearance-status-settings.js"></script>
+    <script src="js/settings/tts-settings.js"></script> <!-- 设置管理：API设置、外观自定义、预设管理 -->
+    <script src="js/modules/block_system.js"></script> <!-- 拉黑与好友申请 -->
+
+    <!-- [3. 独立功能模块 (Plugins)] -->
+    <script src="js/modules/sticker.js"></script> <!-- 表情包管理系统 -->
+    <script src="js/modules/pomodoro.js"></script> <!-- 番茄钟专注功能 -->
+    <script src="js/modules/forum/core.js"></script>
+    <script src="js/modules/forum/accounts-and-binding.js"></script>
+    <script src="js/modules/forum/post-detail.js"></script>
+    <script src="js/modules/forum/post-generation.js"></script>
+    <script src="js/modules/forum/settings-and-profile.js"></script>
+    <script src="js/modules/forum/direct-messages.js"></script>
+    <script src="js/modules/forum/ai-interactions.js"></script> <!-- 虚拟论坛功能 -->
+    <script src="js/modules/theater/data-and-render.js"></script>
+    <script src="js/modules/theater/editor-and-generation.js"></script>
+    <script src="js/modules/theater/share-and-edit.js"></script>
+    <script src="js/modules/theater/presets-and-html.js"></script>
+    <script src="js/modules/theater/character-theater.js"></script> <!-- 小剧场功能 -->
+    <script src="js/modules/worldbook/import-export.js"></script>
+    <script src="js/modules/worldbook/setup.js"></script>
+    <script src="js/modules/worldbook/render.js"></script> <!-- 世界书设定集 -->
+    <script src="js/modules/peek/setup-and-storage.js"></script>
+    <script src="js/modules/peek/social-apps.js"></script>
+    <script src="js/modules/peek/app-renderers.js"></script>
+    <script src="js/modules/peek/prompt-and-generation.js"></script> <!-- 偷看手机(相册/短信等) -->
+    <script src="js/modules/journal/setup.js"></script>
+    <script src="js/modules/journal/render-and-generate.js"></script>
+    <script src="js/modules/journal/automatic-journal.js"></script> <!-- 回忆日记生成 -->
+    <script src="js/modules/memory_table.js"></script> <!-- 结构化记忆 -->
+    <script src="js/modules/vector_memory.js"></script> <!-- 向量记忆 -->
+    <script src="js/modules/reminder.js"></script> <!-- 提醒事项 -->
+    <script src="js/modules/storage.js"></script> <!-- 存储空间分析图表 -->
+    <script src="js/modules/widgets.js"></script> <!-- 桌面小组件设置 -->
+    <script src="js/modules/tutorial/guides.js"></script>
+    <script src="js/modules/tutorial/content-and-data-tools.js"></script>
+    <script src="js/modules/tutorial/backup-and-restore.js"></script>
+    <script src="js/modules/tutorial/github-backup.js"></script> <!-- 教程、更新日志、GitHub备份 -->
+    <script src="js/modules/more_menu.js"></script> <!-- 更多菜单与状态栏管理 -->
+    <script src="js/modules/regex_filter.js"></script> <!-- 正则过滤模块 -->
+    <script src="js/modules/favorites.js"></script> <!-- 消息收藏 -->
+    <script src="js/modules/search.js"></script> <!-- 聊天记录搜索模块 -->
+    <script src="js/modules/battery_interaction.js"></script> <!-- 电量交互模块 -->
+    <script src="js/modules/gallery.js"></script> <!-- 角色相册管理模块 -->
+    <script src="js/modules/live.js"></script> <!-- 直播间模块 -->
+    <script src="js/modules/shop.js"></script> <!-- 商城模块 -->
+    <script src="js/modules/cot_settings.js"></script> <!-- 思维链设置模块 -->
+    <script src="js/modules/tts_service.js"></script> <!-- TTS 语音合成代理服务 -->
+    <script src="js/modules/voice_selector.js"></script> <!-- 音色选择器 -->
+    <script src="js/modules/tts_settings.js"></script> <!-- TTS 设置管理 -->
+    <script src="js/modules/video_call.js"></script> <!-- 视频通话模块 -->
+    <script src="js/modules/archive.js"></script> <!-- 记忆存档库模块 -->
+    <script src="js/modules/piggy_bank.js"></script> <!-- 存钱罐（钱包）模块 -->
+    <script src="js/modules/appearance_settings.js"></script> <!-- 外观设置：整体 UI 切换 -->
+    <script src="js/modules/node_system.js"></script> <!-- 节点系统 -->
+    <script src="js/modules/msg_version.js"></script> <!-- 消息版本管理 -->
+    <script src="js/modules/keep_alive.js"></script> <!-- 后台保活 -->
+    <script src="js/modules/follow_up_reply.js"></script> <!-- 角色回复后追发消息 -->
+
+    <!-- [4. 程序入口] -->
+    <script src="js/main.js"></script> <!-- 主入口：初始化(init)、全局事件监听 -->

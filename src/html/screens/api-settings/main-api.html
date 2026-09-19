@@ -1,0 +1,223 @@
+<div id="api-settings-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="home-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">API 设置</h1>
+                </div>
+                <div class="placeholder"></div>
+            </header>
+            
+            <!-- iOS 灵动纯白搜索栏 -->
+            <div id="api-settings-search-bar" class="api-search-container">
+                <div class="api-search-box">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" id="api-settings-search-input" placeholder="搜索模型、地址或功能选项..." autocomplete="off">
+                </div>
+            </div>
+
+            <!-- iOS 场景分段控制器 Segmented Control -->
+            <div class="api-segmented-wrapper">
+                <div class="api-segmented-control" role="tablist">
+                    <button type="button" class="api-seg-btn active" data-tab="chat">核心对话</button>
+                    <button type="button" class="api-seg-btn" data-tab="image">生图服务</button>
+                    <button type="button" class="api-seg-btn" data-tab="tts">语音合成</button>
+                    <button type="button" class="api-seg-btn" data-tab="specialized">专用扩展</button>
+                </div>
+            </div>
+
+            <main class="content api-settings-scroll-content">
+                <div class="kkt-settings-container api-clean-container">
+                    <!-- TAB 1: 核心对话 (Chat) -->
+                    <div class="api-tab-pane active" id="api-pane-chat" data-category="chat">
+                        <!-- 自定义 API 节点管理 -->
+                        <section class="kkt-group api-section-card api-node-section" aria-labelledby="api-node-heading">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 id="api-node-heading" class="api-card-title">多节点路由</h2>
+                                    <p class="api-card-desc">创建节点并在不同功能间智能分流；未指定节点的功能使用默认配置</p>
+                                </div>
+                                <button type="button" class="btn btn-small btn-primary" id="api-node-add-btn">＋ 新建节点</button>
+                            </div>
+                            <div id="api-node-list" class="api-node-list"></div>
+                            <div id="api-node-conflicts" class="api-node-conflicts"></div>
+                        </section>
+
+                        <!-- 主 API 基础配置表单 -->
+                        <form id="api-form">
+                            <section class="kkt-group api-section-card">
+                                <div class="api-card-header">
+                                    <div>
+                                        <h2 class="api-card-title">默认主 API</h2>
+                                        <p class="api-card-desc">系统的基础模型接口，用于角色私聊、群聊与通用对话</p>
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">服务商</div>
+                                    <div class="kkt-item-control">
+                                        <select id="api-provider" name="provider">
+                                            <option value="newapi">NewAPI (自定义)</option>
+                                            <option value="deepseek">DeepSeek</option>
+                                            <option value="claude">Claude</option>
+                                            <option value="gemini">Gemini</option>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">API 地址</div>
+                                    <div class="kkt-item-control">
+                                        <input type="text" id="api-url" name="url" autocomplete="off" placeholder="https://...">
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">密钥 (Key)</div>
+                                    <div class="kkt-item-control">
+                                        <input type="password" id="api-key" name="key" autocomplete="new-password" placeholder="sk-...">
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">选择模型</div>
+                                    <div class="kkt-item-control">
+                                        <select id="api-model" name="model">
+                                            <option value="">请先拉取</option>
+                                        </select>
+                                        <button type="button" class="btn btn-small btn-secondary api-fetch-btn" id="fetch-models-btn">
+                                            <span class="btn-text">拉取</span>
+                                            <div class="spinner"></div>
+                                        </button>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <!-- 对话行为 -->
+                            <section class="kkt-group api-section-card">
+                                <div class="api-card-header">
+                                    <div>
+                                        <h2 class="api-card-title">对话行为</h2>
+                                        <p class="api-card-desc">调节模型的回复方式与对话保护</p>
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">
+                                        线上角色限制
+                                        <span class="api-field-tip">角色严格保持线上身份，不提及现实见面</span>
+                                    </div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="online-role-switch" checked>
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">时间感知加强</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="time-perception-switch">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">流式打字机输出</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="stream-switch">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">
+                                        快速回复模式
+                                        <span class="api-field-tip">跳过思维链推理步骤，直接产出回答</span>
+                                    </div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="quick-reply-switch">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">
+                                        最新轮次保护
+                                        <span class="api-field-tip">确保正常聊天优先回应最后一轮用户输入；实验性诊断开关</span>
+                                    </div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="latest-turn-protection-switch">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                            </section>
+
+                            <section class="kkt-group api-section-card api-generation-card" aria-labelledby="api-generation-heading">
+                                <div class="api-card-header api-generation-header">
+                                    <div>
+                                        <h2 id="api-generation-heading" class="api-card-title">生成参数</h2>
+                                        <p class="api-card-desc">关闭参数后请求不会发送该字段，由当前渠道自行决定</p>
+                                    </div>
+                                    <span id="api-generation-summary" class="api-generation-summary">1 项启用</span>
+                                </div>
+                                <div class="api-generation-toolbar">
+                                    <button type="button" class="btn btn-small btn-neutral" id="api-generation-reset-values">恢复建议值</button>
+                                    <button type="button" class="btn btn-small btn-neutral" id="api-generation-disable-all">全部交给模型</button>
+                                </div>
+                                <div id="api-generation-params" class="api-generation-params"></div>
+                            </section>
+
+                            <button type="submit" class="btn btn-primary api-save-main-btn" id="save-btn">
+                                <span class="btn-text">保存默认主 API 设置</span>
+                                <div class="spinner"></div>
+                            </button>
+
+                            <!-- 主 API 预设紧凑管理 -->
+                            <section class="kkt-group api-section-card api-presets-compact-card">
+                                <div class="api-card-header">
+                                    <div>
+                                        <h2 class="api-card-title">主 API 配置预设</h2>
+                                        <p class="api-card-desc">快速切换、备份或导出当前配置组合</p>
+                                    </div>
+                                </div>
+                                <div class="api-presets-row" id="api-presets-control">
+                                    <div class="api-preset-select-wrap">
+                                        <select id="api-preset-select">
+                                            <option value="">— 选择 API 预设 —</option>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                    <div class="api-preset-actions-strip">
+                                        <button type="button" id="api-apply-preset" class="btn btn-small btn-primary">应用</button>
+                                        <button type="button" id="api-save-preset" class="btn btn-small btn-secondary">另存为</button>
+                                        <button type="button" id="api-manage-presets" class="btn btn-small btn-neutral">管理</button>
+                                        <button type="button" id="api-import-presets" class="btn btn-small btn-neutral">导入</button>
+                                        <button type="button" id="api-export-presets" class="btn btn-small btn-neutral">导出</button>
+                                    </div>
+                                </div>
+                                <div id="api-presets-modal" class="api-modal-backdrop">
+                                    <div class="api-clean-modal">
+                                        <h3>主 API 预设管理</h3>
+                                        <div id="api-presets-list" class="api-modal-scroll-list"></div>
+                                        <div class="api-modal-footer">
+                                            <button type="button" id="api-close-modal" class="btn btn-primary">完成</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+                        </form>
+                    </div>

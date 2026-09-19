@@ -1,0 +1,369 @@
+        <div id="archive-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="chat-settings-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">记忆存档</h1>
+                </div>
+                <div class="action-btn-group">
+                    <button type="button" id="archive-multi-select-btn" class="action-btn" title="多选">多选</button>
+                    <button type="button" id="create-archive-btn" class="action-btn" title="新建存档">+ 新建</button>
+                </div>
+            </header>
+            <div id="archive-multi-select-bar" class="archive-multi-select-bar">
+                <span>已选 <span id="archive-selected-count">0</span> 项</span>
+                <button type="button" id="archive-multi-delete-btn" class="btn btn-small" disabled>删除选中</button>
+                <button type="button" id="archive-cancel-multi-btn" class="btn btn-small btn-secondary">取消</button>
+            </div>
+            <main class="content">
+                <ul id="archive-list-container" class="archive-list"></ul>
+                <div id="no-archives-placeholder" class="placeholder-text" style="display: none;">
+                    <p>还没有保存任何存档</p>
+                    <p>点击右上角「+ 新建」创建第一个存档</p>
+                </div>
+            </main>
+        </div>
+        <!-- 创建存档弹窗 -->
+        <div id="create-archive-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>创建记忆存档</h3>
+                <form id="create-archive-form">
+                    <div class="form-group">
+                        <label for="archive-name-input">存档名称</label>
+                        <input type="text" id="archive-name-input" autocomplete="off" placeholder="为这个存档起个名字…">
+                    </div>
+                    <p class="archive-info">当前聊天记录：<span id="current-message-count">0</span> 条</p>
+                    <div class="modal-actions" style="display: flex; gap: 10px; margin-top: 16px;">
+                        <button type="button" id="cancel-archive-btn" class="btn btn-secondary">取消</button>
+                        <button type="submit" class="btn btn-primary">保存</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div id="world-book-selection-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>选择要关联的世界书</h3>
+                <div class="settings-tabs" id="world-book-mode-tabs" style="margin-bottom: 15px;">
+                    <div class="settings-tab-item active" data-mode="online">线上</div>
+                    <div class="settings-tab-item" data-mode="offline">线下</div>
+                </div>
+                <ul id="world-book-selection-list"></ul>
+                <button class="btn btn-primary" id="save-world-book-selection-btn" style="margin-top: 20px;">确认</button>
+            </div>
+        </div>
+        <!-- Global Pomodoro World Book Selection Modal -->
+        <div id="global-pomodoro-world-book-selection-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>为全局专注设置关联世界书</h3>
+                <ul id="global-pomodoro-world-book-selection-list" class="list-container"
+                    style="max-height: 40vh; overflow-y: auto; padding: 0; margin: 15px 0;">
+                    <!-- World book items will be rendered here -->
+                </ul>
+                <button class="btn btn-primary" id="save-global-pomodoro-world-book-selection-btn"
+                    style="margin-top: 20px;">确认</button>
+            </div>
+        </div>
+
+        <!-- 小剧场模块 -->
+        <div id="theater-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="home-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">小剧场</h1>
+                </div>
+                <div class="action-btn-group">
+                    <button type="button" class="action-btn" id="theater-batch-delete-btn" title="多选删除">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                    </button>
+                    <button class="action-btn" id="theater-create-btn" title="创建剧场">+</button>
+                </div>
+            </header>
+            <!-- 模式切换开关 -->
+            <div class="theater-mode-switch-bar">
+                <div class="theater-mode-switch" id="theater-mode-switch">
+                    <div class="theater-mode-option active" data-mode="text">纯文字</div>
+                    <div class="theater-mode-option" data-mode="html">HTML</div>
+                    <div class="theater-mode-slider"></div>
+                </div>
+            </div>
+            <div id="theater-multi-select-bar" class="theater-multi-select-bar">
+                <span id="theater-selected-count">已选 0 项</span>
+                <div class="theater-multi-select-actions">
+                    <button type="button" class="btn btn-small" id="theater-select-all-btn">全选</button>
+                    <button type="button" class="btn btn-danger btn-small" id="theater-delete-selected-btn" disabled>删除选中</button>
+                    <button type="button" class="btn btn-small btn-secondary" id="theater-cancel-multi-btn">取消</button>
+                </div>
+            </div>
+            <!-- 纯文字模式主内容 -->
+            <main id="theater-text-main" class="content theater-content">
+                <div class="theater-filter-bar">
+                    <select id="theater-category-filter" class="theater-filter-select">
+                        <option value="">全部分类</option>
+                        <option value="未分类">未分类</option>
+                    </select>
+                </div>
+                <div id="theater-scenarios-list" class="theater-scenarios-list">
+                    <div class="theater-empty-state">还没有生成的剧情，点击右上角"+"创建吧~</div>
+                </div>
+            </main>
+            <!-- HTML 模式主内容 -->
+            <main id="theater-html-main" class="content theater-content" style="display:none;">
+                <div class="theater-filter-bar">
+                    <select id="theater-html-category-filter" class="theater-filter-select">
+                        <option value="">全部分类</option>
+                        <option value="未分类">未分类</option>
+                    </select>
+                </div>
+                <div id="theater-html-scenarios-list" class="theater-scenarios-list">
+                    <div class="theater-empty-state">还没有生成的 HTML 剧情，点击右上角"+"创建吧~</div>
+                </div>
+            </main>
+        </div>
+
+        <div id="theater-create-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="theater-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title" id="theater-create-title">创建剧场</h1>
+                </div>
+                <div class="action-btn-group"></div>
+            </header>
+            <main class="content theater-content">
+                <div class="theater-form">
+                    <div class="theater-control-group">
+                        <label>选择人设</label>
+                        <select id="theater-persona-select" class="theater-select">
+                            <option value="">请选择人设（可选）</option>
+                        </select>
+                    </div>
+                    <div class="theater-control-group">
+                        <label>选择角色（可多选）</label>
+                        <div class="theater-multiselect-wrapper">
+                            <div class="theater-multiselect-display" id="theater-char-display">
+                                <span class="theater-multiselect-placeholder">请选择角色（可选）</span>
+                                <span class="theater-multiselect-arrow">▼</span>
+                            </div>
+                            <div class="theater-multiselect-dropdown" id="theater-char-dropdown">
+                                <div class="theater-multiselect-options" id="theater-char-options"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="theater-control-group">
+                        <label>选择世界书（可多选）</label>
+                        <div class="theater-multiselect-wrapper">
+                            <div class="theater-multiselect-display" id="theater-worldbook-display">
+                                <span class="theater-multiselect-placeholder">请选择世界书（可选）</span>
+                                <span class="theater-multiselect-arrow">▼</span>
+                            </div>
+                            <div class="theater-multiselect-dropdown" id="theater-worldbook-dropdown">
+                                <div class="theater-multiselect-options" id="theater-worldbook-options"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 聊天记录 & 日记总结读取开关 -->
+                    <div class="theater-control-group">
+                        <div class="theater-context-toggle-row">
+                            <label>读取聊天记录 & 日记总结</label>
+                            <div class="theater-toggle-switch" id="theater-context-toggle" role="switch" aria-checked="false" tabindex="0">
+                                <div class="theater-toggle-slider"></div>
+                            </div>
+                        </div>
+                        <div class="theater-context-options" id="theater-context-options" style="display:none;">
+                            <div class="theater-context-option-row">
+                                <label>聊天记录条数</label>
+                                <input type="number" id="theater-chat-history-count" class="theater-number-input" min="0" max="200" value="20" placeholder="20">
+                            </div>
+                            <div class="theater-context-option-row">
+                                <label>日记总结条数</label>
+                                <input type="number" id="theater-journal-count" class="theater-number-input" min="0" max="50" value="5" placeholder="5">
+                            </div>
+                            <div class="theater-context-hint">
+                                需先选择角色才能读取对应的聊天记录和日记总结
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="theater-control-group">
+                        <label id="theater-prompt-label">剧情提示词</label>
+                        <div class="theater-prompt-toolbar">
+                            <select id="theater-prompt-preset-select" class="theater-prompt-select">
+                                <option value="">选择预设提示词</option>
+                            </select>
+                        </div>
+                        <div class="theater-prompt-buttons">
+                            <button id="theater-save-prompt-btn" class="theater-save-prompt-btn">保存为预设</button>
+                            <button id="theater-manage-prompt-btn" class="theater-save-prompt-btn">管理预设</button>
+                        </div>
+                        <textarea id="theater-custom-prompt" class="theater-textarea" placeholder="输入自定义剧情提示词..."></textarea>
+                    </div>
+                    <!-- 独立API设置 -->
+                    <div class="theater-control-group">
+                        <div class="theater-context-toggle-row">
+                            <label>调用独立API</label>
+                            <div class="theater-toggle-switch" id="theater-api-toggle" role="switch" aria-checked="false" tabindex="0">
+                                <div class="theater-toggle-slider"></div>
+                            </div>
+                        </div>
+                        <div class="theater-api-config" id="theater-api-config" style="display:none;">
+                            <div class="theater-api-preset-row">
+                                <label>API预设</label>
+                                <select id="theater-api-preset-select" class="theater-select">
+                                    <option value="">— 选择预设配置 —</option>
+                                </select>
+                            </div>
+                            <div class="theater-api-field-row">
+                                <label>API地址</label>
+                                <input type="text" id="theater-api-url" class="theater-input" placeholder="https://api.example.com">
+                            </div>
+                            <div class="theater-api-field-row">
+                                <label>API密钥</label>
+                                <input type="password" id="theater-api-key" class="theater-input" placeholder="sk-...">
+                            </div>
+                            <div class="theater-api-field-row">
+                                <label>模型</label>
+                                <div style="display:flex;gap:8px;align-items:center;flex:1;">
+                                    <select id="theater-api-model" class="theater-select" style="flex:1;">
+                                        <option value="">请先拉取或选择预设</option>
+                                    </select>
+                                    <button type="button" id="theater-api-fetch-models-btn" class="theater-save-prompt-btn" style="padding:10px 14px;">拉取模型</button>
+                                </div>
+                            </div>
+                            <div class="theater-api-field-row">
+                                <button type="button" id="theater-api-save-btn" class="theater-save-prompt-btn" style="width:100%;text-align:center;">保存独立API设置</button>
+                            </div>
+                            <div class="theater-context-hint">
+                                开启后将使用独立API生成剧情，关闭则使用主API设置。选择预设可快速填充配置。
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="theater-control-group">
+                        <label>分类名称</label>
+                        <input type="text" id="theater-category-input" class="theater-input" placeholder="未分类" value="未分类">
+                    </div>
+                    <button id="theater-generate-btn" class="theater-generate-btn">生成剧情</button>
+                </div>
+            </main>
+        </div>
+
+        <!-- 新建世界书菜单 -->
+        <div id="add-world-book-actionsheet" class="action-sheet-overlay">
+            <div class="action-sheet">
+                <div class="action-sheet-title">新建世界书</div>
+                <button class="action-sheet-button" id="wb-method-manual-btn">手动</button>
+                <button class="action-sheet-button" id="wb-method-import-btn">导入</button>
+                <button class="action-sheet-button danger" id="wb-method-cancel-btn">取消</button>
+            </div>
+        </div>
+
+        <!-- 导出世界书菜单 -->
+        <div id="export-world-book-actionsheet" class="action-sheet-overlay">
+            <div class="action-sheet">
+                <div class="action-sheet-title">导出世界书</div>
+                <button class="action-sheet-button" id="wb-export-all-btn">导出全部</button>
+                <button class="action-sheet-button" id="wb-export-custom-btn">自定义选择导出</button>
+                <button class="action-sheet-button danger" id="wb-export-cancel-btn">取消</button>
+            </div>
+        </div>
+
+        <!-- 自定义选择导出世界书弹窗 -->
+        <div id="world-book-custom-export-modal" class="modal-overlay">
+            <div class="modal-window" style="max-height: 85vh; display: flex; flex-direction: column;">
+                <h3 style="margin-bottom: 15px;">自定义导出</h3>
+                <div style="display:flex; justify-content:space-between; margin-bottom: 10px; align-items:center;">
+                    <label style="font-size: 14px; display:flex; align-items:center; gap:5px;"><input type="checkbox" id="wb-custom-export-select-all"> 全选</label>
+                    <span style="font-size: 13px; color: #666;" id="wb-custom-export-count">已选 0 项</span>
+                </div>
+                <div id="wb-custom-export-list" style="border: 1px solid #eee; border-radius: 8px; padding: 10px; flex: 1; overflow-y: auto; margin-bottom: 15px;">
+                    <!-- JS populated list -->
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button id="wb-custom-export-confirm-btn" class="btn btn-primary" style="flex: 1;">导出已选</button>
+                    <button id="wb-custom-export-close-btn" class="btn btn-neutral" style="flex: 1;">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="theater-detail-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="theater-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">剧场详情</h1>
+                </div>
+                <div class="action-btn-group">
+                    <button type="button" class="action-btn" id="theater-header-edit-btn" title="编辑内容">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                </div>
+            </header>
+            <main class="content theater-content">
+                <div id="theater-detail-content" class="theater-detail-content">
+                    <!-- 详情内容将由 JS 动态填充 -->
+                </div>
+                <div class="theater-detail-actions">
+                    <div class="theater-action-row-first">
+                        <button id="theater-favorite-btn" class="theater-action-btn theater-favorite-btn">收藏</button>
+                        <button id="theater-save-edit-btn" class="theater-action-btn theater-save-edit-btn" style="display: none;">保存</button>
+                        <button id="theater-edit-category-btn" class="theater-action-btn theater-edit-category-btn">修改分类</button>
+                        <button id="theater-delete-btn" class="theater-action-btn theater-delete-btn">删除</button>
+                    </div>
+                    <div class="theater-action-row-second">
+                        <button id="theater-share-btn" class="theater-action-btn theater-share-btn">分享到聊天框</button>
+                    </div>
+                    <div class="theater-action-row-third">
+                        <button id="theater-export-btn" class="theater-action-btn theater-export-btn">导出</button>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- HTML 模式详情页（独立 DOM） -->
+        <div id="theater-html-detail-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="theater-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">HTML 剧场详情</h1>
+                </div>
+                <div class="action-btn-group">
+                    <button type="button" class="action-btn" id="theater-html-header-edit-btn" title="编辑内容">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                </div>
+            </header>
+            <main class="content theater-content">
+                <div id="theater-html-detail-content" class="theater-detail-content">
+                    <!-- HTML 模式详情内容将由 JS 动态填充 -->
+                </div>
+                <div class="theater-detail-actions">
+                    <div class="theater-action-row-first">
+                        <button id="theater-html-favorite-btn" class="theater-action-btn theater-favorite-btn">收藏</button>
+                        <button id="theater-html-save-edit-btn" class="theater-action-btn theater-save-edit-btn" style="display: none;">保存</button>
+                        <button id="theater-html-edit-category-btn" class="theater-action-btn theater-edit-category-btn">修改分类</button>
+                        <button id="theater-html-delete-btn" class="theater-action-btn theater-delete-btn">删除</button>
+                    </div>
+                    <div class="theater-action-row-second">
+                        <button id="theater-html-share-btn" class="theater-action-btn theater-share-btn">分享到聊天框</button>
+                    </div>
+                    <div class="theater-action-row-third">
+                        <button id="theater-html-export-btn" class="theater-action-btn theater-export-btn">导出</button>
+                    </div>
+                </div>
+            </main>
+        </div>
+        <!-- Group Chat Creation Modal -->
+        <div id="create-group-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>创建群聊</h3>
+                <form id="create-group-form">
+                    <div class="form-group">
+                        <label>选择群成员</label>
+                        <ul id="member-selection-list" class="member-selection-list"></ul>
+                    </div>
+                    <div class="form-group">
+                        <label for="group-name-input">群聊名称</label>
+                        <input type="text" id="group-name-input" autocomplete="off" placeholder="给你的群聊起个名字吧" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">创建群聊</button>
+                </form>
+            </div>
+        </div>
+        <!-- Group Chat Settings (KKT Style) -->

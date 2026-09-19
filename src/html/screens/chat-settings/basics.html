@@ -1,0 +1,299 @@
+        <div id="chat-settings-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="chat-room-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">聊天设置</h1>
+                </div>
+                <div class="placeholder"></div>
+            </header>
+            <main class="content">
+                <div class="kkt-settings-container">
+                    <!-- 个人资料部分 -->
+                    <div class="kkt-profile-section">
+                        <img src="" alt="Avatar" id="setting-char-avatar-preview" class="kkt-profile-avatar"
+                            onclick="document.getElementById('setting-char-avatar-upload').click()">
+                        <div class="kkt-profile-name" id="setting-char-name-display"></div>
+                        <!-- 隐藏的文件上传input -->
+                        <input type="file" id="setting-char-avatar-upload" accept="image/*" style="display:none;">
+                    </div>
+
+                    <!-- Tab 导航栏 -->
+                    <div class="settings-tabs">
+                        <div class="settings-tab-item active" data-tab="setting-tab-basic">设定</div>
+                        <div class="settings-tab-item" data-tab="setting-tab-func">功能</div>
+                        <div class="settings-tab-item" data-tab="setting-tab-style">美化</div>
+                        <div class="settings-tab-item" data-tab="setting-tab-ext">拓展</div>
+                    </div>
+
+                    <form id="chat-settings-form">
+
+                        <!-- 【设定】Tab 内容 -->
+                        <div id="setting-tab-basic" class="settings-tab-content active">
+                            <!-- 角色信息分组 -->
+                            <div class="kkt-group">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色真名</div>
+                                    <div class="kkt-item-control">
+                                        <input type="text" id="setting-char-real-name" autocomplete="off"
+                                            style="text-align:right; border:none; background:transparent;"
+                                            placeholder="角色在剧情中的名字">
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色生日</div>
+                                    <div class="kkt-item-control">
+                                        <input type="date" id="setting-char-birthday" autocomplete="off"
+                                            style="text-align:right; border:none; background:transparent;">
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">开启动态年龄<p style="font-size:12px;color:#999;margin:4px 0 0;">根据当前系统时间自动计算岁数并注入提示词</p></div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-enable-dynamic-age">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">备注名</div>
+                                    <div class="kkt-item-control">
+                                        <input type="text" id="setting-char-remark" autocomplete="off"
+                                            style="text-align:right; border:none; background:transparent;"
+                                            placeholder="点击修改">
+                                    </div>
+                                </div>
+                                <div class="kkt-item" style="flex-direction:column; align-items:stretch; gap:8px;">
+                                    <div class="kkt-item-label">角色时区</div>
+                                    <div class="kkt-item-control" style="display:flex; align-items:center; gap:5px; width:100%;">
+                                        <select id="setting-char-timezone-preset" style="border: 1px solid #eee; border-radius: 6px; padding: 4px 8px; background: #f9f9f9; min-width: 80px; appearance: none; -webkit-appearance: none; text-align: center; text-align-last: center;">
+                                            <option value="">预设</option>
+                                            <optgroup label="亚洲">
+                                                <option value="Asia/Shanghai">北京/上海 (UTC+8)</option>
+                                                <option value="Asia/Seoul">首尔 (UTC+9)</option>
+                                                <option value="Asia/Tokyo">东京 (UTC+9)</option>
+                                                <option value="Asia/Taipei">台北 (UTC+8)</option>
+                                                <option value="Asia/Hong_Kong">香港 (UTC+8)</option>
+                                                <option value="Asia/Singapore">新加坡 (UTC+8)</option>
+                                                <option value="Asia/Bangkok">曼谷 (UTC+7)</option>
+                                                <option value="Asia/Dubai">迪拜 (UTC+4)</option>
+                                            </optgroup>
+                                            <optgroup label="美洲">
+                                                <option value="America/New_York">纽约 (EST/EDT)</option>
+                                                <option value="America/Los_Angeles">洛杉矶 (PST/PDT)</option>
+                                                <option value="America/Chicago">芝加哥 (CST/CDT)</option>
+                                                <option value="America/Toronto">多伦多 (EST/EDT)</option>
+                                                <option value="America/Vancouver">温哥华 (PST/PDT)</option>
+                                                <option value="America/Sao_Paulo">圣保罗 (BRT)</option>
+                                            </optgroup>
+                                            <optgroup label="欧洲">
+                                                <option value="Europe/London">伦敦 (GMT/BST)</option>
+                                                <option value="Europe/Paris">巴黎 (CET/CEST)</option>
+                                                <option value="Europe/Berlin">柏林 (CET/CEST)</option>
+                                                <option value="Europe/Rome">罗马 (CET/CEST)</option>
+                                                <option value="Europe/Moscow">莫斯科 (MSK)</option>
+                                            </optgroup>
+                                            <optgroup label="大洋洲">
+                                                <option value="Australia/Sydney">悉尼 (AEST/AEDT)</option>
+                                                <option value="Australia/Melbourne">墨尔本 (AEST/AEDT)</option>
+                                                <option value="Pacific/Auckland">奥克兰 (NZST/NZDT)</option>
+                                            </optgroup>
+                                            <optgroup label="其他">
+                                                <option value="UTC">世界协调时 (UTC)</option>
+                                            </optgroup>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                        <input type="text" id="setting-char-timezone" autocomplete="off"
+                                            style="text-align:right; border:none; background:transparent; flex:1; min-width:0;"
+                                            placeholder="可在此自定义输入">
+                                    </div>
+                                </div>
+                                <div class="kkt-item" style="flex-direction:column; align-items:stretch; gap:4px;">
+                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                        <span>开启动态时区提示词</span>
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-enable-dynamic-timezone">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                    <p style="font-size:12px;color:#999;margin:0;">通过系统时间加上双方时差设定，让角色感知两地时间</p>
+                                </div>
+                                <div class="kkt-item" style="flex-direction:column; align-items:flex-start;">
+                                    <div class="kkt-item-label" style="margin-bottom:8px;">角色人设</div>
+                                    <textarea id="setting-char-persona"
+                                        style="width:100%; border:1px solid #eee; border-radius:8px; padding:8px; min-height:80px;"
+                                        placeholder="详细描述角色的性格..."></textarea>
+                                </div>
+                                <!-- 论坛好友：手动/AI 补齐人设（仅 source=forum 显示） -->
+                                <div id="setting-forum-supplement-container" style="display:none; padding-left:16px; padding-right:16px;">
+                                    <div class="kkt-item">
+                                        <div class="kkt-item-label">手动补齐人设</div>
+                                        <div class="kkt-item-control">
+                                            <label class="kkt-switch">
+                                                <input type="checkbox" id="setting-forum-supplement-persona-enabled">
+                                                <span class="kkt-slider"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="kkt-item">
+                                        <div class="kkt-item-label">AI 补齐人设</div>
+                                        <div class="kkt-item-control">
+                                            <label class="kkt-switch">
+                                                <input type="checkbox" id="setting-forum-supplement-persona-ai-enabled">
+                                                <span class="kkt-slider"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <p style="font-size:12px; color:#888; margin:8px 0 6px 0;">二选一：手动可编辑下方文本框；AI 会在聊天后自动提取并追加，同样在下方显示，可手动修改。二者共用同一份内容。</p>
+                                    <div class="kkt-item-label" style="margin-bottom:6px;">已补齐的人设</div>
+                                    <textarea id="setting-forum-supplement-persona-text"
+                                        style="width:100%; border:1px solid #eee; border-radius:8px; padding:8px; min-height:60px;"
+                                        placeholder="手动填写或由 AI 自动追加，可编辑"></textarea>
+                                </div>
+                                <!-- 表情包分组 -->
+                                <div class="kkt-item" style="flex-direction:column; align-items:flex-start;">
+                                    <div class="kkt-item-label" style="margin-bottom:8px;">可用表情包分组</div>
+                                    <div id="setting-char-sticker-groups-container"
+                                        style="width:100%; max-height: 120px; overflow-y: auto; border: 1px solid #eee; padding: 10px; border-radius: 8px;">
+                                        <!-- JS populate -->
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">将表情包画面描述发给 AI<p style="font-size:12px;color:#999;margin:4px 0 0;">消耗 Token 提升 AI 发图准确率</p></div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-char-sticker-description-enabled">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 关联世界书 (移到我的信息前) -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">关联世界书</div>
+                                    <div class="kkt-item-control">
+                                        <button type="button" id="link-world-book-btn"
+                                            class="btn btn-small btn-secondary"
+                                            style="margin: 0; padding: 4px 8px;">设置</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 我的信息分组 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">我的头像</div>
+                                    <div class="kkt-item-control"
+                                        onclick="document.getElementById('setting-my-avatar-upload').click()">
+                                        <img src="" id="setting-my-avatar-preview" class="kkt-small-avatar">
+                                        <span class="kkt-arrow">›</span>
+                                    </div>
+                                    <input type="file" id="setting-my-avatar-upload" accept="image/*"
+                                        style="display:none;">
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">我的名字</div>
+                                    <div class="kkt-item-control">
+                                        <input type="text" id="setting-my-name" autocomplete="off"
+                                            style="text-align:right; border:none; background:transparent;"
+                                            placeholder="点击修改">
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">我的生日</div>
+                                    <div class="kkt-item-control">
+                                        <input type="date" id="setting-my-birthday" autocomplete="off"
+                                            style="text-align:right; border:none; background:transparent;">
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">开启动态年龄<p style="font-size:12px;color:#999;margin:4px 0 0;">让角色知道你的年龄和生日</p></div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-my-enable-dynamic-age">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item" style="flex-direction:column; align-items:stretch; gap:8px;">
+                                    <div class="kkt-item-label">我的时区</div>
+                                    <div class="kkt-item-control" style="display:flex; align-items:center; gap:5px; width:100%;">
+                                        <select id="setting-my-timezone-preset" style="border: 1px solid #eee; border-radius: 6px; padding: 4px 8px; background: #f9f9f9; min-width: 80px; appearance: none; -webkit-appearance: none; text-align: center; text-align-last: center;">
+                                            <option value="">预设</option>
+                                            <optgroup label="亚洲">
+                                                <option value="Asia/Shanghai">北京/上海 (UTC+8)</option>
+                                                <option value="Asia/Seoul">首尔 (UTC+9)</option>
+                                                <option value="Asia/Tokyo">东京 (UTC+9)</option>
+                                                <option value="Asia/Taipei">台北 (UTC+8)</option>
+                                                <option value="Asia/Hong_Kong">香港 (UTC+8)</option>
+                                                <option value="Asia/Singapore">新加坡 (UTC+8)</option>
+                                                <option value="Asia/Bangkok">曼谷 (UTC+7)</option>
+                                                <option value="Asia/Dubai">迪拜 (UTC+4)</option>
+                                            </optgroup>
+                                            <optgroup label="美洲">
+                                                <option value="America/New_York">纽约 (EST/EDT)</option>
+                                                <option value="America/Los_Angeles">洛杉矶 (PST/PDT)</option>
+                                                <option value="America/Chicago">芝加哥 (CST/CDT)</option>
+                                                <option value="America/Toronto">多伦多 (EST/EDT)</option>
+                                                <option value="America/Vancouver">温哥华 (PST/PDT)</option>
+                                                <option value="America/Sao_Paulo">圣保罗 (BRT)</option>
+                                            </optgroup>
+                                            <optgroup label="欧洲">
+                                                <option value="Europe/London">伦敦 (GMT/BST)</option>
+                                                <option value="Europe/Paris">巴黎 (CET/CEST)</option>
+                                                <option value="Europe/Berlin">柏林 (CET/CEST)</option>
+                                                <option value="Europe/Rome">罗马 (CET/CEST)</option>
+                                                <option value="Europe/Moscow">莫斯科 (MSK)</option>
+                                            </optgroup>
+                                            <optgroup label="大洋洲">
+                                                <option value="Australia/Sydney">悉尼 (AEST/AEDT)</option>
+                                                <option value="Australia/Melbourne">墨尔本 (AEST/AEDT)</option>
+                                                <option value="Pacific/Auckland">奥克兰 (NZST/NZDT)</option>
+                                            </optgroup>
+                                            <optgroup label="其他">
+                                                <option value="UTC">世界协调时 (UTC)</option>
+                                            </optgroup>
+                                        </select>
+                                        <span class="kkt-arrow">›</span>
+                                        <input type="text" id="setting-my-timezone" autocomplete="off"
+                                            style="text-align:right; border:none; background:transparent; flex:1; min-width:0;"
+                                            placeholder="可在此自定义输入">
+                                    </div>
+                                </div>
+                                <div class="kkt-item" style="flex-direction:column; align-items:stretch; gap:4px;">
+                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                        <span>开启动态时区提示词</span>
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-my-enable-dynamic-timezone">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                    <p style="font-size:12px;color:#999;margin:0;">通过系统时间加上双方时差设定，让角色感知两地时间</p>
+                                </div>
+                                <div class="kkt-item" style="flex-direction:column; align-items:flex-start;">
+                                    <div class="kkt-item-label" style="margin-bottom:8px;">我的人设</div>
+                                    <textarea id="setting-my-persona"
+                                        style="width:100%; border:1px solid #eee; border-radius:8px; padding:8px; min-height:60px;"
+                                        placeholder="描述你的形象..."></textarea>
+                                </div>
+                                <!-- 人设预设 -->
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">人设预设</div>
+                                    <div class="kkt-item-control">
+                                        <select id="mypersona-preset-select"
+                                            style="border:none; background:transparent; width:100px;">
+                                            <option value="">选择</option>
+                                        </select>
+                                        <button type="button" id="mypersona-apply-btn" class="btn btn-small btn-primary"
+                                            style="padding:4px 8px; margin-left:5px;">应用</button>
+                                        <button type="button" id="mypersona-save-btn" class="btn btn-small"
+                                            style="padding:4px 8px; margin-left:5px;">存</button>
+                                        <button type="button" id="mypersona-manage-btn" class="btn btn-small"
+                                            style="padding:4px 8px; margin-left:5px;">管</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+

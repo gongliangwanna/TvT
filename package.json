@@ -1,0 +1,25 @@
+{
+  "name": "xinovo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/verify.mjs && node scripts/test-poke.mjs && node scripts/test-follow-up-reply.mjs && node scripts/test-prompt-studio.mjs && node scripts/test-vector-memory.mjs && node scripts/test-call-reply.mjs && node scripts/test-chat-provider-adapters.mjs && node scripts/test-api-generation-params.mjs && node scripts/test-avatar-system.mjs && node scripts/test-forum-system.mjs && node scripts/test-reply-resilience.mjs && node scripts/test-wallet-background.mjs && node scripts/test-keep-alive.mjs && node scripts/test-service-worker.mjs && node scripts/test-novelai-vibe.mjs",
+    "test:prompt": "node scripts/test-prompt-studio.mjs",
+    "test:follow-up": "node scripts/test-follow-up-reply.mjs",
+    "test:poke": "node scripts/test-poke.mjs",
+    "test:vector": "node scripts/test-vector-memory.mjs",
+    "test:call": "node scripts/test-call-reply.mjs",
+    "test:avatar": "node scripts/test-avatar-system.mjs",
+    "test:forum": "node scripts/test-forum-system.mjs",
+    "test:resilience": "node scripts/test-reply-resilience.mjs && node scripts/test-keep-alive.mjs",
+    "test:wallet": "node scripts/test-wallet-background.mjs",
+    "test:service-worker": "node scripts/test-service-worker.mjs",
+    "test:mcp": "node scripts/test-mcp.mjs",
+    "test:media": "node scripts/test-media-providers.mjs",
+    "test:vibe": "node scripts/test-novelai-vibe.mjs"
+  },
+  "devDependencies": {
+    "parse5": "8.0.1"
+  }
+}
