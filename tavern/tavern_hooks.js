@@ -9,7 +9,7 @@
 (function () {
     const TAG = '[酒馆外挂]';
     // 文件版本：显示在“酒馆互联”页面最下面（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-20 e';
+    const HOOKS_VERSION = '2026-09-20 f';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
@@ -430,6 +430,23 @@
         return [...areas];
     }
 
+    // 收起后自检：第一张卡片是不是真的藏起来了。藏不住就把实情报到“酒馆互联”页面，便于排查
+    let verifiedOnce = false;
+    function verifyHidden(el) {
+        if (verifiedOnce || !el) return;
+        setTimeout(() => {
+            try {
+                if (verifiedOnce) return;
+                const visible = !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+                if (!visible) { verifiedOnce = true; return; }   // 藏住了，不报
+                verifiedOnce = true;
+                const cs = window.getComputedStyle(el);
+                const parent = el.parentElement;
+                window.TavernSync.reportIssue(`收起后卡片仍然可见：类名=${el.className}；实际 display=${cs.display}；visibility=${cs.visibility}；内联 display=${el.style.display || '(空)'}；还在页面上=${el.isConnected}；上层=${parent ? parent.tagName.toLowerCase() + '.' + parent.className : '无'}；隐藏样式表=${document.getElementById('tavern-collapse-style') ? '在' : '不在'}`);
+            } catch (e) { /* 自检失败就算了 */ }
+        }, 300);
+    }
+
     function regroupTavernFloors() {
         if (groupObserver) groupObserver.disconnect();
         try {
@@ -461,6 +478,7 @@
                     const floorNos = g.floors.map(el => el.dataset.tavernFloor).filter(x => x !== undefined && x !== '');
                     const range = floorNos.length ? `（第${floorNos[0]}${floorNos.length > 1 ? '~' + floorNos[floorNos.length - 1] : ''}楼）` : '';
                     g.members.forEach(el => { el.classList.toggle(HIDDEN_CLASS, !open); el.style.display = open ? '' : 'none'; });
+                    if (!open) verifyHidden(g.floors[0]);
                     const toggleGroup = (fromBottom) => {
                         if (expandedGroups.has(key)) expandedGroups.delete(key); else expandedGroups.add(key);
                         regroupTavernFloors();
