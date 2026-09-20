@@ -1706,8 +1706,9 @@ const TS = {
     card: 'background:var(--received-bg, rgba(255,255,255,0.08)); border-radius:14px; padding:16px; margin-bottom:12px;',
     label: 'font-size:13px; color:#999; display:block; margin-bottom:4px;',
     input: 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:14px; box-sizing:border-box;',
-    // 主按钮固定用蓝色，不跟主题的主色走（维护者的主题主色是淡粉，看着不像“确认”按钮）
-    btnP: 'padding:10px; border-radius:10px; border:none; background:#2196F3; color:#fff; font-size:14px; font-weight:500; cursor:pointer;',
+    // 主按钮用 yuan 通篇在用的那个淡蓝 #cee4f1 + 深色字。写死不跟 var(--primary-color) 走，
+    // 免得换了主题或夜间模式时变成别的颜色（曾经显示成淡粉色）
+    btnP: 'padding:10px; border-radius:10px; border:none; background:#cee4f1; color:#2a3032; font-size:14px; font-weight:500; cursor:pointer;',
     btnG: 'padding:8px; border-radius:8px; border:none; background:rgba(76,175,80,0.15); color:#4CAF50; font-size:13px; font-weight:500; cursor:pointer;',
     btnB: 'padding:8px; border-radius:8px; border:none; background:rgba(33,150,243,0.15); color:#2196F3; font-size:13px; font-weight:500; cursor:pointer;',
     btnO: 'padding:8px; border-radius:8px; border:none; background:rgba(255,152,0,0.15); color:#FF9800; font-size:13px; font-weight:500; cursor:pointer;',
@@ -1744,7 +1745,7 @@ function setupTavernSyncScreen() {
                 <div style="${TS.card}">
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <span style="${TS.title}">角色绑定</span>
-                        <button id="ts-add-btn" style="padding:6px 14px; border-radius:8px; border:none; background:#2196F3; color:#fff; font-size:13px; cursor:pointer;">+ 添加</button>
+                        <button id="ts-add-btn" style="padding:6px 14px; border-radius:8px; border:none; background:#cee4f1; color:#2a3032; font-size:13px; cursor:pointer;">+ 添加</button>
                     </div>
                     <div id="ts-bindings-list"></div>
                 </div>
@@ -2345,7 +2346,8 @@ async function showAutoPushModal(binding) {
             modal.querySelector('#auto-mode-summary').style.display = mode === 'summary' ? 'flex' : 'none';
             modal.querySelector('#auto-mode-clean').style.display = mode === 'clean' ? 'flex' : 'none';
             confirmBtn.textContent = mode === 'clean' ? '确认删除' : '确认推送';
-            confirmBtn.style.background = mode === 'clean' ? 'rgba(244,67,54,0.8)' : '#2196F3';
+            confirmBtn.style.background = mode === 'clean' ? 'rgba(244,67,54,0.8)' : '#cee4f1';
+            confirmBtn.style.color = mode === 'clean' ? '#fff' : '#2a3032';
         });
     });
 
