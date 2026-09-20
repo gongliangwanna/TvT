@@ -1343,7 +1343,7 @@ const TS = {
     card: 'background:var(--received-bg, rgba(255,255,255,0.08)); border-radius:14px; padding:16px; margin-bottom:12px;',
     label: 'font-size:13px; color:#999; display:block; margin-bottom:4px;',
     input: 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:14px; box-sizing:border-box;',
-    btnP: 'padding:10px; border-radius:10px; border:none; background:linear-gradient(135deg, #667eea, #764ba2); color:white; font-size:14px; font-weight:500; cursor:pointer;',
+    btnP: 'padding:10px; border-radius:10px; border:none; background:var(--primary-color, #cee4f1); color:var(--white-color, #2a3032); font-size:14px; font-weight:500; cursor:pointer;',
     btnG: 'padding:8px; border-radius:8px; border:none; background:rgba(76,175,80,0.15); color:#4CAF50; font-size:13px; font-weight:500; cursor:pointer;',
     btnB: 'padding:8px; border-radius:8px; border:none; background:rgba(33,150,243,0.15); color:#2196F3; font-size:13px; font-weight:500; cursor:pointer;',
     btnO: 'padding:8px; border-radius:8px; border:none; background:rgba(255,152,0,0.15); color:#FF9800; font-size:13px; font-weight:500; cursor:pointer;',
@@ -1380,7 +1380,7 @@ function setupTavernSyncScreen() {
                 <div style="${TS.card}">
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <span style="${TS.title}">角色绑定</span>
-                        <button id="ts-add-btn" style="padding:6px 14px; border-radius:8px; border:none; background:var(--sent-bg, rgba(255,204,204,0.9)); color:var(--sent-text, #a56767); font-size:13px; cursor:pointer;">+ 添加</button>
+                        <button id="ts-add-btn" style="padding:6px 14px; border-radius:8px; border:none; background:var(--primary-color, #cee4f1); color:var(--white-color, #2a3032); font-size:13px; cursor:pointer;">+ 添加</button>
                     </div>
                     <div id="ts-bindings-list"></div>
                 </div>
@@ -1639,12 +1639,12 @@ function setupTavernSyncScreen() {
                     <button data-del="${i}" style="${TS.btnD}">✕</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
                     <button data-pull="${i}" style="flex:1; ${TS.btnG}">从酒馆同步</button>
-                    <button data-push="${i}" style="flex:1; ${TS.btnB}">推送到酒馆</button></div>
+                    <button data-push="${i}" style="flex:1; ${TS.btnB}">推送/清理小手机消息</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
                     <button data-import-char="${i}" style="flex:1; ${TS.btnO}">导入酒馆人设</button>
                     <button data-import-wb="${i}" style="flex:1; ${TS.btnO}">导入酒馆世界书</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-                    <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(156,39,176,0.15); color:#CE93D8; font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button>
+                    <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:var(--primary-color, #cee4f1); color:var(--white-color, #2a3032); font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button>
                     <button data-reset="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(244,67,54,0.12); color:#f66; font-size:13px; font-weight:500; cursor:pointer;">清空并重选范围</button></div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-auto="autoPull" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPull') ? 'checked' : ''}>
@@ -1807,7 +1807,7 @@ async function showAutoPushModal(binding) {
         </div>`;
 
     modal.innerHTML = `
-        <h3 style="margin:0 0 4px; font-size:16px; font-weight:600;">推送到酒馆</h3>
+        <h3 style="margin:0 0 4px; font-size:16px; font-weight:600;">推送/清理小手机消息</h3>
         <div style="font-size:11px; color:#888; margin-bottom:10px; line-height:1.6;">
             小手机消息共 ${total} 条，酒馆里已有 ${pushedCount} 条。${unpushedCount ? `未推送：第 ${firstUnpushed} ~ ${total} 条（${unpushedCount} 条）` : '没有未推送的消息'}
         </div>

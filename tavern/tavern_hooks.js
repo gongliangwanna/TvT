@@ -85,7 +85,7 @@
                     <path d="M12,2L4,9H9V15H15V9H20L12,2M4,19V21H20V19H4Z"/>
                 </svg>
             </div>
-            <span class="expansion-item-name">推送酒馆</span>`;
+            <span class="expansion-item-name">推送/清理</span>`;
         item.addEventListener('click', async () => {
             if (!window.TavernSync) { showToast('酒馆同步未启用'); return; }
             const binding = window.TavernSync.findBindingForChar(currentChatId);
