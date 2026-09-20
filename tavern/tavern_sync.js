@@ -1557,12 +1557,12 @@ function setupTavernSyncScreen() {
                         <span style="font-size:14px; flex:1;">第一次同步导入楼数</span>
                         ${numInput('ts-initial-count', config.initialImportCount)}
                     </div>
-                    <div style="font-size:11px; color:#888; margin-top:4px;">某个角色第一次同步时，从酒馆导入最近多少楼。之后每次同步只导入新楼层</div>
+                    <div style="font-size:12px; color:#888; margin-top:4px;">某个角色第一次同步时，从酒馆导入最近多少楼。之后每次同步只导入新楼层</div>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:14px; flex:1;">最近几楼发原文</span>
                         ${numInput('ts-raw-count', config.rawFloorCount)}
                     </div>
-                    <div style="font-size:11px; color:#888; margin-top:4px;">发给 AI 时，最近这么多楼酒馆剧情给完整原文，更早的换成柏宝书摘要（还没有摘要的暂时发原文）</div>
+                    <div style="font-size:12px; color:#888; margin-top:4px;">发给 AI 时，最近这么多楼酒馆剧情给完整原文，更早的换成柏宝书摘要（还没有摘要的暂时发原文）</div>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:14px; flex:1;">手动推送时默认条数</span>
                         ${numInput('ts-max', config.maxInjectMessages || 50)}
@@ -1599,7 +1599,7 @@ function setupTavernSyncScreen() {
                 </div>
                 <div style="${TS.card} margin-top:12px;">
                     <span style="${TS.title}">推送设置</span>
-                    <div style="font-size:11px; color:#888; margin-top:6px;">自动同步、自动推送的开关在上面每个角色的绑定卡片里，可以分别设置</div>
+                    <div style="font-size:12px; color:#888; margin-top:6px;">自动同步、自动推送的开关在上面每个角色的绑定卡片里，可以分别设置</div>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:14px;">推送楼层模式</span>
                         <select id="ts-push-mode" style="padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px;">
@@ -1607,7 +1607,7 @@ function setupTavernSyncScreen() {
                             <option value="append" ${config.pushMode === 'append' ? 'selected' : ''}>合并到最后一楼</option>
                         </select>
                     </div>
-                    <div style="font-size:11px; color:#888; margin-top:4px;">新开楼层：每次推送创建新消息；合并末尾：追加到最后一楼末尾（配合正则隐藏）。注：若最后一楼已是小手机消息，无论模式都会自动合并</div>
+                    <div style="font-size:12px; color:#888; margin-top:4px;">新开楼层：每次推送创建新消息；合并末尾：追加到最后一楼末尾（配合正则隐藏）。注：若最后一楼已是小手机消息，无论模式都会自动合并</div>
                 </div>
             </div>
         </div>`;
@@ -1801,14 +1801,14 @@ function setupTavernSyncScreen() {
                         <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}</div></div>
                     <button data-del="${i}" style="${TS.btnD}">✕</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                    <button data-pull="${i}" style="flex:1; ${TS.btnG}">同步酒馆剧情</button>
-                    <button data-push="${i}" style="flex:1; ${TS.btnB}">推送/清理消息</button></div>
+                    <button data-pull="${i}" style="flex:1; ${TS.btnB}">同步酒馆剧情</button>
+                    <button data-push="${i}" style="flex:1; ${TS.btnO}">推送/清理消息</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-                    <button data-import-char="${i}" style="flex:1; ${TS.btnO}">导入酒馆人设</button>
-                    <button data-import-wb="${i}" style="flex:1; ${TS.btnO}">导入酒馆世界书</button></div>
+                    <button data-import-char="${i}" style="flex:1; ${TS.btnB}">导入酒馆人设</button>
+                    <button data-import-wb="${i}" style="flex:1; ${TS.btnB}">导入酒馆世界书</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-                    <button data-fillsum="${i}" style="flex:1; ${TS.btnB}">只补摘要</button>
-                    <button data-trim="${i}" style="flex:1; ${TS.btnB}">精简旧楼层</button></div>
+                    <button data-fillsum="${i}" style="flex:1; ${TS.btnG}">只补摘要</button>
+                    <button data-trim="${i}" style="flex:1; ${TS.btnG}">精简旧楼层</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
                     <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(156,39,176,0.15); color:#CE93D8; font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button>
                     <button data-reset="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(244,67,54,0.12); color:#f66; font-size:13px; font-weight:500; cursor:pointer;">清空并重选范围</button></div>
@@ -2025,7 +2025,7 @@ async function showAutoPushModal(binding) {
 
     modal.innerHTML = `
         <h3 style="margin:0 0 4px; font-size:16px; font-weight:600;">推送/清理小手机消息</h3>
-        <div style="font-size:11px; color:#888; margin-bottom:10px; line-height:1.6;">
+        <div style="font-size:12px; color:#888; margin-bottom:10px; line-height:1.6;">
             小手机消息共 ${total} 条，酒馆里已有 ${pushedCount} 条。${unpushedCount ? `未推送：第 ${firstUnpushed} ~ ${total} 条（${unpushedCount} 条）` : '没有未推送的消息'}
         </div>
         <div style="display:flex; gap:6px; margin-bottom:12px;">
@@ -2035,7 +2035,7 @@ async function showAutoPushModal(binding) {
         </div>
 
         <div id="auto-mode-raw" style="display:flex; flex-direction:column;">
-            <div style="font-size:12px; color:#888; margin-bottom:6px;">推送这些消息（默认是未推送的那一段，可以自己改）</div>
+            <div style="font-size:12px; color:#888; margin-bottom:6px;">推送这些消息（默认是未推送的那一段）</div>
             ${rangeRow('auto-raw', unpushedCount ? firstUnpushed : total, total)}
             <div id="auto-raw-preview" style="font-size:12px; color:#ccc; background:rgba(255,255,255,0.04); border-radius:8px; padding:10px; margin-bottom:12px; max-height:180px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #2196F3;"></div>
         </div>
@@ -2043,7 +2043,7 @@ async function showAutoPushModal(binding) {
         <div id="auto-mode-summary" style="display:none; flex-direction:column;">
             <div style="font-size:12px; color:#888; margin-bottom:6px;">把这些消息浓缩成一段总结后推送（消耗 1 次总结 API）</div>
             ${rangeRow('auto-sum', unpushedCount ? firstUnpushed : total, total)}
-            <button id="auto-sum-gen" style="${TS.btnB} width:100%; margin-bottom:10px;">生成小总结</button>
+            <button id="auto-sum-gen" style="${TS.btnG} width:100%; margin-bottom:10px;">生成小总结</button>
             <textarea id="auto-sum-text" placeholder="生成后可在此编辑..." style="width:100%; box-sizing:border-box; min-height:130px; max-height:220px; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.04); color:inherit; font-size:13px; line-height:1.6; resize:vertical; margin-bottom:12px;"></textarea>
         </div>
 
@@ -2219,8 +2219,10 @@ function showTrimModal(binding, onDone) {
     const cancelStyle = 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;';
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">精简旧楼层</h3>
-        <div style="font-size:11px; color:#888; line-height:1.6; margin-bottom:12px;">
-            精简就是只留柏宝书摘要、把原文丢掉。原文在酒馆里一直都在，点下面的「取回原文」随时拿回来。<br>
+        <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:8px;">
+            精简就是只留柏宝书摘要、把原文丢掉。原文在酒馆里一直都在，点下面的「取回原文」随时拿回来。
+        </div>
+        <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
             小手机里有 <b>${floors.length}</b> 楼酒馆剧情（第 ${firstFloor} ~ ${lastFloor} 楼），其中 <b>${trimmed.length}</b> 楼已精简、
             <b>${can.length}</b> 楼可以精简（能省${sizeOf(saveable)}）${noSummary.length ? `、<b>${noSummary.length}</b> 楼还没有摘要（不会精简）` : ''}。
         </div>
@@ -2228,7 +2230,7 @@ function showTrimModal(binding, onDone) {
             从第 <input type="number" id="tm-start" min="0" value="${firstFloor}" style="${numStyle}">
             到第 <input type="number" id="tm-end" min="0" value="${defEnd}" style="${numStyle}"> 楼
         </div>
-        <div style="font-size:11px; color:#888; line-height:1.6; margin-bottom:16px;">
+        <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:16px;">
             填的是酒馆里的楼层号。默认留着最近 ${keep} 楼的原文（跟着「保留最近几楼的原文」走）。<br>
             精简过的楼层发给 AI 时一律用摘要，不算在「最近几楼发原文」里面。
         </div>
@@ -2304,7 +2306,7 @@ async function showResetRangeModal(binding, onDone) {
     const cancelStyle = 'flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;';
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">清空并重选范围</h3>
-        <div style="font-size:13px; line-height:1.7; margin-bottom:12px;">
+        <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
             小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>
             酒馆里这个聊天一共 <b>${info.total}</b> 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
         </div>
@@ -2312,7 +2314,7 @@ async function showResetRangeModal(binding, onDone) {
             从第 <input type="number" id="rr-start" min="0" max="${lastFloor}" value="${defStart}" style="${numStyle}">
             到第 <input type="number" id="rr-end" min="0" max="${lastFloor}" value="${lastFloor}" style="${numStyle}"> 楼
         </div>
-        <div style="font-size:11px; color:#888; line-height:1.6; margin-bottom:16px;">
+        <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:16px;">
             小手机推送过去的楼层、番外楼不会导入。清空后，酒馆里以后新玩的楼层照常同步。<br>
             已经写进日记、记忆表格、向量记忆的内容不受影响。
         </div>
@@ -2381,7 +2383,7 @@ function showRuleEditor(ruleIndex, onSave) {
                 <span style="align-self:center; color:#888;">~</span>
                 <div style="flex:1;"><input id="rr-max-depth" type="number" min="0" value="${existing?.maxDepth ?? ''}" placeholder="最大深度" style="${TS.input} text-align:center;"></div>
             </div>
-            <div style="font-size:11px; color:#888; margin-top:4px;">留空 = 不限。例如最小0最大4 = 只对最近5条生效；最小5留空 = 只对第6条及更早的生效</div>
+            <div style="font-size:12px; color:#888; margin-top:4px;">留空 = 不限。例如最小0最大4 = 只对最近5条生效；最小5留空 = 只对第6条及更早的生效</div>
         </div>
         <div style="margin-bottom:16px;"><label style="${TS.label}">测试</label>
             <textarea id="rr-test" placeholder="粘贴消息文本测试..." style="${TS.input} height:60px; resize:vertical;"></textarea>
@@ -2473,7 +2475,7 @@ async function showImportCharModal(binding) {
             <div style="margin-bottom:12px;">
                 <label style="${TS.label}">Post History Instructions</label>
                 <textarea id="ic-posthistory" style="${TS.input} height:60px; resize:vertical; font-size:12px;" readonly>${esc(result.postHistory)}</textarea>
-                <div style="font-size:11px; color:#888; margin-top:4px;">（仅供参考，不自动导入）</div>
+                <div style="font-size:12px; color:#888; margin-top:4px;">（仅供参考，不自动导入）</div>
             </div>` : ''}
         <div style="display:flex; gap:10px;">
             <button id="ic-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;">取消</button>
@@ -2539,7 +2541,7 @@ async function showWorldBookModal(binding) {
 
     modal.innerHTML = `
         <h3 style="margin:0 0 8px; font-size:16px; font-weight:600;">导入酒馆世界书</h3>
-        <div style="font-size:11px; color:#888; margin-bottom:8px; line-height:1.6;">复制过来就是小手机自己的世界书条目，可以随便改。酒馆里改了内容的，这里会标出来，可以选择更新。</div>
+        <div style="font-size:12px; color:#888; margin-bottom:8px; line-height:1.6;">复制过来就是小手机自己的世界书条目，可以随便改。酒馆里改了内容的，这里会标出来，可以选择更新。</div>
         ${tabsHTML ? `<div style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap;">${tabsHTML}</div>` : ''}
         <div style="display:flex; gap:8px; margin-bottom:8px;">
             <button id="wb-select-all" style="${smallBtn}">全选</button>
@@ -2779,7 +2781,7 @@ function showPromptPreview(binding) {
                         <span style="font-size:13px; font-weight:600; color:${s.color};">${esc(s.title)}</span>
                         <span style="font-size:11px; color:#888; margin-left:auto;">~${s.tokens.toLocaleString()} tokens</span>
                     </div>
-                    ${s.meta ? `<div style="font-size:11px; color:#888; margin-bottom:6px;">${esc(s.meta)}</div>` : ''}
+                    ${s.meta ? `<div style="font-size:12px; color:#888; margin-bottom:6px;">${esc(s.meta)}</div>` : ''}
                     ${s.content ? `<div style="${box} border-left:3px solid ${s.color};">${esc(s.content)}</div>` : ''}
                     ${(s.items || []).map(it => `
                         <div style="font-size:11px; color:${it.color}; margin:8px 0 3px;">${esc(it.label)}</div>

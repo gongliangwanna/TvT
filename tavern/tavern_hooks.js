@@ -372,7 +372,7 @@
             bar.style.cssText = 'margin-top:10px; padding-top:8px; border-top:1px dashed rgba(128,128,128,0.4); text-align:right;';
             const btn = document.createElement('button');
             btn.textContent = actionText;
-            btn.style.cssText = 'padding:5px 10px; border-radius:8px; border:none; background:rgba(33,150,243,0.15); color:#2196F3; font-size:12px; cursor:pointer;';
+            btn.style.cssText = 'padding:5px 10px; border-radius:8px; border:none; background:rgba(76,175,80,0.15); color:#4CAF50; font-size:12px; cursor:pointer;';
             if (t.trimmed) {
                 const note = document.createElement('span');
                 note.style.cssText = 'float:left; font-size:11px; color:#888; line-height:24px;';
