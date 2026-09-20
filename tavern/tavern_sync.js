@@ -340,6 +340,13 @@ const TavernSync = {
         // 3. 按真实时间把酒馆楼层排进小手机聊天记录（包括以前导入时排错位置的）
         const reordered = this.placeTavernFloors(char);
 
+        // 4. 打开了“自动更新复制过的世界书”时，把酒馆里改过的条目同步到小手机的世界书
+        let worldUpdated = 0;
+        if (binding.autoUpdateWorldBooks) {
+            try { worldUpdated = (await this.syncCopiedWorldBooks(binding)).updated; }
+            catch (e) { this.reportIssue("自动更新世界书失败：" + e.message); }
+        }
+
         char.tavernMemory = {
             lastSync: Date.now(),
             stCharAvatar: binding.stCharAvatar,
@@ -350,19 +357,13 @@ const TavernSync = {
             resumeAfter: sameChat ? (prevMemory.resumeAfter || null) : null,
         };
 
-        // 绑定的世界书条目跟着一起刷新（写到 char.tavernWorldMemory）
-        try {
-            const wbR = await this.refreshBoundWorldMemory(binding);
-            if (wbR.refreshed) console.log(`[TavernSync] Bound world refreshed: ${wbR.entryCount} entries`);
-        } catch (e) { this.reportIssue('刷新绑定的世界书失败：' + e.message); }
-
         await saveData();
         // 正在看这个角色的聊天 → 重新画一遍，新卡片立刻出现
         if ((importedCount > 0 || reordered) && typeof currentChatId !== 'undefined' && currentChatId === char.id
             && typeof renderMessages === 'function') {
             try { renderMessages(false, true); } catch (e) { /* 画不出来不影响数据 */ }
         }
-        return { imported: importedCount, summariesFilled, reordered };
+        return { imported: importedCount, summariesFilled, reordered, worldUpdated };
     },
 
     // 按真实时间把酒馆楼层插到小手机聊天记录里的正确位置：
@@ -1033,16 +1034,12 @@ ${transcript}`;
     // ========== 提示词注入 ==========
 
     // 生成要塞进 AI 系统提示词的酒馆内容，由 tavern_hooks.js 插进 yuan 提示词的 <memoir> 区域：
-    //   - 绑定的酒馆世界书条目（“世界书 → 绑定记忆”）
     //   - 聊天记录里有酒馆楼层时，加一段“线下剧情说明”（可在酒馆互联页面自定义）
     // 酒馆剧情本身已经在聊天记录里（见 pullFromTavern / prepareHistoryForAI），这里不再整块注入。
     buildPromptBlock(character) {
         if (!character) return '';
         const cfg = this.getConfig();
         const parts = [];
-        if (character.tavernWorldMemory && character.tavernWorldMemory.content) {
-            parts.push(`【世界设定】\n以下是该世界观的背景设定，你需要了解并遵循：\n${character.tavernWorldMemory.content}`);
-        }
         const hasTavernFloors = Array.isArray(character.history) && character.history.some(m => m && m.fromTavern);
         if (hasTavernFloors && cfg.wrapNote && cfg.wrapNote.trim()) {
             parts.push(cfg.wrapNote.trim().replace(/\{\{用户\}\}/g, character.myName || '我'));
@@ -1230,31 +1227,72 @@ ${transcript}`;
         return result;
     },
 
-    // 按 binding.boundWorldBook 重新拉取条目并刷新 char.tavernWorldMemory
-    // 自动同步酒馆时调用，让总结世界书条目变化能跟着同步进来
-    async refreshBoundWorldMemory(binding) {
-        const bound = binding.boundWorldBook;
-        if (!bound || !Array.isArray(bound.entryUids) || !bound.entryUids.length) return { refreshed: false };
-        const char = db.characters.find(c => c.id === binding.uwuCharId);
-        if (!char) return { refreshed: false };
+    // ========== 复制到小手机的酒馆世界书条目 ==========
+    // 复制时在小手机的世界书条目上记一条 tavernSource = { avatar, world, uid, hash }，
+    // 之后就能认出“这条是从酒馆哪一条复制来的”，以及酒馆里有没有改过（比对 hash）。
 
-        const worldBooks = await this.getCharAndChatWorldBooks(binding);
-        const src = bound.sourceType === 'chat' ? worldBooks.chatWorld : worldBooks.charWorld;
-        if (!src) return { refreshed: false };
-
-        const uidSet = new Set(bound.entryUids);
-        const matched = src.entries.filter(e => uidSet.has(e.uid));
-        if (!matched.length) {
-            // 全部条目都不在了，清空 memory，保留 binding 让用户感知
-            char.tavernWorldMemory = { lastSync: Date.now(), entryCount: 0, source: src.name, content: '', bound: true };
-            return { refreshed: true, entryCount: 0 };
-        }
-        matched.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        const memoryText = matched.map(e => { let t = ''; if (e.comment) t += `[${e.comment}]\n`; t += e.content; return t; }).join('\n\n---\n\n');
-        char.tavernWorldMemory = { lastSync: Date.now(), entryCount: matched.length, source: src.name, content: memoryText, bound: true };
-        return { refreshed: true, entryCount: matched.length };
+    // 内容指纹：条目名 + 正文。改任意一个都会变
+    wbHash(entry) {
+        const text = `${entry.comment || ''}\u0001${entry.content || ''}`;
+        let h = 5381;
+        for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+        return String(h);
     },
+
+    // 找到“从酒馆这一条复制过来”的小手机世界书条目
+    findCopiedWorldBook(binding, worldName, uid) {
+        return (db.worldBooks || []).find(w => w && w.tavernSource
+            && w.tavernSource.avatar === binding.stCharAvatar
+            && w.tavernSource.world === worldName
+            && w.tavernSource.uid === uid);
+    },
+
+    // 自动更新复制过的世界书条目（绑定卡片上的开关打开时，每次从酒馆同步时调用）
+    async syncCopiedWorldBooks(binding) {
+        const linked = (db.worldBooks || []).filter(w => w && w.tavernSource && w.tavernSource.avatar === binding.stCharAvatar);
+        if (!linked.length) return { updated: 0 };
+        const worldBooks = await this.getCharAndChatWorldBooks(binding);
+        const sources = [worldBooks.charWorld, worldBooks.chatWorld].filter(Boolean);
+        let updated = 0;
+        for (const w of linked) {
+            const src = sources.find(s => s.name === w.tavernSource.world);
+            if (!src) continue;
+            const entry = src.entries.find(e => e.uid === w.tavernSource.uid);
+            if (!entry) continue;                       // 酒馆里删掉了 → 小手机这条保留，不动
+            const hash = this.wbHash(entry);
+            if (hash === w.tavernSource.hash) continue;
+            w.name = entry.comment || w.name;
+            w.content = entry.content;
+            w.tavernSource.hash = hash;
+            updated++;
+        }
+        return { updated };
+    },
+
+    // 一次性清理：旧版“绑定世界书/跟随”功能留下的数据（yuan 版已删掉这个功能）
+    // 以前绑定的条目内容会一直作为【世界设定】发给 AI，而且没有入口能删，所以直接清掉。
+    // 想要酒馆世界书内容，改用“导入酒馆世界书”复制到小手机自己的世界书里。
+    cleanupLegacyWorldMemory() {
+        if (this._legacyCleaned) return 0;
+        if (typeof db === 'undefined' || !Array.isArray(db.characters) || !db.characters.length) return 0;
+        this._legacyCleaned = true;
+        let n = 0;
+        db.characters.forEach(c => { if (c && c.tavernWorldMemory) { delete c.tavernWorldMemory; n++; } });
+        const cfg = db.tavernSync;
+        if (cfg && Array.isArray(cfg.bindings)) {
+            cfg.bindings.forEach(b => { if (b && b.boundWorldBook) { delete b.boundWorldBook; n++; } });
+        }
+        if (n && typeof saveData === 'function') saveData();
+        return n;
+    },
+
 };
+
+// 把文字里的尖括号等转义掉再放进页面。世界书条目、正则规则里常有 <char> 这类内容，
+// 不转义会被浏览器当成页面标签，把后面的排版撑坏（世界书列表曾经因此缩进错乱）
+function esc(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 // ========== UI 样式常量 ==========
 const TS = {
@@ -1471,7 +1509,7 @@ function setupTavernSyncScreen() {
             loginArea.innerHTML = `<div style="font-size:13px; color:#999; margin-bottom:8px;">选择酒馆账户</div>
                 ${users.map(u => `<button class="ts-user-btn" data-handle="${u.handle}" data-pwd="${u.password}"
                     style="display:flex; align-items:center; gap:10px; width:100%; padding:12px; border-radius:10px; border:none; background:rgba(255,255,255,0.06); color:inherit; font-size:14px; cursor:pointer; margin-bottom:8px; text-align:left;">
-                    <span>${u.name || u.handle}</span>
+                    <span>${esc(u.name || u.handle)}</span>
                     ${u.password ? '<span style="font-size:11px; color:#999; margin-left:auto;">需要密码</span>' : ''}</button>`).join('')}
                 <div id="ts-password-area" style="display:none; margin-top:8px;">
                     <input type="password" id="ts-pwd-input" placeholder="输入密码" style="${TS.input} margin-bottom:8px;">
@@ -1523,8 +1561,8 @@ function setupTavernSyncScreen() {
             <div style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(255,255,255,0.04); border-radius:8px; margin-bottom:6px;">
                 <input type="checkbox" data-toggle="${i}" ${r.enabled ? 'checked' : ''} style="flex-shrink:0;">
                 <div style="flex:1; min-width:0; cursor:pointer;" data-edit="${i}">
-                    <div style="font-size:13px; font-weight:500;">${r.name || '未命名'}</div>
-                    <div style="font-size:11px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.mode === 'extract' ? '提取' : '排除'} /${r.regex}/${r.minDepth != null || r.maxDepth != null ? ` 深度${r.minDepth ?? 0}~${r.maxDepth ?? '∞'}` : ''}</div>
+                    <div style="font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.name || '未命名')}</div>
+                    <div style="font-size:11px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.mode === 'extract' ? '提取' : '排除'} /${esc(r.regex)}/${r.minDepth != null || r.maxDepth != null ? ` 深度${r.minDepth ?? 0}~${r.maxDepth ?? '∞'}` : ''}</div>
                 </div>
                 <button data-delrule="${i}" style="${TS.btnD} font-size:14px;">✕</button>
             </div>`).join('');
@@ -1544,20 +1582,18 @@ function setupTavernSyncScreen() {
             const mem = char?.tavernMemory;
             const floorCount = char && Array.isArray(char.history) ? char.history.filter(h => h && h.fromTavern).length : 0;
             const syncInfo = mem && mem.lastSync ? `小手机里有 ${floorCount} 楼酒馆剧情 · 上次同步 ${new Date(mem.lastSync).toLocaleString('zh-CN', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}` : '未同步';
-            const wbMem = char?.tavernWorldMemory;
-            const wbInfo = wbMem ? `${wbMem.entryCount} 条世界书` : '';
             const maxMem = parseInt(char && char.maxMemory, 10) || 20;   // 这个角色在聊天设置里的“可见上文条数”
             return `<div style="${TS.card} padding:14px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <div><div style="font-size:14px; font-weight:600;">${charName} ↔ ${stName}</div>
-                        <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}${wbInfo ? ' · ' + wbInfo : ''}</div></div>
+                    <div><div style="font-size:14px; font-weight:600;">${esc(charName)} ↔ ${esc(stName)}</div>
+                        <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}</div></div>
                     <button data-del="${i}" style="${TS.btnD}">✕</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                    <button data-pull="${i}" style="flex:1; ${TS.btnG}">同步记忆</button>
+                    <button data-pull="${i}" style="flex:1; ${TS.btnG}">从酒馆同步</button>
                     <button data-push="${i}" style="flex:1; ${TS.btnB}">推送到酒馆</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-                    <button data-import-char="${i}" style="flex:1; ${TS.btnO}">导入设定</button>
-                    <button data-import-wb="${i}" style="flex:1; ${TS.btnO}">世界书</button></div>
+                    <button data-import-char="${i}" style="flex:1; ${TS.btnO}">导入酒馆人设</button>
+                    <button data-import-wb="${i}" style="flex:1; ${TS.btnO}">导入酒馆世界书</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
                     <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(156,39,176,0.15); color:#CE93D8; font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button>
                     <button data-reset="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(244,67,54,0.12); color:#f66; font-size:13px; font-weight:500; cursor:pointer;">清空并重选范围</button></div>
@@ -1568,6 +1604,10 @@ function setupTavernSyncScreen() {
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-auto="autoPush" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPush') ? 'checked' : ''}>
                     <span>自动推送<span style="font-size:11px; color:#888;">（AI 回复后把新消息推到酒馆；在小手机删消息时同步删酒馆里的）</span></span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
+                    <input type="checkbox" data-wbauto="${i}" ${b.autoUpdateWorldBooks ? 'checked' : ''}>
+                    <span>自动更新复制过的世界书<span style="font-size:11px; color:#888;">（从酒馆同步时，把酒馆里改过的条目更新到小手机的世界书）</span></span>
                 </label>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-limit="${i}" ${b.limitTavernContext ? 'checked' : ''}>
@@ -1583,6 +1623,13 @@ function setupTavernSyncScreen() {
         }).join('');
 
         // 单独限制酒馆上文：开关 + 楼数（不能超过这个角色的可见上文条数）
+        bindingsList.querySelectorAll('[data-wbauto]').forEach(cb => cb.addEventListener('change', async () => {
+            const cfg = TavernSync.getConfig();
+            const b = cfg.bindings[parseInt(cb.dataset.wbauto)];
+            if (!b) return;
+            b.autoUpdateWorldBooks = cb.checked;
+            await TavernSync.saveConfig(cfg);
+        }));
         bindingsList.querySelectorAll('[data-limit]').forEach(cb => cb.addEventListener('change', async () => {
             const cfg = TavernSync.getConfig();
             const b = cfg.bindings[parseInt(cb.dataset.limit)];
@@ -1630,6 +1677,7 @@ function setupTavernSyncScreen() {
                 r.imported ? `导入 ${r.imported} 楼新剧情` : '',
                 r.summariesFilled ? `补上 ${r.summariesFilled} 段摘要` : '',
                 r.reordered ? '已按时间重新排好位置' : '',
+                r.worldUpdated ? `更新 ${r.worldUpdated} 条世界书` : '',
             ].filter(Boolean).join('，') || '酒馆没有新楼层'); renderBindings(); }
             catch (e) { showToast(`${e.message}`); }
             btn.textContent = orig; btn.disabled = false;
@@ -1644,7 +1692,7 @@ function setupTavernSyncScreen() {
             const cfg = TavernSync.getConfig(); const b = cfg.bindings[parseInt(btn.dataset.importChar)];
             btn.textContent = '加载中...'; btn.disabled = true;
             try { await showImportCharModal(b); } catch (e) { showToast(`${e.message}`); }
-            btn.textContent = '导入设定'; btn.disabled = false;
+            btn.textContent = '导入酒馆人设'; btn.disabled = false;
         });
 
         bindClick('[data-reset]', async (btn) => {
@@ -1658,7 +1706,7 @@ function setupTavernSyncScreen() {
             const cfg = TavernSync.getConfig(); const b = cfg.bindings[parseInt(btn.dataset.importWb)];
             btn.textContent = '加载中...'; btn.disabled = true;
             try { await showWorldBookModal(b); renderBindings(); } catch (e) { showToast(`${e.message}`); }
-            btn.textContent = '世界书'; btn.disabled = false;
+            btn.textContent = '导入酒馆世界书'; btn.disabled = false;
         });
 
         bindClick('[data-preview]', async (btn) => {
@@ -2187,14 +2235,14 @@ async function showImportCharModal(binding) {
     }
 
     modal.innerHTML = `
-        <h3 style="margin:0 0 16px; font-size:16px; font-weight:600;">导入设定：${result.charName}</h3>
+        <h3 style="margin:0 0 16px; font-size:16px; font-weight:600;">导入酒馆人设：${esc(result.charName)}</h3>
         ${result.charPersona ? `
             <div style="margin-bottom:12px;">
                 <div style="display:flex; align-items:center; justify-content:space-between;">
                     <label style="${TS.label} margin-bottom:0;">角色人设</label>
                     ${hasPersona ? '<span style="font-size:11px; color:#FF9800;">将覆盖</span>' : ''}
                 </div>
-                <textarea id="ic-persona" style="${TS.input} height:120px; resize:vertical; margin-top:4px; font-size:12px;">${result.charPersona}</textarea>
+                <textarea id="ic-persona" style="${TS.input} height:120px; resize:vertical; margin-top:4px; font-size:12px;">${esc(result.charPersona)}</textarea>
                 <label style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:13px;">
                     <input type="checkbox" id="ic-persona-check" checked> 导入角色人设
                 </label>
@@ -2203,7 +2251,7 @@ async function showImportCharModal(binding) {
         ${result.postHistory ? `
             <div style="margin-bottom:12px;">
                 <label style="${TS.label}">Post History Instructions</label>
-                <textarea id="ic-posthistory" style="${TS.input} height:60px; resize:vertical; font-size:12px;" readonly>${result.postHistory}</textarea>
+                <textarea id="ic-posthistory" style="${TS.input} height:60px; resize:vertical; font-size:12px;" readonly>${esc(result.postHistory)}</textarea>
                 <div style="font-size:11px; color:#888; margin-top:4px;">（仅供参考，不自动导入）</div>
             </div>` : ''}
         <div style="display:flex; gap:10px;">
@@ -2244,7 +2292,10 @@ async function showImportCharModal(binding) {
     });
 }
 
-// ========== 世界书弹窗（角色世界书 + 聊天世界书） ==========
+// ========== 导入酒馆世界书弹窗（角色世界书 + 聊天世界书） ==========
+// 把酒馆世界书的条目复制到小手机自己的世界书里。复制过去就是小手机自己的东西，可以随便编辑；
+// 复制时记下它来自酒馆哪一条（entry.tavernSource），所以之后酒馆里改了内容，这里能认出来并更新。
+// 旧版的“绑定记忆/跟随”已删掉（内容会偷偷一直发给 AI 且没法清理）。
 async function showWorldBookModal(binding) {
     const char = db.characters.find(c => c.id === binding.uwuCharId);
     if (!char) { showToast('找不到角色'); return; }
@@ -2253,214 +2304,172 @@ async function showWorldBookModal(binding) {
     const sources = [];
     if (worldBooks.charWorld) sources.push({ type: '角色世界书', ...worldBooks.charWorld });
     if (worldBooks.chatWorld) sources.push({ type: '聊天世界书', ...worldBooks.chatWorld });
-
     if (!sources.length) { showToast('该角色没有关联的世界书'); return; }
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
     const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:420px; max-height:80vh; display:flex; flex-direction:column;';
+    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:420px; max-height:85vh; display:flex; flex-direction:column;';
 
     const tabsHTML = sources.length > 1
-        ? sources.map((src, i) => `<button class="wb-tab" data-tab="${i}" style="padding:6px 12px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:${i === 0 ? 'rgba(255,255,255,0.15)' : 'transparent'}; color:inherit; font-size:12px; cursor:pointer;">${src.type}(${src.entries.length})</button>`).join('')
+        ? sources.map((src, i) => `<button class="wb-tab" data-tab="${i}" style="padding:6px 12px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:${i === 0 ? 'rgba(255,255,255,0.15)' : 'transparent'}; color:inherit; font-size:12px; cursor:pointer;">${esc(src.type)}(${src.entries.length})</button>`).join('')
         : '';
-
-    const bound = binding.boundWorldBook || null;
-    const boundUidSet = bound ? new Set(bound.entryUids || []) : null;
-    const boundHint = bound
-        ? `<div style="font-size:11px; color:#888; margin-bottom:6px;">已绑定 ${bound.entryUids.length} 条（${bound.sourceName}）· 自动同步酒馆时会跟着刷新</div>`
-        : `<div style="font-size:11px; color:#888; margin-bottom:6px;">勾选条目后点"绑定记忆"，每次同步酒馆都会自动跟着刷新内容</div>`;
+    const smallBtn = 'padding:4px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:12px; cursor:pointer;';
 
     modal.innerHTML = `
-        <h3 style="margin:0 0 8px; font-size:16px; font-weight:600;">世界书</h3>
+        <h3 style="margin:0 0 8px; font-size:16px; font-weight:600;">导入酒馆世界书</h3>
+        <div style="font-size:11px; color:#888; margin-bottom:8px; line-height:1.6;">复制过来就是小手机自己的世界书条目，可以随便改。酒馆里改了内容的，这里会标出来，可以选择更新。</div>
         ${tabsHTML ? `<div style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap;">${tabsHTML}</div>` : ''}
         <div style="display:flex; gap:8px; margin-bottom:8px;">
-            <button id="wb-select-all" style="padding:4px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:12px; cursor:pointer;">全选</button>
-            <button id="wb-select-enabled" style="padding:4px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:12px; cursor:pointer;">仅已启用</button>
+            <button id="wb-select-all" style="${smallBtn}">全选</button>
+            <button id="wb-select-enabled" style="${smallBtn}">只选酒馆里开着的</button>
+            <button id="wb-select-changed" style="${smallBtn}">只选有改动的</button>
         </div>
-        <div id="wb-entries" style="flex:1; overflow-y:auto; margin-bottom:8px;"></div>
-        ${boundHint}
+        <div id="wb-entries" style="flex:1; overflow-y:auto; margin-bottom:10px;"></div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:13px;">
+            <span style="white-space:nowrap;">加到分组</span>
+            <select id="wb-category" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;"></select>
+        </div>
         <div style="display:flex; gap:8px; margin-bottom:8px;">
-            <button id="wb-bind" style="flex:1; ${TS.btnG}">${bound ? '更新绑定' : '绑定记忆'}</button>
-            <button id="wb-import" style="flex:1; ${TS.btnB}">添加到世界书</button>
+            <button id="wb-import" style="flex:1; ${TS.btnB}">复制到小手机世界书</button>
+            <button id="wb-update" style="flex:1; ${TS.btnG}">更新小手机里的内容</button>
         </div>
-        ${bound ? `<button id="wb-unbind" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(244,67,54,0.4); background:transparent; color:#f44; font-size:12px; cursor:pointer; margin-bottom:8px;">解除绑定</button>` : ''}
         <button id="wb-close" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:14px; cursor:pointer;">关闭</button>`;
 
     overlay.appendChild(modal); document.body.appendChild(overlay);
 
+    // ===== 分组下拉：小手机现有的分组 + 新建 =====
+    const categorySelect = modal.querySelector('#wb-category');
+    function renderCategories(selected) {
+        const cats = [...new Set((db.worldBooks || []).map(w => (w.category || '').trim()).filter(Boolean))].sort();
+        const last = selected || TavernSync.getConfig().lastWorldBookCategory || cats[0] || '未分类';
+        if (!cats.includes(last)) cats.unshift(last);
+        categorySelect.innerHTML = cats.map(c => `<option value="${esc(c)}" ${c === last ? 'selected' : ''}>${esc(c)}</option>`).join('')
+            + '<option value="__new__">＋ 新建分组…</option>';
+    }
+    renderCategories();
+    categorySelect.addEventListener('change', async () => {
+        if (categorySelect.value !== '__new__') {
+            const cfg = TavernSync.getConfig(); cfg.lastWorldBookCategory = categorySelect.value; await TavernSync.saveConfig(cfg);
+            return;
+        }
+        const name = (prompt('新分组的名字') || '').trim();
+        renderCategories(name || undefined);
+        if (name) { const cfg = TavernSync.getConfig(); cfg.lastWorldBookCategory = name; await TavernSync.saveConfig(cfg); }
+    });
+
+    // ===== 条目列表 =====
     let currentSourceIdx = 0;
+    function statusOf(src, e) {
+        const copied = TavernSync.findCopiedWorldBook(binding, src.name, e.uid);
+        if (!copied) return { text: '', color: '', changed: false, copied: null };
+        const changed = copied.tavernSource.hash !== TavernSync.wbHash(e);
+        return { text: changed ? '酒馆里已改' : '已复制', color: changed ? '#FF9800' : '#4CAF50', changed, copied };
+    }
     function renderEntries(srcIdx) {
         currentSourceIdx = srcIdx;
         const src = sources[srcIdx];
-        const entries = src.entries;
-        // 绑定来源匹配当前 tab 时，按 boundUidSet 勾选；否则默认按是否禁用
-        const matchesBound = bound && (
-            (bound.sourceType === 'chat' && /聊天/.test(src.type)) ||
-            (bound.sourceType === 'char' && /角色/.test(src.type))
-        );
         const container = modal.querySelector('#wb-entries');
-        container.innerHTML = entries.map((e, i) => {
-            const checked = matchesBound ? boundUidSet.has(e.uid) : !e.disabled;
+        container.innerHTML = src.entries.map((e, i) => {
+            const st = statusOf(src, e);
+            const preview = (e.content || '').replace(/\s+/g, ' ').trim();
             return `
-            <label style="display:flex; align-items:flex-start; gap:8px; padding:8px; background:rgba(255,255,255,0.04); border-radius:8px; margin-bottom:4px; cursor:pointer; ${e.disabled ? 'opacity:0.5;' : ''}">
-                <input type="checkbox" data-idx="${i}" ${checked ? 'checked' : ''} style="flex-shrink:0; margin-top:2px;">
+            <label style="display:flex; align-items:center; gap:10px; padding:10px; background:rgba(255,255,255,0.04); border-radius:8px; margin-bottom:6px; cursor:pointer; ${e.disabled ? 'opacity:0.55;' : ''}">
+                <input type="checkbox" data-idx="${i}" style="flex-shrink:0; margin:0;">
                 <div style="flex:1; min-width:0;">
-                    <div style="font-size:13px; font-weight:500;">${e.comment}${e.disabled ? ' (禁用)' : ''}</div>
-                    <div style="font-size:11px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${e.content.substring(0, 80)}...</div>
+                    <div style="font-size:13px; font-weight:500; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(e.comment || '未命名')}${e.disabled ? '（酒馆里已关闭）' : ''}${st.text ? `<span style="font-size:11px; color:${st.color}; margin-left:6px;">${st.text}</span>` : ''}</div>
+                    <div style="font-size:11px; color:#888; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${preview ? esc(preview.slice(0, 80)) : '（空条目）'}</div>
                 </div>
             </label>`;
         }).join('');
         modal.querySelectorAll('.wb-tab').forEach((t, i) => t.style.background = i === srcIdx ? 'rgba(255,255,255,0.15)' : 'transparent');
+        updateSelectAllLabel();
     }
-    // 若已有绑定，初始切到对应 tab；否则默认 0
-    let initIdx = 0;
-    if (bound) {
-        const findIdx = sources.findIndex(s =>
-            (bound.sourceType === 'chat' && /聊天/.test(s.type)) ||
-            (bound.sourceType === 'char' && /角色/.test(s.type))
-        );
-        if (findIdx >= 0) initIdx = findIdx;
-    }
-    renderEntries(initIdx);
-
+    renderEntries(0);
     modal.querySelectorAll('.wb-tab').forEach(tab => tab.addEventListener('click', () => renderEntries(parseInt(tab.dataset.tab))));
 
-    function getSelectedEntries() {
-        const cbs = modal.querySelectorAll('#wb-entries input[type=checkbox]:checked');
-        return [...cbs].map(cb => sources[currentSourceIdx].entries[parseInt(cb.dataset.idx)]);
+    const boxes = () => [...modal.querySelectorAll('#wb-entries input[type=checkbox]')];
+    const selectAllBtn = modal.querySelector('#wb-select-all');
+    function updateSelectAllLabel() {
+        const all = boxes();
+        selectAllBtn.textContent = (all.length && all.every(cb => cb.checked)) ? '取消全选' : '全选';
     }
-    modal.querySelector('#wb-select-all').addEventListener('click', () => modal.querySelectorAll('#wb-entries input[type=checkbox]').forEach(cb => cb.checked = true));
+    modal.querySelector('#wb-entries').addEventListener('change', updateSelectAllLabel);
+    selectAllBtn.addEventListener('click', () => {
+        const all = boxes();
+        const toCheck = !(all.length && all.every(cb => cb.checked));
+        all.forEach(cb => { cb.checked = toCheck; });
+        updateSelectAllLabel();
+    });
     modal.querySelector('#wb-select-enabled').addEventListener('click', () => {
         const entries = sources[currentSourceIdx].entries;
-        modal.querySelectorAll('#wb-entries input[type=checkbox]').forEach((cb, i) => cb.checked = !entries[i].disabled);
+        boxes().forEach((cb, i) => { cb.checked = !entries[i].disabled; });
+        updateSelectAllLabel();
+    });
+    modal.querySelector('#wb-select-changed').addEventListener('click', () => {
+        const src = sources[currentSourceIdx];
+        boxes().forEach((cb, i) => { cb.checked = statusOf(src, src.entries[i]).changed; });
+        updateSelectAllLabel();
     });
 
-    modal.querySelector('#wb-bind').addEventListener('click', async () => {
-        const cbs = modal.querySelectorAll('#wb-entries input[type=checkbox]:checked');
-        const selected = [...cbs].map(cb => sources[currentSourceIdx].entries[parseInt(cb.dataset.idx)]);
-        if (!selected.length) { showToast('请勾选条目'); return; }
-        selected.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        const memoryText = selected.map(e => { let t = ''; if (e.comment) t += `[${e.comment}]\n`; t += e.content; return t; }).join('\n\n---\n\n');
+    const getSelected = () => boxes().filter(cb => cb.checked).map(cb => sources[currentSourceIdx].entries[parseInt(cb.dataset.idx)]);
 
-        // 写入 binding：记下 source 和 entry uids，下次 pullFromTavern 自动按这套刷新
-        const srcType = /聊天/.test(sources[currentSourceIdx].type) ? 'chat' : 'char';
-        binding.boundWorldBook = {
-            sourceType: srcType,
-            sourceName: sources[currentSourceIdx].name,
-            entryUids: selected.map(e => e.uid),
-        };
-        char.tavernWorldMemory = { lastSync: Date.now(), entryCount: selected.length, source: sources[currentSourceIdx].name, content: memoryText, bound: true };
-        await TavernSync.saveConfig(TavernSync.getConfig());
-        await saveData();
-        showToast(`已绑定 ${selected.length} 条 · 之后同步酒馆会自动刷新`);
-        overlay.remove();
-    });
-
-    if (bound) {
-        modal.querySelector('#wb-unbind').addEventListener('click', async () => {
-            delete binding.boundWorldBook;
-            await TavernSync.saveConfig(TavernSync.getConfig());
-            showToast('已解除绑定（已注入的记忆保留，不再自动刷新）');
-            overlay.remove();
-        });
-    }
-
+    // ===== 复制 =====
     modal.querySelector('#wb-import').addEventListener('click', async () => {
-        const selected = getSelectedEntries();
-        if (!selected.length) { showToast('请勾选条目'); return; }
-        const categoryName = char.remarkName || char.realName || char.name || sources[currentSourceIdx].name;
-        let addedCount = 0;
+        const src = sources[currentSourceIdx];
+        const selected = getSelected();
+        if (!selected.length) { showToast('请先勾选条目'); return; }
+        const category = categorySelect.value === '__new__' ? '未分类' : categorySelect.value;
+        let added = 0, skipped = 0;
         for (const e of selected) {
-            const newWb = { id: `wb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, name: e.comment || '未命名', content: e.content, position: (e.position === 0) ? 'before' : 'after', category: categoryName };
+            if (TavernSync.findCopiedWorldBook(binding, src.name, e.uid)) { skipped++; continue; }
+            const newWb = {
+                id: `wb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                name: e.comment || '未命名',
+                content: e.content,
+                category,
+                position: (e.position === 0) ? 'before' : 'after',
+                isGlobal: false,
+                disabled: false,
+                tavernSource: { avatar: binding.stCharAvatar, world: src.name, uid: e.uid, hash: TavernSync.wbHash(e) },
+            };
             db.worldBooks.push(newWb);
             if (!char.worldBookIds) char.worldBookIds = [];
             if (!char.worldBookIds.includes(newWb.id)) char.worldBookIds.push(newWb.id);
-            addedCount++;
+            added++;
         }
-        await saveData(); showToast(`已添加 ${addedCount} 条世界书（分类: ${categoryName}）`);
+        await saveData();
+        renderEntries(currentSourceIdx);
+        showToast(added ? `已复制 ${added} 条到分组「${category}」${skipped ? `，${skipped} 条之前复制过（可用“更新”）` : ''}` : '勾选的条目之前都复制过了，可以用“更新小手机里的内容”');
+    });
+
+    // ===== 更新 =====
+    modal.querySelector('#wb-update').addEventListener('click', async () => {
+        const src = sources[currentSourceIdx];
+        const selected = getSelected();
+        if (!selected.length) { showToast('请先勾选条目'); return; }
+        let updated = 0, missing = 0;
+        for (const e of selected) {
+            const copied = TavernSync.findCopiedWorldBook(binding, src.name, e.uid);
+            if (!copied) { missing++; continue; }
+            if (copied.tavernSource.hash === TavernSync.wbHash(e)) continue;
+            copied.name = e.comment || copied.name;
+            copied.content = e.content;
+            copied.tavernSource.hash = TavernSync.wbHash(e);
+            updated++;
+        }
+        await saveData();
+        renderEntries(currentSourceIdx);
+        showToast(updated ? `已更新 ${updated} 条${missing ? `，${missing} 条还没复制过` : ''}` : (missing ? '勾选的条目还没复制过' : '勾选的条目内容没有变化'));
     });
 
     modal.querySelector('#wb-close').addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 }
 
-// ========== 清空并重选范围弹窗 ==========
-// 删掉这个角色在小手机里的全部酒馆楼层，然后让用户填从酒馆第几楼到第几楼重新导入（或者只同步以后的新楼层）
-async function showResetRangeModal(binding, onDone) {
-    const char = db.characters.find(c => c.id === binding.uwuCharId);
-    if (!char) { showToast('找不到角色'); return; }
-    const info = await TavernSync.getTavernFloorInfo(binding);
-    const have = (char.history || []).filter(m => m && m.fromTavern).length;
-    const lastFloor = Math.max(0, info.total - 1);
-    const defStart = Math.max(0, info.total - (TavernSync.getConfig().initialImportCount || 20));
-
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
-    const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:380px;';
-    const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;';
-    const cancelStyle = 'flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;';
-    modal.innerHTML = `
-        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">清空并重选范围</h3>
-        <div style="font-size:13px; line-height:1.7; margin-bottom:12px;">
-            小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>
-            酒馆里这个聊天一共 <b>${info.total}</b> 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
-        </div>
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
-            从第 <input type="number" id="rr-start" min="0" max="${lastFloor}" value="${defStart}" style="${numStyle}">
-            到第 <input type="number" id="rr-end" min="0" max="${lastFloor}" value="${lastFloor}" style="${numStyle}"> 楼
-        </div>
-        <div style="font-size:11px; color:#888; line-height:1.6; margin-bottom:16px;">
-            小手机推送过去的楼层、番外楼不会导入。清空后，酒馆里以后新玩的楼层照常同步。<br>
-            已经写进日记、记忆表格、向量记忆的内容不受影响。
-        </div>
-        <button id="rr-range" style="width:100%; ${TS.btnP} margin-bottom:8px;">清空，并导入这个范围</button>
-        <button id="rr-none" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(244,67,54,0.4); background:transparent; color:#f66; font-size:14px; cursor:pointer; margin-bottom:8px;">只清空（以后只同步新楼层）</button>
-        <button id="rr-cancel" style="width:100%; ${cancelStyle}">取消</button>`;
-    overlay.appendChild(modal); document.body.appendChild(overlay);
-    const close = () => overlay.remove();
-    modal.querySelector('#rr-cancel').addEventListener('click', close);
-    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-
-    const run = async (range, btn) => {
-        const buttons = modal.querySelectorAll('button');
-        buttons.forEach(b => { b.disabled = true; });
-        const orig = btn.textContent; btn.textContent = '处理中...';
-        try {
-            const r = await TavernSync.resetImportRange(binding, range);
-            let msg = `已删掉 ${r.removed} 楼`;
-            if (range) {
-                const p = await TavernSync.pullFromTavern(binding);
-                msg += `，重新导入 ${p.imported} 楼`;
-            }
-            showToast(msg);
-            close();
-            if (onDone) onDone();
-        } catch (e) {
-            showToast(`${e.message}`);
-            buttons.forEach(b => { b.disabled = false; });
-            btn.textContent = orig;
-        }
-    };
-    modal.querySelector('#rr-range').addEventListener('click', (e) => {
-        const start = parseInt(modal.querySelector('#rr-start').value, 10);
-        const end = parseInt(modal.querySelector('#rr-end').value, 10);
-        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > lastFloor || start > end) {
-            showToast(`请填 0 ~ ${lastFloor} 之间的楼层，而且开始不能大于结束`);
-            return;
-        }
-        run({ start, end }, e.currentTarget);
-    });
-    modal.querySelector('#rr-none').addEventListener('click', (e) => {
-        if (!confirm(`删掉小手机里全部 ${have} 楼酒馆剧情，以后只同步新楼层？`)) return;
-        run(null, e.currentTarget);
-    });
-}
-
 // ========== 提示词预览弹窗 ==========
 // 显示 AI 实际会收到的酒馆相关内容（不截断，可滚动）：
-//   - 系统提示词里的：世界设定 + 线下剧情说明
+//   - 系统提示词里的：线下剧情说明
 //   - 聊天记录里的：最近“记忆条数”范围内的酒馆楼层，按原文/摘要处理后的样子
 function showPromptPreview(binding) {
     const char = db.characters.find(c => c.id === binding.uwuCharId);
@@ -2482,7 +2491,7 @@ function showPromptPreview(binding) {
 
     const sections = [];
     const promptBlock = TavernSync.buildPromptBlock(char);
-    if (promptBlock) sections.push({ title: '系统提示词里（世界设定 / 线下剧情说明）', content: promptBlock, color: '#FF9800' });
+    if (promptBlock) sections.push({ title: '系统提示词里（线下剧情说明）', content: promptBlock, color: '#FF9800' });
 
     // 和 yuan 发消息时一样：取最近“记忆条数”条聊天记录，再经过 filterHistoryForAI（已被补丁接管，会做原文/摘要处理）
     const maxMemory = Number(char.maxMemory) || 20;
@@ -2552,9 +2561,9 @@ async function showBindingEditor(onSave) {
     modal.innerHTML = `
         <h3 style="margin:0 0 16px; font-size:16px; font-weight:600;">添加角色绑定</h3>
         <div style="margin-bottom:12px;"><label style="${TS.label}">小手机角色</label>
-            <select id="be-uwu" style="${TS.input}">${db.characters.map(c => `<option value="${c.id}">${c.remarkName || c.name}</option>`).join('')}</select></div>
+            <select id="be-uwu" style="${TS.input}">${db.characters.map(c => `<option value="${c.id}">${esc(c.remarkName || c.name)}</option>`).join('')}</select></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">酒馆角色</label>
-            <select id="be-st" style="${TS.input}">${stCharacters.map(c => `<option value="${c.avatar}">${c.name}</option>`).join('')}</select></div>
+            <select id="be-st" style="${TS.input}">${stCharacters.map(c => `<option value="${c.avatar}">${esc(c.name)}</option>`).join('')}</select></div>
         <div style="margin-bottom:16px;"><label style="${TS.label}">酒馆聊天记录</label>
             <select id="be-chat" style="${TS.input}"><option>加载中...</option></select></div>
         <div style="display:flex; gap:10px;">

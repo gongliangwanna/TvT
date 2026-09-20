@@ -298,6 +298,8 @@
         let deletionTimer = null;
         setInterval(() => {
             try { ensureGrouped(); } catch (e) { /* 分组失败不影响同步 */ }
+            // 一次性清掉旧版“绑定世界书/跟随”留下的数据（那功能已删掉）
+            if (window.TavernSync) { try { window.TavernSync.cleanupLegacyWorldMemory(); } catch (e) { /* 清理失败不影响别的 */ } }
             const TS = window.TavernSync;
             if (!TS || typeof db === 'undefined' || !Array.isArray(db.characters)) return;
             const chatId = (typeof currentChatType !== 'undefined' && currentChatType === 'private'
