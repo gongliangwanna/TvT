@@ -9,7 +9,7 @@
 (function () {
     const TAG = '[酒馆外挂]';
     // 文件版本：显示在“酒馆互联”页面最下面（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-20 d';
+    const HOOKS_VERSION = '2026-09-20 e';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
@@ -393,6 +393,15 @@
     // （早期版本写死了 #message-area 的直接子元素，维护者的手机上就一直不生效）。
     // 夹在酒馆楼层之间的时间分隔线也算进组里一起收起。
     const FLOOR_SELECTOR = '.tavern-floor-wrapper, [data-tavern-floor]';
+    // 收起时用这个类隐藏。用自己的样式表 + !important，免得被 yuan 的样式压过去（直接写 style.display 曾经没生效）
+    const HIDDEN_CLASS = 'tavern-floor-collapsed';
+    (function addHideStyle() {
+        if (document.getElementById('tavern-collapse-style')) return;
+        const style = document.createElement('style');
+        style.id = 'tavern-collapse-style';
+        style.textContent = '.' + HIDDEN_CLASS + ' { display: none !important; }';
+        (document.head || document.documentElement).appendChild(style);
+    })();
     const expandedGroups = new Set();   // 展开着的组（用组里第一楼的消息编号记），重新画聊天后保持
     let groupObserver = null;
     let observedArea = null;
@@ -426,6 +435,7 @@
         try {
             // 先清掉上一轮的组头组尾（可能在别的容器里，所以整页找）
             document.querySelectorAll('.tavern-group-bar').forEach(el => el.remove());
+            document.querySelectorAll('.' + HIDDEN_CLASS).forEach(el => { el.classList.remove(HIDDEN_CLASS); el.style.display = ''; });
             const areas = findFloorAreas();
             for (const area of areas) {
                 const isFloor = (el) => el.matches(FLOOR_SELECTOR);
@@ -450,7 +460,7 @@
                     const count = g.floors.length;
                     const floorNos = g.floors.map(el => el.dataset.tavernFloor).filter(x => x !== undefined && x !== '');
                     const range = floorNos.length ? `（第${floorNos[0]}${floorNos.length > 1 ? '~' + floorNos[floorNos.length - 1] : ''}楼）` : '';
-                    g.members.forEach(el => { el.style.display = open ? '' : 'none'; });
+                    g.members.forEach(el => { el.classList.toggle(HIDDEN_CLASS, !open); el.style.display = open ? '' : 'none'; });
                     const toggleGroup = (fromBottom) => {
                         if (expandedGroups.has(key)) expandedGroups.delete(key); else expandedGroups.add(key);
                         regroupTavernFloors();
