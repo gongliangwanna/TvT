@@ -1817,7 +1817,7 @@ function setupTavernSyncScreen() {
                     <div style="font-size:12px; color:#888; margin-top:6px;">自动同步、自动推送的开关在上面每个角色的绑定卡片里，可以分别设置</div>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:14px;">推送楼层模式</span>
-                        <select id="ts-push-mode" style="padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px;">
+                        <select id="ts-push-mode" aria-label="推送楼层模式" title="推送楼层模式" style="padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px;">
                             <option value="new" ${(config.pushMode || 'new') === 'new' ? 'selected' : ''}>新开楼层</option>
                             <option value="append" ${config.pushMode === 'append' ? 'selected' : ''}>合并到最后一楼</option>
                         </select>
@@ -2060,14 +2060,14 @@ function setupTavernSyncScreen() {
                         style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
                     <span style="font-size:11px; color:#888; width:100%;">这个角色的可见上文是 ${maxMem} 条：取最新的这么多楼酒馆剧情，剩下的名额给小手机消息</span>
                 </div>
-                <div style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px;">
+                <label style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px;">
                     <span>通话推送</span>
-                    <select data-callmode="${i}" style="flex:1; min-width:120px; padding:5px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;">
+                    <select data-callmode="${i}" aria-label="通话推送" title="通话推送" style="flex:1; min-width:120px; padding:5px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;">
                         <option value="summary" ${callMode === 'summary' ? 'selected' : ''}>只推总结</option>
                         <option value="context" ${callMode === 'context' ? 'selected' : ''}>只推记录</option>
                         <option value="both" ${callMode === 'both' ? 'selected' : ''}>都推送</option>
                     </select>
-                </div>
+                </label>
             </div>`;
         }).join('');
 
@@ -2606,7 +2606,7 @@ function showRuleEditor(ruleIndex, onSave) {
         <h3 style="margin:0 0 16px; font-size:16px; font-weight:600;">${existing ? '编辑' : '添加'}清洗规则</h3>
         <div style="margin-bottom:12px;"><label style="${TS.label}">规则名称</label><input id="rr-name" placeholder="例如：去除thinking" style="${TS.input}"></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">正则表达式</label><input id="rr-regex" placeholder="例如：<thinking>[\\s\\S]*?</thinking>" style="${TS.input} font-family:monospace;"></div>
-        <div style="margin-bottom:12px;"><label style="${TS.label}">模式</label><select id="rr-mode" style="${TS.input}">
+        <div style="margin-bottom:12px;"><label style="${TS.label}">模式</label><select id="rr-mode" aria-label="规则模式" title="规则模式" style="${TS.input}">
             <option value="exclude" ${(!existing || existing.mode === 'exclude') ? 'selected' : ''}>排除（删除匹配内容）</option>
             <option value="extract" ${existing?.mode === 'extract' ? 'selected' : ''}>提取（只保留匹配/捕获组$1）</option></select></div>
         <div style="margin-bottom:12px;">
@@ -2678,7 +2678,7 @@ async function showImportCharModal(binding) {
                     <label style="${TS.label} margin-bottom:0;">用户人设（"我"的设定）</label>
                     ${hasMyPersona ? '<span style="font-size:11px; color:#FF9800;">将覆盖</span>' : ''}
                 </div>
-                <select id="ic-persona-select" style="${TS.input} margin-top:4px;">
+                <select id="ic-persona-select" aria-label="用户人设" title="用户人设" style="${TS.input} margin-top:4px;">
                     <option value="">-- 选择要导入的用户人设 --</option>
                     <option value="__active__">酒馆中当前选中的人设</option>
                     ${opts}
@@ -2784,7 +2784,7 @@ async function showWorldBookModal(binding) {
         <div id="wb-entries" style="flex:1; overflow-y:auto; margin-bottom:10px;"></div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:13px;">
             <span style="white-space:nowrap;">加到分组</span>
-            <select id="wb-category" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;"></select>
+            <select id="wb-category" aria-label="加到分组" title="加到分组" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;"></select>
         </div>
         <div style="display:flex; gap:8px; margin-bottom:8px;">
             <button id="wb-import" style="flex:1; ${TS.btnB}">复制到小手机世界书</button>
@@ -3043,11 +3043,11 @@ async function showBindingEditor(onSave) {
     modal.innerHTML = `
         <h3 style="margin:0 0 16px; font-size:16px; font-weight:600;">添加角色绑定</h3>
         <div style="margin-bottom:12px;"><label style="${TS.label}">小手机角色</label>
-            <select id="be-uwu" style="${TS.input}">${db.characters.map(c => `<option value="${c.id}">${esc(c.remarkName || c.name)}</option>`).join('')}</select></div>
+            <select id="be-uwu" aria-label="小手机角色" title="小手机角色" style="${TS.input}">${db.characters.map(c => `<option value="${c.id}">${esc(c.remarkName || c.name)}</option>`).join('')}</select></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">酒馆角色</label>
-            <select id="be-st" style="${TS.input}">${stCharacters.map(c => `<option value="${c.avatar}">${esc(c.name)}</option>`).join('')}</select></div>
+            <select id="be-st" aria-label="酒馆角色" title="酒馆角色" style="${TS.input}">${stCharacters.map(c => `<option value="${c.avatar}">${esc(c.name)}</option>`).join('')}</select></div>
         <div style="margin-bottom:16px;"><label style="${TS.label}">酒馆聊天记录</label>
-            <select id="be-chat" style="${TS.input}"><option>加载中...</option></select></div>
+            <select id="be-chat" aria-label="酒馆聊天记录" title="酒馆聊天记录" style="${TS.input}"><option>加载中...</option></select></div>
         <div style="display:flex; gap:10px;">
             <button id="be-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;">取消</button>
             <button id="be-save" style="flex:1; ${TS.btnP}">保存</button></div>`;
