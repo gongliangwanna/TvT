@@ -528,9 +528,10 @@ const TavernSync = {
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (!char) throw new Error('找不到角色');
         let trimmed = 0, skipped = 0, saved = 0;
+        const skippedFloors = [];
         for (const m of this._pickFloors(char, opts)) {
             if (m.tavern.trimmed) continue;
-            if (!this.canTrim(m)) { skipped++; continue; }
+            if (!this.canTrim(m)) { skipped++; skippedFloors.push(m.tavern.floor); continue; }
             const before = (m.content || '').length;
             m.content = m.tavern.summary.text;
             m.parts = [];
@@ -539,7 +540,7 @@ const TavernSync = {
             trimmed++;
         }
         if (trimmed) { await saveData(); this._rerender(char); }
-        return { trimmed, skipped, saved };
+        return { trimmed, skipped, saved, skippedFloors };
     },
 
     // 取回原文：从酒馆重新读那一楼的正文。返回 { restored 取回几楼, missing 酒馆里找不到几楼 }
@@ -2218,7 +2219,7 @@ function showTrimModal(binding, onDone) {
     const cancelStyle = 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;';
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">精简旧楼层</h3>
-        <div style="font-size:13px; line-height:1.7; margin-bottom:12px;">
+        <div style="font-size:11px; color:#888; line-height:1.6; margin-bottom:12px;">
             精简就是只留柏宝书摘要、把原文丢掉。原文在酒馆里一直都在，点下面的「取回原文」随时拿回来。<br>
             小手机里有 <b>${floors.length}</b> 楼酒馆剧情（第 ${firstFloor} ~ ${lastFloor} 楼），其中 <b>${trimmed.length}</b> 楼已精简、
             <b>${can.length}</b> 楼可以精简（能省${sizeOf(saveable)}）${noSummary.length ? `、<b>${noSummary.length}</b> 楼还没有摘要（不会精简）` : ''}。
@@ -2232,7 +2233,7 @@ function showTrimModal(binding, onDone) {
             精简过的楼层发给 AI 时一律用摘要，不算在「最近几楼发原文」里面。
         </div>
         <button id="tm-do" style="width:100%; ${TS.btnP} margin-bottom:8px;">精简成摘要</button>
-        <button id="tm-restore" style="width:100%; ${TS.btnG} margin-bottom:8px;">取回原文（同一个范围）</button>
+        <button id="tm-restore" style="width:100%; padding:10px; border-radius:10px; border:none; background:rgba(76,175,80,0.15); color:#4CAF50; font-size:14px; font-weight:500; cursor:pointer; margin-bottom:8px;">取回原文</button>
         <button id="tm-cancel" style="${cancelStyle}">取消</button>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
     const close = () => overlay.remove();
@@ -2261,10 +2262,24 @@ function showTrimModal(binding, onDone) {
             btn.textContent = orig;
         }
     };
+    // 把楼层号写成“第 0~3、7 楼”这样连着的几段；段数太多时只写前 5 段
+    const floorRanges = (arr) => {
+        const nums = [...new Set(arr.filter(n => typeof n === 'number'))].sort((a, b) => a - b);
+        if (!nums.length) return '';
+        const parts = [];
+        let from = nums[0], prev = nums[0];
+        for (let i = 1; i <= nums.length; i++) {
+            if (i < nums.length && nums[i] === prev + 1) { prev = nums[i]; continue; }
+            parts.push(from === prev ? `${from}` : `${from}~${prev}`);
+            if (i < nums.length) { from = nums[i]; prev = nums[i]; }
+        }
+        return parts.length > 5 ? `（第 ${parts.slice(0, 5).join('、')} 等楼）` : `（第 ${parts.join('、')} 楼）`;
+    };
     modal.querySelector('#tm-do').addEventListener('click', (e) => run(e.currentTarget, async (range) => {
         const r = await TavernSync.trimFloors(binding, range);
-        showToast(r.trimmed ? `精简了 ${r.trimmed} 楼，省下约 ${r.saved} 字` + (r.skipped ? `；${r.skipped} 楼没有摘要，原样留着` : '')
-            : (r.skipped ? `这个范围里的 ${r.skipped} 楼都还没有摘要，没动` : '这个范围里没有可以精简的楼层'));
+        const where = floorRanges(r.skippedFloors || []);
+        showToast(r.trimmed ? `精简了 ${r.trimmed} 楼，省下约 ${r.saved} 字` + (r.skipped ? `；${r.skipped} 楼还没有摘要${where}` : '')
+            : (r.skipped ? `这个范围里的 ${r.skipped} 楼都还没有摘要${where}` : '这个范围里没有可以精简的楼层'));
     }));
     modal.querySelector('#tm-restore').addEventListener('click', (e) => run(e.currentTarget, async (range) => {
         const r = await TavernSync.restoreRawFloors(binding, range);
