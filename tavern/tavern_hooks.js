@@ -9,7 +9,7 @@
 (function () {
     const TAG = '[酒馆外挂]';
     // 文件版本：显示在“酒馆互联”页面最下面（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-20 c';
+    const HOOKS_VERSION = '2026-09-20 d';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
@@ -387,11 +387,15 @@
     // 聊天界面里连着的一串酒馆楼层，默认收成一张“酒馆剧情 · N 楼”的卡片，免得把小手机上文挤得看不到。
     // 点开后显示原来的一张张楼层卡片（再点某一楼看原文）；组的开头和结尾都有“收起”，
     // 楼层很多时不用翻回开头也能收起，从结尾收起后会滚回这一组的位置。
-    // 做法：不改 yuan 画消息的流程，而是在聊天区内容变化后，把连续的 .tavern-floor-wrapper 分组，
+    // 做法：不改 yuan 画消息的流程，而是在聊天区内容变化后，把连续的酒馆卡片分组，
     // 在每组前后插入我们自己的“组头/组尾”，并按展开状态显示或隐藏组里的楼层。
+    // 不假设卡片放在哪个容器里：先在页面上找到酒馆卡片，再就地在它们的父元素里分组
+    // （早期版本写死了 #message-area 的直接子元素，维护者的手机上就一直不生效）。
     // 夹在酒馆楼层之间的时间分隔线也算进组里一起收起。
+    const FLOOR_SELECTOR = '.tavern-floor-wrapper, [data-tavern-floor]';
     const expandedGroups = new Set();   // 展开着的组（用组里第一楼的消息编号记），重新画聊天后保持
     let groupObserver = null;
+    let observedArea = null;
     let regroupScheduled = false;
 
     function makeGroupBar(text, onClick) {
@@ -410,108 +414,92 @@
         return outer;
     }
 
+    // 页面上所有酒馆卡片所在的容器（正常情况下只有一个）
+    function findFloorAreas() {
+        const areas = new Set();
+        document.querySelectorAll(FLOOR_SELECTOR).forEach(el => { if (el.parentElement) areas.add(el.parentElement); });
+        return [...areas];
+    }
+
     function regroupTavernFloors() {
-        const area = document.getElementById('message-area');
-        if (!area) return;
         if (groupObserver) groupObserver.disconnect();
         try {
-            area.querySelectorAll(':scope > .tavern-group-bar').forEach(el => el.remove());
-            // 找出连续的酒馆楼层（中间只隔着时间分隔线也算连续）
-            const groups = [];
-            let current = null, pendingDividers = [];
-            const isFloor = (el) => el.classList.contains('tavern-floor-wrapper') || el.hasAttribute('data-tavern-floor');
-            for (const el of Array.from(area.children)) {
-                if (isFloor(el)) {
-                    if (!current) { current = { floors: [], members: [] }; groups.push(current); }
-                    else current.members.push(...pendingDividers);
-                    pendingDividers = [];
-                    current.floors.push(el);
-                    current.members.push(el);
-                } else if (current && el.classList.contains('time-divider')) {
-                    pendingDividers.push(el);
-                } else {
-                    current = null; pendingDividers = [];
-                }
-            }
-            for (const g of groups) {
-                const key = g.floors[0].dataset.id;
-                const open = expandedGroups.has(key);
-                const count = g.floors.length;
-                const floorNos = g.floors.map(el => el.dataset.tavernFloor).filter(x => x !== undefined && x !== '');
-                const range = floorNos.length ? `（第${floorNos[0]}${floorNos.length > 1 ? '~' + floorNos[floorNos.length - 1] : ''}楼）` : '';
-                g.members.forEach(el => { el.style.display = open ? '' : 'none'; });
-                const toggleGroup = (bar, fromBottom) => {
-                    if (expandedGroups.has(key)) expandedGroups.delete(key); else expandedGroups.add(key);
-                    regroupTavernFloors();
-                    // 从组尾收起：滚回这一组的位置，不然会停在很下面
-                    if (fromBottom) {
-                        const head = Array.from(area.querySelectorAll(':scope > .tavern-group-bar')).find(el => el.dataset.group === key);
-                        if (head) head.scrollIntoView({ block: 'center' });
+            // 先清掉上一轮的组头组尾（可能在别的容器里，所以整页找）
+            document.querySelectorAll('.tavern-group-bar').forEach(el => el.remove());
+            const areas = findFloorAreas();
+            for (const area of areas) {
+                const isFloor = (el) => el.matches(FLOOR_SELECTOR);
+                const groups = [];
+                let current = null, pendingDividers = [];
+                for (const el of Array.from(area.children)) {
+                    if (isFloor(el)) {
+                        if (!current) { current = { floors: [], members: [] }; groups.push(current); }
+                        else current.members.push(...pendingDividers);
+                        pendingDividers = [];
+                        current.floors.push(el);
+                        current.members.push(el);
+                    } else if (current && el.classList.contains('time-divider')) {
+                        pendingDividers.push(el);
+                    } else {
+                        current = null; pendingDividers = [];
                     }
-                };
-                const head = makeGroupBar(
-                    open ? `酒馆剧情 · ${count} 楼${range} · 点击收起` : `酒馆剧情 · ${count} 楼${range} · 点击展开`,
-                    (bar) => toggleGroup(bar, false));
-                head.dataset.group = key;
-                area.insertBefore(head, g.members[0]);
-                if (open) {
-                    const tail = makeGroupBar(`收起酒馆剧情（${count} 楼）`, (bar) => toggleGroup(bar, true));
-                    const last = g.members[g.members.length - 1];
-                    area.insertBefore(tail, last.nextSibling);
                 }
+                for (const g of groups) {
+                    const key = g.floors[0].dataset.id || String(g.floors[0].dataset.tavernFloor);
+                    const open = expandedGroups.has(key);
+                    const count = g.floors.length;
+                    const floorNos = g.floors.map(el => el.dataset.tavernFloor).filter(x => x !== undefined && x !== '');
+                    const range = floorNos.length ? `（第${floorNos[0]}${floorNos.length > 1 ? '~' + floorNos[floorNos.length - 1] : ''}楼）` : '';
+                    g.members.forEach(el => { el.style.display = open ? '' : 'none'; });
+                    const toggleGroup = (fromBottom) => {
+                        if (expandedGroups.has(key)) expandedGroups.delete(key); else expandedGroups.add(key);
+                        regroupTavernFloors();
+                        // 从组尾收起：滚回这一组的位置，不然会停在很下面
+                        if (fromBottom) {
+                            const head = Array.from(document.querySelectorAll('.tavern-group-bar')).find(el => el.dataset.group === key);
+                            if (head) head.scrollIntoView({ block: 'center' });
+                        }
+                    };
+                    const head = makeGroupBar(
+                        open ? `酒馆剧情 · ${count} 楼${range} · 点击收起` : `酒馆剧情 · ${count} 楼${range} · 点击展开`,
+                        () => toggleGroup(false));
+                    head.dataset.group = key;
+                    area.insertBefore(head, g.members[0]);
+                    if (open) {
+                        const tail = makeGroupBar(`收起酒馆剧情（${count} 楼）`, () => toggleGroup(true));
+                        const last = g.members[g.members.length - 1];
+                        area.insertBefore(tail, last.nextSibling);
+                    }
+                }
+                // 盯着真正放卡片的这个容器（第一次找到、或 yuan 换了容器时重新盯）
+                if (groupObserver && observedArea !== area) observedArea = area;
             }
         } catch (e) {
             fail('整理酒馆剧情分组出错：' + e.message);
         } finally {
-            if (groupObserver) groupObserver.observe(area, { childList: true });
+            if (groupObserver) {
+                const area = observedArea || document.getElementById('message-area');
+                if (area) groupObserver.observe(area, { childList: true });
+            }
         }
     }
 
     // 保险：万一“监听页面变化”在某些浏览器里没触发，每 1.5 秒的检查里也看一眼——
-    // 聊天里有酒馆卡片却没有分组标题，就重新分一次组。只比对数量，很省事。
+    // 页面上有酒馆卡片却没有分组标题，就重新分一次组。只比对数量，很省事。
     function ensureGrouped() {
-        const area = document.getElementById('message-area');
-        if (!area) return;
-        const floors = area.querySelectorAll(':scope > .tavern-floor-wrapper, :scope > [data-tavern-floor]').length;
-        if (!floors) {
-            diagnoseGrouping(area);
-            return;
-        }
-        if (area.querySelectorAll(':scope > .tavern-group-bar').length) return;
+        const floors = document.querySelectorAll(FLOOR_SELECTOR).length;
+        if (!floors) return;
+        if (document.querySelectorAll('.tavern-group-bar').length) return;
         regroupTavernFloors();
-        // 分了组还是没有组标题 → 说明分组这步没起作用，报出来好排查（同一句话只会记一次）
-        if (!area.querySelectorAll(':scope > .tavern-group-bar').length) {
-            fail(`聊天里有 ${floors} 张酒馆剧情卡片，但整组折叠没能生效`);
+        if (!document.querySelectorAll('.tavern-group-bar').length) {
+            fail(`页面上有 ${floors} 张酒馆剧情卡片，但整组折叠没能生效`);
         }
-    }
-
-    // 找不到酒馆剧情卡片时的现场勘查：把聊天区里的真实情况报到“酒馆互联”页面，方便排查（只报一次）
-    let diagnosedKey = null;
-    function diagnoseGrouping(area) {
-
-        try {
-            if (typeof currentChatType === 'undefined' || currentChatType !== 'private' || !currentChatId) return;
-            const chatScreen = document.getElementById('chat-room-screen');
-            if (!chatScreen || !chatScreen.classList.contains('active')) return;
-            const char = db.characters.find(c => c.id === currentChatId);
-            const floorMsgs = char && Array.isArray(char.history) ? char.history.filter(m => m && m.fromTavern) : [];
-            if (!floorMsgs.length) return;
-            const key = currentChatId + ':' + area.children.length;
-            if (diagnosedKey === key) return;
-            diagnosedKey = key;
-            const ids = new Set(floorMsgs.map(m => m.id));
-            const found = document.querySelector('[data-id]') ? Array.from(document.querySelectorAll('[data-id]')).find(el => ids.has(el.dataset.id)) : null;
-            const kids = Array.from(area.children).slice(0, 6).map(el => el.tagName.toLowerCase() + '.' + (el.className || '(无类名)')).join(' ｜ ');
-            const where = found
-                ? `酒馆消息被画成了：${found.tagName.toLowerCase()}.${found.className || '(无类名)'}，它的上一层是 ${found.parentElement ? found.parentElement.tagName.toLowerCase() + '.' + (found.parentElement.className || '(无类名)') + (found.parentElement === area ? '（就是聊天区）' : '（不是聊天区）') : '没有'}`
-                : '聊天区里找不到任何一条酒馆消息的元素';
-            window.TavernSync.reportIssue(`当前显示的这一页里没有酒馆剧情卡片（聊天里共 ${floorMsgs.length} 条酒馆消息，可能要往上翻、点“加载更多”才会画出来）。${where}。聊天区前几个元素：${kids}`);
-        } catch (e) { /* 勘查失败就算了 */ }
     }
 
     function startTavernGrouping() {
         const area = document.getElementById('message-area');
         if (!area) return fail('找不到聊天消息区 #message-area，酒馆剧情不会整组折叠');
+        observedArea = area;
         groupObserver = new MutationObserver((records) => {
             // 只是我们自己插入/删除组头组尾引起的变化 → 不理会，否则会“分组 → 触发 → 再分组”无限循环
             const ours = (n) => n.nodeType === 1 && n.classList.contains('tavern-group-bar');
