@@ -1630,7 +1630,7 @@ function setupTavernSyncScreen() {
                 const d = new Date(ts);
                 return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
             };
-            const syncInfo = mem && mem.lastSync ? `小手机里有 ${floorCount} 楼酒馆剧情 · 上次同步 ${fmtSync(mem.lastSync)}` : '未同步';
+            const syncInfo = mem && mem.lastSync ? `小手机里有 ${floorCount} 楼酒馆剧情<br>上次同步 ${fmtSync(mem.lastSync)}` : '未同步';
             const maxMem = parseInt(char && char.maxMemory, 10) || 20;   // 这个角色在聊天设置里的“可见上文条数”
             return `<div style="${TS.card} padding:14px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -1638,13 +1638,13 @@ function setupTavernSyncScreen() {
                         <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}</div></div>
                     <button data-del="${i}" style="${TS.btnD}">✕</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                    <button data-pull="${i}" style="flex:1; ${TS.btnG}">从酒馆同步</button>
-                    <button data-push="${i}" style="flex:1; ${TS.btnB}">推送/清理小手机消息</button></div>
+                    <button data-pull="${i}" style="flex:1; ${TS.btnG}">同步酒馆剧情</button>
+                    <button data-push="${i}" style="flex:1; ${TS.btnB}">推送/清理消息</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
                     <button data-import-char="${i}" style="flex:1; ${TS.btnO}">导入酒馆人设</button>
                     <button data-import-wb="${i}" style="flex:1; ${TS.btnO}">导入酒馆世界书</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-                    <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:var(--primary-color, #cee4f1); color:var(--white-color, #2a3032); font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button>
+                    <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(156,39,176,0.15); color:#CE93D8; font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button>
                     <button data-reset="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(244,67,54,0.12); color:#f66; font-size:13px; font-weight:500; cursor:pointer;">清空并重选范围</button></div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-auto="autoPull" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPull') ? 'checked' : ''}>
@@ -2128,7 +2128,7 @@ async function showImportCharModal(binding) {
                 </div>
                 <select id="ic-persona-select" style="${TS.input} margin-top:4px;">
                     <option value="">-- 选择要导入的用户人设 --</option>
-                    <option value="__active__">当前激活的人设</option>
+                    <option value="__active__">酒馆中当前选中的人设</option>
                     ${opts}
                 </select>
                 <textarea id="ic-mypersona" style="${TS.input} height:80px; resize:vertical; margin-top:6px; font-size:12px;" placeholder="选择人设后显示内容..."></textarea>
@@ -2274,10 +2274,26 @@ async function showWorldBookModal(binding) {
     // ===== 条目列表 =====
     let currentSourceIdx = 0;
     const boxes = () => [...modal.querySelectorAll('#wb-entries input[type=checkbox]')];
-    const selectAllBtn = modal.querySelector('#wb-select-all');
-    function updateSelectAllLabel() {
-        const all = boxes();
-        selectAllBtn.textContent = (all.length && all.every(cb => cb.checked)) ? '取消全选' : '全选';
+    // 三个筛选按钮：点一下按条件选中并高亮，再点一下取消选中并取消高亮（和“推送/清理消息”窗口的页签一个样式）
+    const filterBtns = ['#wb-select-all', '#wb-select-enabled', '#wb-select-changed'].map(sel => modal.querySelector(sel));
+    let activeFilter = null;
+    function paintFilters() {
+        filterBtns.forEach(btn => {
+            const on = btn === activeFilter;
+            btn.style.background = on ? 'rgba(33,150,243,0.18)' : 'transparent';
+            btn.style.color = on ? '#2196F3' : 'inherit';
+            btn.style.borderColor = on ? 'rgba(33,150,243,0.5)' : 'rgba(255,255,255,0.15)';
+        });
+    }
+    function applyFilter(btn, pick) {
+        if (activeFilter === btn) {          // 再点一次：取消选中
+            boxes().forEach(cb => { cb.checked = false; });
+            activeFilter = null;
+        } else {
+            boxes().forEach((cb, i) => { cb.checked = pick(i); });
+            activeFilter = btn;
+        }
+        paintFilters();
     }
     function statusOf(src, e) {
         const copied = TavernSync.findCopiedWorldBook(binding, src.name, e.uid);
@@ -2301,29 +2317,26 @@ async function showWorldBookModal(binding) {
                 </div>
             </label>`;
         }).join('');
-        modal.querySelectorAll('.wb-tab').forEach((t, i) => t.style.background = i === srcIdx ? 'rgba(255,255,255,0.15)' : 'transparent');
-        updateSelectAllLabel();
+        paintTabs();
+        activeFilter = null;      // 换了来源，筛选重新算
+        paintFilters();
+    }
+    function paintTabs() {
+        modal.querySelectorAll('.wb-tab').forEach((t, i) => {
+            const on = i === currentSourceIdx;
+            t.style.background = on ? 'rgba(33,150,243,0.18)' : 'transparent';
+            t.style.color = on ? '#2196F3' : 'inherit';
+            t.style.borderColor = on ? 'rgba(33,150,243,0.5)' : 'rgba(255,255,255,0.15)';
+        });
     }
     renderEntries(0);
     modal.querySelectorAll('.wb-tab').forEach(tab => tab.addEventListener('click', () => renderEntries(parseInt(tab.dataset.tab))));
 
-    modal.querySelector('#wb-entries').addEventListener('change', updateSelectAllLabel);
-    selectAllBtn.addEventListener('click', () => {
-        const all = boxes();
-        const toCheck = !(all.length && all.every(cb => cb.checked));
-        all.forEach(cb => { cb.checked = toCheck; });
-        updateSelectAllLabel();
-    });
-    modal.querySelector('#wb-select-enabled').addEventListener('click', () => {
-        const entries = sources[currentSourceIdx].entries;
-        boxes().forEach((cb, i) => { cb.checked = !entries[i].disabled; });
-        updateSelectAllLabel();
-    });
-    modal.querySelector('#wb-select-changed').addEventListener('click', () => {
-        const src = sources[currentSourceIdx];
-        boxes().forEach((cb, i) => { cb.checked = statusOf(src, src.entries[i]).changed; });
-        updateSelectAllLabel();
-    });
+    // 自己手动勾选/取消时，筛选按钮的高亮就不再准确了，取消高亮
+    modal.querySelector('#wb-entries').addEventListener('change', () => { activeFilter = null; paintFilters(); });
+    filterBtns[0].addEventListener('click', () => applyFilter(filterBtns[0], () => true));
+    filterBtns[1].addEventListener('click', () => applyFilter(filterBtns[1], (i) => !sources[currentSourceIdx].entries[i].disabled));
+    filterBtns[2].addEventListener('click', () => applyFilter(filterBtns[2], (i) => statusOf(sources[currentSourceIdx], sources[currentSourceIdx].entries[i]).changed));
 
     const getSelected = () => boxes().filter(cb => cb.checked).map(cb => sources[currentSourceIdx].entries[parseInt(cb.dataset.idx)]);
 
