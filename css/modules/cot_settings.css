@@ -1,0 +1,344 @@
+/* CoT Settings Styles */
+
+.cot-items-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.cot-item-card {
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 10px;
+    padding: 12px 15px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.cot-item-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    border-color: #e0e0e0;
+}
+
+/* 拖拽状态样式 */
+.cot-item-card.draggable {
+    cursor: grab;
+}
+.cot-item-card.draggable:active {
+    cursor: grabbing;
+}
+.cot-item-card.dragging {
+    opacity: 0.5;
+    border: 1px dashed var(--primary-color);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+}
+.cot-item-card.drag-over-top {
+    border-top: 2px solid var(--primary-color);
+}
+.cot-item-card.drag-over-bottom {
+    border-bottom: 2px solid var(--primary-color);
+}
+
+/* 锁定条目样式 */
+.cot-item-card.locked {
+    background: #fcfcfc;
+    border-left: 3px solid var(--primary-color);
+}
+
+.cot-item-card.locked .cot-item-name {
+    color: #333;
+    font-weight: 600;
+}
+
+.cot-item-card.locked::after {
+    content: "🔒";
+    position: absolute;
+    right: 10px;
+    top: 5px;
+    font-size: 10px;
+    opacity: 0.3;
+    pointer-events: none;
+}
+
+/* 拖拽把手 (虽然目前是点击排序，预留样式) */
+.cot-drag-handle {
+    color: #ccc;
+    cursor: grab;
+    font-size: 18px;
+    line-height: 1;
+}
+
+/* 内容区域 */
+.cot-item-content {
+    flex: 1;
+    min-width: 0; /* 防止文本溢出 */
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cot-item-name {
+    font-size: 15px;
+    font-weight: 500;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cot-item-preview {
+    font-size: 12px;
+    color: #999;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cot-config-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    padding: 12px 15px !important;
+}
+
+/* 带有开关的行在两行布局下，下行靠右展示或者整行撑开 */
+.cot-config-row:has(.kkt-switch) {
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+}
+
+.cot-config-row .kkt-item-label {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.cot-config-row:has(.kkt-switch) .kkt-item-label {
+    width: auto;
+    flex: 1;
+    min-width: 0;
+}
+
+.cot-config-row .kkt-item-label p {
+    margin: 2px 0 0;
+    color: #999;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.4;
+}
+
+.cot-config-row .kkt-item-control {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+.cot-config-row:has(.kkt-switch) .kkt-item-control {
+    width: auto;
+    flex-shrink: 0;
+    justify-content: flex-end;
+}
+
+.cot-compact-select,
+.cot-mini-input,
+.cot-tiny-input,
+.cot-mini-textarea,
+.cot-item-editor-window select,
+.cot-item-editor-window input,
+.cot-item-editor-window textarea {
+    box-sizing: border-box;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: var(--panel-bg, #fff);
+    color: inherit;
+    font: inherit;
+}
+
+.cot-config-row .cot-compact-select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: 38px;
+    padding: 6px 28px 6px 10px;
+    font-size: 13px;
+    background-color: #fafafa;
+    transition: border-color 0.2s, background-color 0.2s;
+}
+
+.cot-config-row .cot-compact-select:focus {
+    border-color: var(--primary-color, #2563eb);
+    background-color: #ffffff;
+    outline: none;
+}
+
+.cot-config-row .cot-mini-input,
+.cot-config-row .cot-mini-textarea {
+    width: 100%;
+    max-width: 100%;
+    padding: 7px 10px;
+    font-size: 13px;
+    border-radius: 8px;
+}
+
+.cot-compact-select { min-width: 132px; padding: 6px 24px 6px 8px; font-size: 12px; }
+.cot-mini-input, .cot-mini-textarea { width: min(250px, 100%); padding: 6px 8px; font-size: 12px; }
+.cot-tiny-input { width: 92px; padding: 6px; font-size: 11px; }
+.cot-inline-controls { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; min-width: 0; }
+.cot-inline-controls > * { flex: 1 1 120px; min-width: 0; }
+.cot-advanced-toggle-wrap { display: flex; justify-content: flex-end; padding: 8px 12px; }
+.cot-advanced-options { border-top: 1px solid #f0f0f0; }
+.cot-save-policy-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 12px; }
+#cot-policy-status { min-width: 0; color: #888; font-size: 11px; overflow-wrap: anywhere; }
+
+.cot-item-editor-window { width: min(620px, calc(100vw - 24px)); max-height: min(86vh, 760px); overflow-y: auto; }
+.cot-item-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; }
+.cot-item-editor-window .form-group { min-width: 0; }
+.cot-item-editor-window .form-group select,
+.cot-item-editor-window .form-group input,
+.cot-item-editor-window .form-group textarea { width: 100%; padding: 7px 8px; }
+.cot-item-scope-fieldset { margin: 10px 0; padding: 9px 10px; border: 1px solid #ececec; border-radius: 8px; }
+.cot-item-scope-fieldset legend { padding: 0 5px; color: #666; font-size: 12px; }
+.cot-check-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.cot-check-grid label { min-width: 0; font-size: 12px; color: #555; overflow-wrap: anywhere; }
+.cot-check-grid input { width: auto !important; margin: 0 3px 0 0; vertical-align: middle; }
+.cot-editor-notice { margin: 9px 0; padding: 8px 10px; border-radius: 7px; background: #fff8e6; color: #8a6818; font-size: 11px; line-height: 1.45; }
+.cot-choice-overlay { align-items: center; justify-content: center; z-index: 100000; }
+.cot-choice-window { box-sizing: border-box; width: min(90%, 330px); padding: 16px; }
+.cot-choice-window h3 { margin: 0 0 7px; color: #333; font-size: 15px; text-align: left; }
+.cot-choice-window p { margin: 0 0 12px; color: #888; font-size: 11px; line-height: 1.45; }
+.cot-choice-actions { display: flex; flex-direction: column; gap: 7px; }
+.cot-choice-actions .btn { width: 100%; margin: 0; padding: 8px 10px; font-size: 12px; }
+
+@media (max-width: 390px) {
+    .cot-item-editor-grid { grid-template-columns: 1fr; }
+    .cot-check-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cot-inline-controls > * { flex: 1 1 100%; min-width: 0; }
+}
+
+.cot-thinking-visible { margin: 5px 0; }
+.cot-thinking-details { max-width: min(86%, 520px); margin-left: 44px; border: 1px solid rgba(0,0,0,.08); border-radius: 9px; background: rgba(255,255,255,.72); color: #777; font-size: 12px; }
+.cot-thinking-details summary { cursor: pointer; padding: 7px 10px; list-style-position: inside; }
+.cot-thinking-body { padding: 0 10px 9px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+
+@media (max-width: 390px) {
+    .cot-thinking-details { max-width: calc(100vw - 64px); margin-left: 34px; }
+}
+
+/* 按钮组 */
+.cot-btn-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.cot-icon-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: #f5f5f5;
+    color: #666;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    padding: 0;
+}
+
+.cot-icon-btn:hover:not(:disabled) {
+    background: #e0e0e0;
+    color: #333;
+}
+
+.cot-icon-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.cot-icon-btn.danger:hover {
+    background: #fee;
+    color: #d32f2f;
+}
+
+.cot-icon-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* 模态框只读样式 */
+.cot-readonly-textarea {
+    background-color: #f9f9f9;
+    color: #666;
+    cursor: default;
+}
+
+.cot-lock-notice {
+    font-size: 12px;
+    color: #d32f2f;
+    background: #fff0f0;
+    padding: 8px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* 标题栏操作按钮样式 */
+.cot-help-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #e0e0e0;
+    color: #666;
+    border: none;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.cot-help-btn:hover {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+/* XML 说明内容样式 */
+.xml-tag-item {
+    margin-bottom: 15px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+
+.xml-tag-item:last-child {
+    border-bottom: none;
+}
+
+.xml-tag-item code {
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #d63384;
+    font-family: monospace;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.xml-tag-item p {
+    margin: 5px 0 0 0;
+    font-size: 13px;
+    color: #555;
+}

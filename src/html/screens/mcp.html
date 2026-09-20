@@ -1,0 +1,58 @@
+<div id="mcp-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="home-screen" aria-label="返回">‹</button>
+                <div class="title-container"><h1 class="title">MCP</h1></div>
+                <button class="action-btn" id="mcp-add-btn" aria-label="添加连接">＋</button>
+            </header>
+            <main class="content mcp-content">
+                <section class="mcp-engine-card" aria-live="polite">
+                    <div class="mcp-engine-glow"></div>
+                    <div class="mcp-engine-header">
+                        <div class="mcp-pulse-wrapper">
+                            <span id="mcp-summary-dot" class="mcp-summary-dot"></span>
+                            <span class="mcp-pulse-ring"></span>
+                        </div>
+                        <div class="mcp-engine-title-group">
+                            <h2 id="mcp-summary-title">尚未连接</h2>
+                            <p id="mcp-summary-detail">0 个连接 · 0 个工具</p>
+                        </div>
+                    </div>
+                    <div class="mcp-engine-metrics">
+                        <div class="mcp-metric-item">
+                            <span class="mcp-metric-val" id="mcp-metric-active">0</span>
+                            <span class="mcp-metric-lbl">在线节点</span>
+                        </div>
+                        <div class="mcp-metric-sep"></div>
+                        <div class="mcp-metric-item">
+                            <span class="mcp-metric-val" id="mcp-metric-tools">0</span>
+                            <span class="mcp-metric-lbl">挂载工具</span>
+                        </div>
+                        <div class="mcp-metric-sep"></div>
+                        <div class="mcp-metric-item">
+                            <span class="mcp-metric-val" id="mcp-metric-calls">0</span>
+                            <span class="mcp-metric-lbl">通信流水</span>
+                        </div>
+                    </div>
+                </section>
+                <nav class="mcp-tabs mcp-tabs-pill" aria-label="MCP 页面">
+                    <button class="active" data-mcp-tab="connections">连接</button><button data-mcp-tab="tools">工具</button><button data-mcp-tab="activity">活动</button><button data-mcp-tab="settings">设置</button>
+                </nav>
+                <div id="mcp-panel" class="mcp-panel-root"></div>
+                <input id="mcp-import-input" type="file" accept="application/json,.json" hidden>
+            </main>
+        </div>
+        <div id="mcp-sheet" class="mcp-sheet-overlay" aria-hidden="true">
+            <div class="mcp-sheet" role="dialog" aria-modal="true" aria-labelledby="mcp-sheet-title">
+                <div class="mcp-sheet-head">
+                    <h2 id="mcp-sheet-title"></h2>
+                    <button id="mcp-sheet-close" class="mcp-sheet-close-btn" type="button" aria-label="关闭">
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div id="mcp-sheet-body" class="mcp-sheet-body"></div>
+                <div id="mcp-sheet-actions" class="mcp-sheet-actions"></div>
+            </div>
+        </div>

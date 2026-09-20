@@ -1,0 +1,586 @@
+        <div id="tutorial-screen" class="screen">
+            <header class="app-header"><button class="back-btn" data-target="home-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">教程</h1>
+                </div>
+                <div class="placeholder"></div>
+            </header>
+            <main class="content" id="tutorial-content-area"></main>
+        </div>
+        <div id="toast-notification" class="toast">
+            <img class="toast-avatar" src="" alt="avatar">
+            <div class="toast-content">
+                <div class="toast-name"></div>
+                <div class="toast-message"></div>
+            </div>
+        </div>
+        <input type="file" id="image-upload-input" accept="image/*" multiple style="display:none;">
+        <input type="file" id="camera-upload-input" accept="image/*" capture="environment" style="display:none;">
+
+        <!-- Profile Card Modal -->
+        <div id="profile-card-modal" class="modal-overlay">
+            <div class="modal-window">
+                <div class="pc-header" id="pc-header" title="点击更换背景图">
+                    <img src="" class="pc-avatar" id="pc-avatar">
+                </div>
+                <div class="pc-content">
+                    <div class="pc-name" id="pc-name">Character Name</div>
+                    <div class="pc-remark" id="pc-remark">@RemarkName</div>
+
+                    <div class="pc-stats-grid">
+                        <div class="pc-stat-item">
+                            <span class="pc-stat-value" id="pc-stat-msg-count">0</span>
+                            <span class="pc-stat-label">消息</span>
+                        </div>
+                        <div class="pc-stat-item pc-stat-token-wrap" id="pc-stat-token-click" title="点击查看 Token 分布">
+                            <span class="pc-stat-value" id="pc-stat-memory">0</span>
+                            <span class="pc-stat-label">Token</span>
+                        </div>
+                        <div class="pc-stat-item">
+                            <span class="pc-stat-value" id="pc-stat-last-chat">-</span>
+                            <span class="pc-stat-label">最近</span>
+                        </div>
+                    </div>
+
+                    <div class="pc-persona-box">
+                        <span class="pc-persona-label">人设档案</span>
+                        <span id="pc-persona-text">...</span>
+                    </div>
+
+                    <div class="pc-actions">
+                        <button class="pc-btn-primary" id="pc-message-btn">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"></path>
+                            </svg>
+                            发消息
+                        </button>
+                        <!-- 预留更多操作按钮 -->
+                        <button class="pc-btn-secondary" id="pc-settings-btn" title="设置">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path
+                                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                                </path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 资料卡背景图更换弹窗 -->
+        <div id="pc-banner-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>更换卡片背景</h3>
+                <form id="pc-banner-form">
+                    <div id="pc-banner-preview"
+                        style="width: 100%; height: 150px; border: 2px dashed #ddd; border-radius: 10px; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; color: #aaa; background-size: cover; background-position: center;">
+                        <span>预览</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="pc-banner-url-input">图片URL</label>
+                        <input type="url" id="pc-banner-url-input" class="form-group" placeholder="粘贴图片URL">
+                    </div>
+                    <p style="text-align:center; color:#888; margin: -10px 0 15px;">或</p>
+                    <input type="file" id="pc-banner-file-input" accept="image/*" style="display:none;">
+                    <label for="pc-banner-file-input" class="btn btn-secondary" style="width:100%; margin-bottom: 10px;">从本地上传</label>
+                    <button type="submit" class="btn btn-primary" style="margin-bottom: 8px;">保存</button>
+                    <button type="button" class="btn btn-neutral" id="pc-banner-reset-btn">重置为默认</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Token 分布弹窗（点击角色资料卡 Token 打开） -->
+        <div id="token-distribution-modal" class="modal-overlay">
+            <div class="modal-window token-distribution-window">
+                <h3 class="token-distribution-title">Token 分布</h3>
+                <div class="token-chart-summary">
+                    <div id="token-chart-container"></div>
+                    <div class="token-total-row">
+                        <span class="token-total-label">合计</span>
+                        <strong id="token-distribution-total" class="token-total-value">0</strong>
+                        <span class="token-total-unit">Token</span>
+                    </div>
+                </div>
+                <div class="token-details-list" id="token-details-list"></div>
+                <div class="token-detail-desc" id="token-detail-desc"></div>
+                <button type="button" class="btn btn-neutral token-distribution-close" id="token-distribution-close-btn">关闭</button>
+            </div>
+        </div>
+
+        <!-- Capture Result Modal -->
+        <div id="capture-result-modal" class="modal-overlay">
+            <div class="modal-window" style="max-width: 90%; width: 400px;">
+                <h3>截图生成成功</h3>
+                <div id="capture-preview-container"
+                    style="max-height: 60vh; overflow-y: auto; margin: 15px 0; border: 1px solid #eee; border-radius: 8px; display: flex; justify-content: center; background: #f9f9f9;">
+                    <!-- Image will be injected here -->
+                </div>
+                <p style="font-size: 12px; color: #999; text-align: center; margin-bottom: 15px;">长按图片可保存到手机</p>
+                <div style="display: flex; gap: 10px;">
+                    <button id="download-capture-btn" class="btn btn-secondary" style="flex: 1;">下载图片</button>
+                    <button id="close-capture-modal-btn" class="btn btn-primary" style="flex: 1;">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Message Edit Modal -->
+        <div id="message-edit-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>编辑消息</h3>
+                <form id="message-edit-form">
+                    <div class="form-group" style="margin-bottom: 8px;">
+                        <div class="format-toolbar" style="display:flex; gap:5px; flex-wrap:wrap;">
+                            <button type="button" class="btn btn-small btn-secondary" onclick="insertFormatText('message-edit-textarea', 'voice')" style="padding:4px 8px;">插入语音</button>
+                            <button type="button" class="btn btn-small btn-secondary" onclick="insertFormatText('message-edit-textarea', 'quote')" style="padding:4px 8px;">插入引用</button>
+                            <button type="button" class="btn btn-small btn-secondary" onclick="insertFormatText('message-edit-textarea', 'visual')" style="padding:4px 8px;">插入动作</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <textarea id="message-edit-textarea" rows="6" required></textarea>
+                    </div>
+                    <!-- 新增：时间戳编辑输入框，默认隐藏 -->
+                    <div class="form-group" id="message-edit-timestamp-group" style="display: none; margin-top: 10px;">
+                        <label for="message-edit-timestamp" style="font-size: 12px; color: #666;">消息时间
+                            (修改可能影响排序)</label>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <input type="datetime-local" id="message-edit-timestamp" step="1" style="flex: 1;">
+                            <button type="button" id="hide-timestamp-btn" class="btn btn-neutral"
+                                style="padding: 8px 12px; font-size: 12px; white-space: nowrap; display: none;"
+                                title="将时间设置为上一条消息+1分钟">隐藏时间戳</button>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <!-- 新增的删除按钮，默认隐藏 -->
+                        <button type="button" id="debug-delete-msg-btn" class="btn btn-danger"
+                            style="flex: 1; display: none;">删除</button>
+                        <button type="button" id="insert-message-below-btn" class="btn btn-secondary" style="flex: 1;">新增消息</button>
+                        <button type="submit" class="btn btn-primary" style="flex: 1;">保存</button>
+                        <button type="button" id="cancel-edit-modal-btn" class="btn btn-neutral"
+                            style="flex: 1;">取消</button>
+                    </div>
+
+                </form>
+            </div>
+        </div>
+
+        <!-- Insert Message Modal -->
+        <div id="insert-message-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>新增消息</h3>
+                <form id="insert-message-form">
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="font-size: 13px; color: #666; margin-bottom: 6px; display: block;">发送者身份</label>
+                        <div class="radio-group-pills">
+                            <input type="radio" id="insert-sender-char" name="insert-sender-role" value="char" checked>
+                            <label for="insert-sender-char" style="font-size: 13px; padding: 4px 12px;">对方</label>
+                            <input type="radio" id="insert-sender-me" name="insert-sender-role" value="user">
+                            <label for="insert-sender-me" style="font-size: 13px; padding: 4px 12px;">我</label>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 8px;">
+                        <div class="format-toolbar" style="display:flex; gap:5px; flex-wrap:wrap;">
+                            <button type="button" class="btn btn-small btn-secondary" onclick="insertFormatText('insert-message-textarea', 'voice')" style="padding:4px 8px;">插入语音</button>
+                            <button type="button" class="btn btn-small btn-secondary" onclick="insertFormatText('insert-message-textarea', 'quote')" style="padding:4px 8px;">插入引用</button>
+                            <button type="button" class="btn btn-small btn-secondary" onclick="insertFormatText('insert-message-textarea', 'visual')" style="padding:4px 8px;">插入动作</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <textarea id="insert-message-textarea" rows="6" placeholder="请输入新消息内容..." required></textarea>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary" style="flex: 1;">确定插入</button>
+                        <button type="button" id="cancel-insert-modal-btn" class="btn btn-neutral" style="flex: 1;">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="add-char-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>创建新角色</h3>
+                <form id="add-char-form">
+                    <div class="form-group">
+                        <label for="char-real-name">角色姓名</label><input type="text" id="char-real-name"
+                            placeholder="角色的真实姓名" required>
+                    </div>
+                    <div class="form-group" style="display: flex; align-items: center; justify-content: space-between;">
+                        <label for="char-birthday">角色生日 (如: 2000-01-01)</label>
+                        <input type="date" id="char-birthday" style="flex: 1; margin-left: 10px;">
+                    </div>
+                    <div class="form-group" style="display: flex; align-items: center; justify-content: space-between;">
+                        <label for="char-enable-dynamic-age" style="margin-bottom: 0;">开启动态年龄提示词注入</label>
+                        <label class="kkt-switch" style="margin-bottom: 0;">
+                            <input type="checkbox" id="char-enable-dynamic-age">
+                            <span class="kkt-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="char-remark-name">角色备注 (昵称)</label><input type="text" id="char-remark-name"
+                            placeholder="你对Ta的称呼" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="my-name-for-char">我的姓名</label><input type="text" id="my-name-for-char"
+                            placeholder="你希望Ta如何称呼你" required>
+                    </div>
+                    <div class="form-group" id="char-persona-group" style="display:none;">
+                        <label for="char-persona-input">角色描述</label>
+                        <div id="char-persona-import-hint"
+                            style="display:none; background:#f0f8ff; border:1px solid #b8d9f5; border-radius:8px; padding:8px 12px; margin-bottom:8px; font-size:12px; color:#4a7fa5;">
+                            📄 已从文档导入内容，可在此编辑后点击创建
+                        </div>
+                        <textarea id="char-persona-input" rows="3" placeholder="角色描述内容..."
+                            style="width:100%; max-height:140px; overflow-y:auto; border:1px solid #eee; border-radius:8px; padding:8px; box-sizing:border-box; font-family:inherit; font-size:14px; resize:vertical;"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">创建</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Import Confirm Modal -->
+        <div id="import-confirm-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>确认角色信息</h3>
+                <form id="import-confirm-form">
+                    <div class="form-group">
+                        <label for="import-char-name">角色真名 (Real Name)</label>
+                        <input type="text" id="import-char-name" required>
+                        <p style="font-size: 12px; color: #888; margin-top: 5px;">这是系统识别角色的唯一标识，创建后不可修改，请谨慎确认。</p>
+                    </div>
+                    <div class="form-group import-greeting-option">
+                        <div class="import-greeting-card">
+                            <label for="import-greeting-checkbox" class="import-greeting-label">
+                                <input type="checkbox" id="import-greeting-checkbox" checked class="import-greeting-checkbox">
+                                <span class="import-greeting-label-text">导入开场白</span>
+                            </label>
+                            <p class="import-greeting-hint">取消勾选则不导入任何开场白，对话从空记录开始。</p>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary" style="flex: 1;">确认导入</button>
+                        <button type="button" id="cancel-import-btn" class="btn btn-neutral"
+                            style="flex: 1;">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <!-- Create Character Method Selection Action Sheet -->
+        <div id="create-char-method-sheet" class="action-sheet-overlay">
+            <div class="action-sheet">
+                <div class="action-sheet-title">创建新角色</div>
+                <button class="action-sheet-button" id="method-manual-btn">手动创建</button>
+                <button class="action-sheet-button" id="method-import-doc-btn">导入文档</button>
+                <button class="action-sheet-button" id="method-import-ovo-card-btn">导入专属角色卡（非酒馆）</button>
+                <button class="action-sheet-button danger" id="method-cancel-btn">取消</button>
+            </div>
+        </div>
+
+        <!-- Document Import - File Selection Modal -->
+        <div id="doc-import-select-modal" class="modal-overlay">
+            <div class="modal-window" style="max-width: 95%; width: 420px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+                    <h3 style="margin: 0;">选择导入文件</h3>
+                    <button id="doc-import-close-btn"
+                        style="background:none; border:none; font-size:20px; cursor:pointer; color:#999;">×</button>
+                </div>
+                <p style="font-size:13px; color:#888; margin-bottom:15px;">支持 TXT、DOCX、ZIP（ZIP内仅解析TXT/DOCX）</p>
+                <div id="doc-import-drop-zone"
+                    style="border: 2px dashed #ddd; border-radius: 12px; padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 15px;">
+                    <div style="font-size: 36px; margin-bottom: 8px;">📂</div>
+                    <div style="color: #666; font-size: 14px;">点击选择文件 或 拖拽到此处</div>
+                    <div style="color: #bbb; font-size: 12px; margin-top: 5px;">支持多选，可混合格式</div>
+                </div>
+                <input type="file" id="doc-import-file-input" multiple accept=".txt,.docx,.zip" style="display:none;">
+                <div id="doc-import-file-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 15px;"></div>
+                <div style="display:flex; gap:10px;">
+                    <button id="doc-import-start-btn" class="btn btn-primary" style="flex:1;" disabled>开始解析</button>
+                    <button id="doc-import-cancel-btn" class="btn btn-neutral" style="flex:1;">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Document Import - Parse Preview Modal (single file preview) -->
+        <div id="doc-preview-modal" class="modal-overlay">
+            <div class="modal-window" style="max-width: 95%; width: 450px;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                    <div style="font-size: 20px;">📄</div>
+                    <div>
+                        <div style="font-weight: 600; font-size: 15px;" id="doc-preview-filename">文件名</div>
+                        <div style="font-size: 12px; color: #888;" id="doc-preview-progress">第 1 / 1 个</div>
+                    </div>
+                </div>
+                <label
+                    style="font-size: 13px; color: #666; margin-bottom: 6px; display: block;">解析内容预览（将自动填入角色描述）</label>
+                <textarea id="doc-preview-content" rows="10"
+                    style="width:100%; border:1px solid #eee; border-radius:8px; padding:10px; font-size:13px; resize:vertical; box-sizing:border-box; font-family: inherit;"></textarea>
+                <div style="display:flex; gap:8px; margin-top:15px;">
+                    <button id="doc-preview-confirm-btn" class="btn btn-primary" style="flex:2;">✓ 确定，进入创建</button>
+                    <button id="doc-preview-skip-btn" class="btn btn-neutral" style="flex:1;">跳过</button>
+                    <button id="doc-preview-cancel-btn" class="btn btn-danger" style="flex:1;">取消全部</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Batch Recognize Progress Modal -->
+        <div id="batch-recognize-progress-modal" class="modal-overlay" style="z-index: 10005;">
+            <div class="modal-window" style="text-align: center; max-width: 300px;">
+                <h3>正在批量识别表情包</h3>
+                <div style="margin: 15px 0;">
+                    <div class="spinner" style="display: inline-block; border-top-color: var(--primary-color);"></div>
+                </div>
+                <div id="batch-recognize-progress-text" style="font-size: 14px; color: #666;">处理中... (0/0)</div>
+                <div style="margin-top: 20px;">
+                    <button id="cancel-batch-recognize-btn" class="btn btn-neutral" style="width: 100%;">终止</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Character Modal with Persona prefill support -->
+        <div id="add-sticker-modal" class="modal-overlay">
+            <div class="modal-window" style="max-height: 85vh; overflow-y: auto;">
+                <h3 id="add-sticker-modal-title">添加新表情</h3>
+                <form id="add-sticker-form"><input type="hidden" id="sticker-edit-id">
+                    <div id="sticker-preview"><span>预览</span></div>
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                        <button type="button" id="sticker-ai-recognize-btn" class="btn btn-small btn-secondary" style="padding: 4px 8px;">识别画面描述</button>
+                    </div>
+                    <div class="form-group"><label for="sticker-name">表情名称</label><input type="text" id="sticker-name"
+                            placeholder="如：开心" required></div>
+                    <div class="form-group"><label for="sticker-group">分组名称</label><input type="text" id="sticker-group"
+                            placeholder="如：猫猫组 (选填)"></div>
+                    <div class="form-group"><label for="sticker-description">画面描述 (发给AI看，选填)</label><textarea id="sticker-description" rows="2" placeholder="如：一个猫猫在哭泣"></textarea></div>
+
+                    <div class="form-group"><label for="sticker-url-input">表情URL</label><input type="url"
+                            id="sticker-url-input" placeholder="粘贴图片URL">
+                    </div>
+                    <p style="text-align:center; color:#888; margin: -10px 0 15px;">或</p><input type="file"
+                        id="sticker-file-upload" accept="image/*" style="display:none;"><label for="sticker-file-upload"
+                        class="btn btn-secondary" style="width:100%; margin-bottom: 20px;">从本地上传</label>
+                    <div style="display: flex; gap: 10px;">
+                        <button type="button" class="btn btn-neutral" id="cancel-sticker-edit-btn" style="flex: 1;">取消</button>
+                        <button type="submit" class="btn btn-primary" style="flex: 1;">保存</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div id="sticker-actionsheet" class="action-sheet-overlay">
+            <div class="action-sheet">
+                <button class="action-sheet-button" id="edit-sticker-btn">编辑</button>
+                <button class="action-sheet-button danger" id="delete-sticker-btn">删除</button>
+            </div>
+        </div>
+        <!-- Batch Add Sticker Modal -->
+        <div id="batch-add-sticker-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>批量导入表情</h3>
+                <form id="batch-add-sticker-form">
+                    <div class="form-group">
+                        <label for="batch-sticker-group">分组名称 (本批次所有表情将归入此组)</label>
+                        <input type="text" id="batch-sticker-group" placeholder="如：通用组">
+                    </div>
+                    <div class="form-group">
+                        <label for="sticker-urls-textarea">数据格式：名称:URL（支持宽泛格式，如 名称：URL、名称 URL、名称URL 等）</label>
+                        <textarea id="sticker-urls-textarea" rows="8"
+                            placeholder="例如：&#10;开心:https://example.com/happy.gif&#10;哭泣:https://example.com/cry.png"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">开始导入</button>
+                    <p style="text-align:center; color:#888; margin: 12px 0 0;">或</p>
+                    <button type="button" id="sticker-doc-import-open-btn" class="btn btn-secondary" style="width:100%; margin-top:8px;">从文档导入 (TXT / DOCX / ZIP)</button>
+                </form>
+            </div>
+        </div>
+        <!-- Sticker Doc Import: file select -->
+        <div id="sticker-doc-import-modal" class="modal-overlay">
+            <div class="modal-window" style="max-width: 95%; width: 420px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <h3 style="margin: 0;">导入文档表情包</h3>
+                    <button id="sticker-doc-import-close-btn"
+                        style="background:none; border:none; font-size:20px; cursor:pointer; color:#999;">×</button>
+                </div>
+                <p style="font-size:13px; color:#888; margin-bottom:15px;">支持 TXT、DOCX、ZIP（ZIP 内仅解析 TXT/DOCX），每行一条：名称+URL，格式宽泛</p>
+                <div id="sticker-doc-import-drop-zone"
+                    style="border: 2px dashed #ddd; border-radius: 12px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 15px;">
+                    <div style="font-size: 32px; margin-bottom: 6px;">📂</div>
+                    <div style="color: #666; font-size: 14px;">点击选择文件 或 拖拽到此处</div>
+                    <div style="color: #bbb; font-size: 12px; margin-top: 4px;">支持多选，可混合格式</div>
+                </div>
+                <input type="file" id="sticker-doc-import-file-input" multiple accept=".txt,.docx,.zip" style="display:none;">
+                <div id="sticker-doc-import-file-list" style="max-height: 180px; overflow-y: auto; margin-bottom: 15px;"></div>
+                <div style="display:flex; gap:10px;">
+                    <button id="sticker-doc-import-start-btn" class="btn btn-primary" style="flex:1;" disabled>开始解析</button>
+                    <button id="sticker-doc-import-cancel-btn" class="btn btn-neutral" style="flex:1;">取消</button>
+                </div>
+            </div>
+        </div>
+        <!-- Sticker Doc Import: parse result preview -->
+        <div id="sticker-doc-preview-modal" class="modal-overlay">
+            <div class="modal-window" style="max-width: 95%; width: 480px; max-height: 85vh; display: flex; flex-direction: column;">
+                <h3 style="margin: 0 0 10px 0;">解析结果预览</h3>
+                <div class="form-group" style="margin-bottom: 10px;">
+                    <label for="sticker-doc-preview-group">分组名称（本批次归入此组）</label>
+                    <input type="text" id="sticker-doc-preview-group" placeholder="如：通用组">
+                </div>
+                <div style="font-size: 12px; color: #888; margin-bottom: 8px;">共 <span id="sticker-doc-preview-count">0</span> 条，确认后将加入表情包</div>
+                <div id="sticker-doc-preview-list" style="flex:1; overflow-y: auto; max-height: 320px; border: 1px solid #eee; border-radius: 8px; padding: 8px; background: #fafafa;"></div>
+                <div style="display:flex; gap:8px; margin-top: 15px;">
+                    <button id="sticker-doc-preview-confirm-btn" class="btn btn-primary" style="flex:2;">确认导入</button>
+                    <button id="sticker-doc-preview-cancel-btn" class="btn btn-neutral" style="flex:1;">取消</button>
+                </div>
+            </div>
+        </div>
+        <div id="send-voice-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>发送语音消息</h3>
+                <form id="send-voice-form">
+                    <div class="form-group">
+                        <label for="voice-text-input">输入语音文字</label>
+                        <textarea id="voice-text-input" placeholder="在这里输入你想说的话..." required rows="4"></textarea>
+                    </div>
+                    <div class="form-group" style="text-align:center; color:#888; font-size: 14px;">
+                        预计时长: <span id="voice-duration-preview">0"</span>
+                    </div>
+                    <button type="submit" class="btn btn-primary">发送</button>
+                </form>
+            </div>
+        </div>
+        <div id="send-pv-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>分享照片/视频</h3>
+                <form id="send-pv-form">
+                    <div class="form-group">
+                        <label for="pv-text-input">输入描述</label>
+                        <textarea id="pv-text-input" placeholder="在这里描述你的照片或视频内容..." required rows="4"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">发送</button>
+                </form>
+            </div>
+        </div>
+        <div id="send-transfer-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>转账</h3>
+                <form id="send-transfer-form">
+                    <div class="form-group" id="transfer-payment-method-group">
+                        <label>支付方式</label>
+                        <div class="payment-method-list" id="transfer-payment-methods"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="transfer-amount-input">金额 (元)</label>
+                        <input type="number" id="transfer-amount-input" placeholder="0.00" required step="0.01"
+                            min="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label for="transfer-remark-input">备注</label>
+                        <input type="text" id="transfer-remark-input" placeholder="（选填）">
+                    </div>
+                    <button type="submit" class="btn btn-primary">发送</button>
+                </form>
+            </div>
+        </div>
+        <div id="send-gift-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>送出礼物</h3>
+                <form id="send-gift-form">
+                    <div class="form-group">
+                        <label for="gift-description-input">礼物描述</label>
+                        <textarea id="gift-description-input" placeholder="告诉Ta你送了什么特别的东西..." required
+                            rows="4"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">发送</button>
+                </form>
+            </div>
+        </div>
+        <div id="send-location-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>发送定位</h3>
+                <form id="send-location-form">
+                    <div class="form-group">
+                        <label for="location-place-input">当前位置 <span class="hint">(必填)</span></label>
+                        <input type="text" id="location-place-input" placeholder="输入你当前所在的位置..." required>
+                    </div>
+                    <div class="form-group">
+                        <label for="location-distance-input">距你约 <span class="hint">(选填)</span></label>
+                        <div class="location-distance-row">
+                            <input type="number" id="location-distance-input" class="location-distance-num" placeholder="数字" min="0" step="any">
+                            <select id="location-unit-select" class="location-unit-select">
+                                <option value="米">米</option>
+                                <option value="千米" selected>千米</option>
+                                <option value="公里">公里</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">发送</button>
+                </form>
+            </div>
+        </div>
+        <!-- NEW: Time Skip Modal -->
+        <div id="time-skip-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>记录今天发生的事</h3>
+                <form id="time-skip-form">
+                    <div class="form-group">
+                        <label for="time-skip-input">事件描述 (该消息AI可见，会作为上下文)</label>
+                        <textarea id="time-skip-input" placeholder="例如：我们一起去山顶看了日落，然后吃了烧烤。" required
+                            rows="4"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">发送</button>
+                </form>
+            </div>
+        </div>
+        <!-- NEW: Group Recipient Selection Modal -->
+        <div id="group-recipient-selection-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3 id="group-recipient-selection-title">选择收件人</h3>
+                <ul id="group-recipient-selection-list"></ul>
+                <button class="btn btn-primary" id="confirm-group-recipient-btn" style="margin-top: 20px;">确认</button>
+            </div>
+        </div>
+
+        <!-- 转发消息选择目标模态框 -->
+        <div id="forward-message-modal" class="modal-overlay">
+            <div class="modal-window" style="max-height: 80vh; display: flex; flex-direction: column;">
+                <h3>选择转发对象（可多选）</h3>
+                <div class="form-group" style="margin-bottom: 10px;">
+                    <input type="text" id="forward-search-input" placeholder="搜索联系人或群聊..." style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #eee;">
+                </div>
+                <ul id="forward-target-list" class="member-selection-list" style="flex: 1; overflow-y: auto; padding: 0; margin: 0; border: 1px solid #eee; border-radius: 8px; padding: 5px;"></ul>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button class="btn btn-primary" id="confirm-forward-btn" style="flex:1;">确认转发</button>
+                    <button class="btn btn-neutral" id="cancel-forward-btn" style="flex:1;">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Folder Management Modal -->
+        <div id="folder-manage-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3 id="folder-modal-title">新建文件夹</h3>
+                <div class="form-group">
+                    <input type="text" id="folder-name-input" placeholder="请输入文件夹名称" required>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="folder-confirm-btn" class="btn btn-primary" style="flex: 1;">确认</button>
+                    <button id="folder-delete-btn" class="btn btn-danger" style="flex: 1; display: none;">删除</button>
+                    <button id="folder-cancel-btn" class="btn btn-neutral" style="flex: 1;">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Move Chat to Folder Modal -->
+        <div id="move-to-folder-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>移动到文件夹</h3>
+                <ul id="folder-selection-list" class="list-container"
+                    style="max-height: 40vh; overflow-y: auto; padding: 0; margin: 15px 0;">
+                    <!-- JS populated -->
+                </ul>
+                <button id="close-move-folder-modal" class="btn btn-neutral" style="margin-top: 10px;">取消</button>
+            </div>
+        </div>
+        <div id="receive-transfer-actionsheet" class="action-sheet-overlay">
+            <div class="action-sheet">
+                <button class="action-sheet-button" id="accept-transfer-btn">接收</button>
+                <button class="action-sheet-button danger" id="return-transfer-btn">退回</button>
+            </div>
+        </div>
+        <!-- Private Chat Settings (KKT Style) -->

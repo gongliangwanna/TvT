@@ -1,0 +1,474 @@
+        } else {
+            setFieldValue(chat, templateId, tableId, field, rawValue, { source: 'manual' });
+        }
+        await saveCharacter(chat.id);
+        renderMemoryTableScreen();
+    }
+
+    function setupMemoryTableScreen() {
+        ensureMemoryTemplateStore();
+
+        const searchInput = document.getElementById('memory-table-search-input');
+        if (searchInput) {
+            searchInput.addEventListener('input', () => {
+                uiState.search = searchInput.value || '';
+                renderMemoryTableScreen();
+            });
+        }
+
+        const sortSelect = document.getElementById('memory-table-sort-select');
+        if (sortSelect) {
+            sortSelect.addEventListener('change', () => {
+                uiState.sort = sortSelect.value || 'default';
+                renderMemoryTableScreen();
+            });
+        }
+
+        const tabButtons = document.querySelectorAll('.memory-table-tab-btn');
+        tabButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                uiState.tab = button.dataset.tab || 'tables';
+                renderMemoryTableScreen();
+            });
+        });
+
+        const updateBtn = document.getElementById('memory-table-update-btn');
+        if (updateBtn) updateBtn.addEventListener('click', updateMemoryTablesFromApi);
+
+        const autoUpdateToggle = document.getElementById('memory-table-auto-update-toggle');
+        if (autoUpdateToggle) {
+            autoUpdateToggle.addEventListener('change', async () => {
+                const chat = getCurrentMemoryTableChat();
+                if (!chat) return;
+                const intervalInput = document.getElementById('memory-table-auto-update-interval');
+                const interval = parseInt(intervalInput?.value, 10);
+                chat.memoryTables.autoUpdateInterval = (isNaN(interval) || interval < 10) ? 100 : interval;
+                await saveCharacter(chat.id);
+                await applyMemoryTableAutoUpdateToggle(chat, autoUpdateToggle.checked);
+                await saveCharacter(chat.id);
+                renderMemoryTableScreen();
+            });
+        }
+
+        const autoUpdateIntervalInput = document.getElementById('memory-table-auto-update-interval');
+        if (autoUpdateIntervalInput) {
+            autoUpdateIntervalInput.addEventListener('blur', async () => {
+                const chat = getCurrentMemoryTableChat();
+                if (!chat) return;
+                const interval = parseInt(autoUpdateIntervalInput.value, 10);
+                chat.memoryTables.autoUpdateInterval = (isNaN(interval) || interval < 10) ? 100 : interval;
+                await saveCharacter(chat.id);
+                refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+            });
+        }
+
+        const updateLatestBtn = document.getElementById('memory-table-update-latest-btn');
+        if (updateLatestBtn) {
+            updateLatestBtn.addEventListener('click', async () => {
+                const chat = getCurrentMemoryTableChat();
+                if (!chat) return;
+                await updateMemoryTableToLatest(chat);
+            });
+        }
+
+        const retryBtn = document.getElementById('memory-table-retry-btn');
+        if (retryBtn) {
+            retryBtn.addEventListener('click', async () => {
+                const chat = getCurrentMemoryTableChat();
+                if (!chat) return;
+                await retryMemoryTableAutoUpdate(chat);
+            });
+        }
+
+        const createTemplateBtn = document.getElementById('memory-table-create-template-btn');
+        if (createTemplateBtn) createTemplateBtn.addEventListener('click', () => openTemplateDesigner(null));
+
+        const importBtn = document.getElementById('memory-table-import-btn');
+        const importInput = document.getElementById('memory-table-import-input');
+        if (importBtn && importInput) {
+            importBtn.addEventListener('click', () => importInput.click());
+            importInput.addEventListener('change', async () => {
+                await importTemplatesFromFile(importInput.files[0]);
+                importInput.value = '';
+            });
+        }
+
+        const exportAllBtn = document.getElementById('memory-table-export-all-btn');
+        if (exportAllBtn) exportAllBtn.addEventListener('click', exportAllTemplates);
+
+        const exportPackageBtn = document.getElementById('memory-table-export-package-btn');
+        if (exportPackageBtn) exportPackageBtn.addEventListener('click', exportCurrentMemoryPackage);
+
+        const fromJournalBtn = document.getElementById('memory-table-from-journal-btn');
+        if (fromJournalBtn) fromJournalBtn.addEventListener('click', convertJournalsToTables);
+
+        const toJournalBtn = document.getElementById('memory-table-to-journal-btn');
+        if (toJournalBtn) toJournalBtn.addEventListener('click', convertTablesToJournal);
+
+        const modeButtons = document.querySelectorAll('[data-memory-mode-switch]');
+        modeButtons.forEach(button => {
+            button.addEventListener('click', async () => {
+                const chat = getCurrentMemoryTableChat();
+                if (!chat) return;
+                const nextMode = button.dataset.memoryModeSwitch;
+                chat.memoryMode = nextMode === 'table' ? 'table' : (nextMode === 'vector' ? 'vector' : 'journal');
+                await saveCharacter(chat.id);
+                renderMemoryTableScreen();
+                showToast(chat.memoryMode === 'table'
+                    ? '已切换为表格记忆模式'
+                    : (chat.memoryMode === 'vector' ? '已切换为向量记忆模式' : '已切换为日记模式'));
+            });
+        });
+
+        const screen = document.getElementById('memory-table-screen');
+        if (screen) {
+            screen.addEventListener('click', async (event) => {
+                const actionEl = event.target.closest('[data-action]');
+                if (!actionEl) return;
+                const action = actionEl.dataset.action;
+                if (action === 'toggle-lock') {
+                    const chat = getCurrentMemoryTableChat();
+                    if (!chat) return;
+                    toggleFieldLock(chat, actionEl.dataset.templateId, actionEl.dataset.tableId, actionEl.dataset.fieldId);
+                    await saveCharacter(chat.id);
+                    renderMemoryTableScreen();
+                } else if (action === 'edit-template-visual') {
+                    const template = db.memoryTableTemplates.find(item => item.id === actionEl.dataset.templateId);
+                    if (template) openTemplateDesigner(template);
+                } else if (action === 'edit-template-json') {
+                    const template = db.memoryTableTemplates.find(item => item.id === actionEl.dataset.templateId);
+                    if (template) openTemplateEditor(template);
+                } else if (action === 'delete-template') {
+                    await deleteTemplate(actionEl.dataset.templateId);
+                } else if (action === 'export-template') {
+                    exportTemplate(actionEl.dataset.templateId);
+                } else if (action === 'export-template-package') {
+                    exportTemplatePackage(actionEl.dataset.templateId);
+                } else if (action === 'restore-history') {
+                    await restoreHistoryEntry(actionEl.dataset.historyId);
+                } else if (action === 'add-row') {
+                    const chat = getCurrentMemoryTableChat();
+                    const template = db.memoryTableTemplates.find(item => item.id === actionEl.dataset.templateId);
+                    const table = template ? (template.tables || []).find(item => item.id === actionEl.dataset.tableId) : null;
+                    if (!chat || !table) return;
+                    addRow(chat, template.id, table, {}, { source: 'manual' });
+                    await saveCharacter(chat.id);
+                    renderMemoryTableScreen();
+                } else if (action === 'delete-row') {
+                    const chat = getCurrentMemoryTableChat();
+                    const template = db.memoryTableTemplates.find(item => item.id === actionEl.dataset.templateId);
+                    const table = template ? (template.tables || []).find(item => item.id === actionEl.dataset.tableId) : null;
+                    if (!chat || !table) return;
+                    if (!window.confirm('确定删除这一行吗？')) return;
+                    deleteRow(chat, template.id, table, actionEl.dataset.rowId, { source: 'manual' });
+                    await saveCharacter(chat.id);
+                    renderMemoryTableScreen();
+                } else if (action === 'move-row-up' || action === 'move-row-down') {
+                    const chat = getCurrentMemoryTableChat();
+                    const template = db.memoryTableTemplates.find(item => item.id === actionEl.dataset.templateId);
+                    const table = template ? (template.tables || []).find(item => item.id === actionEl.dataset.tableId) : null;
+                    if (!chat || !table) return;
+                    moveRow(chat, template.id, table, actionEl.dataset.rowId, action === 'move-row-up' ? -1 : 1);
+                    await saveCharacter(chat.id);
+                    renderMemoryTableScreen();
+                }
+            });
+
+            screen.addEventListener('change', async (event) => {
+                const target = event.target;
+                if (target.classList.contains('memory-template-bind-toggle')) {
+                    const chat = getCurrentMemoryTableChat();
+                    if (!chat) return;
+                    await bindTemplateToChat(chat, target.dataset.templateId, target.checked);
+                }
+                if (target.classList.contains('memory-table-input')) {
+                    await handleFieldInputChange(target);
+                }
+            });
+        }
+
+        const openFromSettingsBtn = document.getElementById('setting-open-memory-table-btn');
+        if (openFromSettingsBtn) {
+            openFromSettingsBtn.addEventListener('click', () => {
+                const backBtn = document.querySelector('#memory-table-screen .back-btn');
+                if (backBtn) backBtn.setAttribute('data-target', 'chat-settings-screen');
+                renderMemoryTableScreen();
+                switchScreen('memory-table-screen');
+            });
+        }
+
+        const closeModalBtn = document.getElementById('memory-template-editor-cancel-btn');
+        if (closeModalBtn) closeModalBtn.addEventListener('click', closeTemplateEditor);
+
+        const saveModalBtn = document.getElementById('memory-template-editor-save-btn');
+        if (saveModalBtn) saveModalBtn.addEventListener('click', saveTemplateFromEditor);
+
+        const starterBtn = document.getElementById('memory-template-editor-starter-btn');
+        if (starterBtn) {
+            starterBtn.addEventListener('click', () => {
+                const textarea = document.getElementById('memory-template-json');
+                if (!textarea) return;
+                textarea.value = JSON.stringify(createStarterTemplate(), null, 2);
+            });
+        }
+
+        const editorModal = document.getElementById('memory-template-editor-modal');
+        if (editorModal) {
+            editorModal.addEventListener('click', event => {
+                if (event.target === editorModal) closeTemplateEditor();
+            });
+        }
+
+        const designerModal = document.getElementById('memory-template-designer-modal');
+        if (designerModal) {
+            designerModal.addEventListener('click', async event => {
+                if (event.target === designerModal) {
+                    closeTemplateDesigner();
+                    return;
+                }
+                const actionEl = event.target.closest('[data-action]');
+                if (!actionEl) return;
+                const action = actionEl.dataset.action;
+                const tableIndex = actionEl.dataset.tableIndex !== undefined ? Number(actionEl.dataset.tableIndex) : undefined;
+                const fieldIndex = actionEl.dataset.fieldIndex !== undefined ? Number(actionEl.dataset.fieldIndex) : undefined;
+                if (action === 'designer-add-table') {
+                    mutateDesignerDraft('add-table');
+                    renderTemplateDesigner();
+                } else if (action === 'designer-remove-table') {
+                    mutateDesignerDraft('remove-table', tableIndex);
+                    renderTemplateDesigner();
+                } else if (action === 'designer-move-table-up') {
+                    mutateDesignerDraft('move-table-up', tableIndex);
+                    renderTemplateDesigner();
+                } else if (action === 'designer-move-table-down') {
+                    mutateDesignerDraft('move-table-down', tableIndex);
+                    renderTemplateDesigner();
+                } else if (action === 'designer-add-field') {
+                    mutateDesignerDraft('add-field', tableIndex);
+                    renderTemplateDesigner();
+                } else if (action === 'designer-remove-field') {
+                    mutateDesignerDraft('remove-field', tableIndex, fieldIndex);
+                    renderTemplateDesigner();
+                } else if (action === 'designer-move-field-up') {
+                    mutateDesignerDraft('move-field-up', tableIndex, fieldIndex);
+                    renderTemplateDesigner();
+                } else if (action === 'designer-move-field-down') {
+                    mutateDesignerDraft('move-field-down', tableIndex, fieldIndex);
+                    renderTemplateDesigner();
+                } else if (action === 'designer-toggle-field-collapse') {
+                    const fieldId = actionEl.dataset.fieldId;
+                    uiState.designerCollapsedFieldIds[fieldId] = !uiState.designerCollapsedFieldIds[fieldId];
+                    renderTemplateDesigner();
+                } else if (action === 'designer-open-json') {
+                    openTemplateEditor();
+                } else if (action === 'designer-save') {
+                    await saveTemplateFromDesigner();
+                } else if (action === 'designer-cancel') {
+                    closeTemplateDesigner();
+                }
+            });
+            designerModal.addEventListener('dragstart', event => {
+                const dragEl = event.target.closest('[data-designer-draggable]');
+                if (!dragEl) return;
+                uiState.designerDrag = {
+                    type: dragEl.dataset.designerDraggable,
+                    tableIndex: dragEl.dataset.tableIndex !== undefined ? Number(dragEl.dataset.tableIndex) : undefined,
+                    fieldIndex: dragEl.dataset.fieldIndex !== undefined ? Number(dragEl.dataset.fieldIndex) : undefined
+                };
+                if (event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = 'move';
+                }
+            });
+            designerModal.addEventListener('dragover', event => {
+                const dragEl = event.target.closest('[data-designer-draggable]');
+                if (!dragEl || !uiState.designerDrag) return;
+                event.preventDefault();
+            });
+            designerModal.addEventListener('drop', event => {
+                const dragEl = event.target.closest('[data-designer-draggable]');
+                if (!dragEl || !uiState.designerDrag || !uiState.templateDraft) return;
+                event.preventDefault();
+                const drag = uiState.designerDrag;
+                if (drag.type === 'table' && dragEl.dataset.designerDraggable === 'table') {
+                    moveArrayItem(uiState.templateDraft.tables, drag.tableIndex, Number(dragEl.dataset.tableIndex));
+                    renderTemplateDesigner();
+                } else if (
+                    drag.type === 'field' &&
+                    dragEl.dataset.designerDraggable === 'field' &&
+                    Number(dragEl.dataset.tableIndex) === drag.tableIndex
+                ) {
+                    moveArrayItem(
+                        uiState.templateDraft.tables[drag.tableIndex].columns,
+                        drag.fieldIndex,
+                        Number(dragEl.dataset.fieldIndex)
+                    );
+                    renderTemplateDesigner();
+                }
+                uiState.designerDrag = null;
+            });
+            designerModal.addEventListener('dragend', () => {
+                uiState.designerDrag = null;
+            });
+            designerModal.addEventListener('input', event => {
+                const target = event.target;
+                if (target.dataset && target.dataset.designerRole) {
+                    updateDesignerDraftFromInput(target);
+                }
+            });
+            designerModal.addEventListener('change', event => {
+                const target = event.target;
+                if (target.dataset && target.dataset.designerRole) {
+                    updateDesignerDraftFromInput(target);
+                }
+            });
+        }
+
+        const conversionModal = document.getElementById('memory-conversion-modal');
+        if (conversionModal) {
+            conversionModal.addEventListener('click', async event => {
+                if (event.target === conversionModal) {
+                    closeConversionModal();
+                    return;
+                }
+                const actionEl = event.target.closest('[data-conversion-action]');
+                if (!actionEl) return;
+                const state = uiState.conversionState;
+                const chat = getCurrentMemoryTableChat();
+                if (!state || !chat) return;
+                const journals = getJournalCandidates(chat);
+                const templates = getBoundTemplates(chat);
+                const action = actionEl.dataset.conversionAction;
+                if (action === 'select-favorited') {
+                    state.selectedJournalIds = journals.filter(item => item.isFavorited).map(item => item.id);
+                } else if (action === 'select-all-journals') {
+                    state.selectedJournalIds = journals.map(item => item.id);
+                } else if (action === 'clear-journals') {
+                    state.selectedJournalIds = [];
+                } else if (action === 'select-all-templates') {
+                    state.selectedTemplateIds = templates.map(item => item.id);
+                } else if (action === 'clear-templates') {
+                    state.selectedTemplateIds = [];
+                } else if (action === 'cancel-conversion') {
+                    closeConversionModal();
+                    return;
+                } else if (action === 'confirm-conversion') {
+                    await executeConversionFromModal();
+                    return;
+                }
+                renderConversionModal();
+            });
+            conversionModal.addEventListener('change', event => {
+                const target = event.target;
+                const state = uiState.conversionState;
+                if (!state) return;
+                const role = target.dataset.conversionRole;
+                if (!role) return;
+                const value = target.type === 'checkbox' ? target.checked : target.value;
+                if (role === 'journal-toggle') {
+                    const id = target.value;
+                    if (value) {
+                        if (!state.selectedJournalIds.includes(id)) state.selectedJournalIds.push(id);
+                    } else {
+                        state.selectedJournalIds = state.selectedJournalIds.filter(item => item !== id);
+                    }
+                } else if (role === 'template-toggle') {
+                    const id = target.value;
+                    if (value) {
+                        if (!state.selectedTemplateIds.includes(id)) state.selectedTemplateIds.push(id);
+                    } else {
+                        state.selectedTemplateIds = state.selectedTemplateIds.filter(item => item !== id);
+                    }
+                } else if (role === 'strategy') {
+                    state.strategy = value;
+                } else if (role === 'journal-style') {
+                    state.journalStyle = value;
+                } else if (role === 'auto-favorite') {
+                    state.autoFavorite = value;
+                } else if (role === 'title-prefix') {
+                    state.titlePrefix = value;
+                }
+                renderConversionModal();
+            });
+            conversionModal.addEventListener('input', event => {
+                const target = event.target;
+                const state = uiState.conversionState;
+                if (!state) return;
+                const role = target.dataset.conversionRole;
+                if (role === 'title-prefix') {
+                    state.titlePrefix = target.value;
+                }
+            });
+        }
+    }
+
+    function exportMemoryTableContext(chat, options = {}) {
+        if (!chat) return '';
+        ensureMemoryTableState(chat);
+        return getMemoryContextBlock(chat, { force: true, templateIds: options.templateIds });
+    }
+
+    function getBoundMemoryTableTemplateIds(chat) {
+        if (!chat) return [];
+        ensureMemoryTableState(chat);
+        return getBoundTemplates(chat).map(item => item.id);
+    }
+
+    async function convertTextToMemoryTable(chat, text, options = {}) {
+        if (!chat) throw new Error('请先进入一个角色聊天');
+        ensureMemoryTableState(chat);
+        const targetTemplateIds = Array.isArray(options.targetTemplateIds) && options.targetTemplateIds.length > 0
+            ? options.targetTemplateIds
+            : getBoundTemplates(chat).map(item => item.id);
+        const templates = getBoundTemplates(chat).filter(item => targetTemplateIds.includes(item.id));
+        if (templates.length === 0) {
+            throw new Error('请先绑定至少一个结构记忆模板');
+        }
+        templates.forEach(template => ensureTemplateDataForChat(chat, template));
+        const templateText = buildTemplateDefinitionForPrompt(chat, templates);
+        const prompt = `请把下面这些“已确认长期记忆”的内容，抽取进结构化记忆表。只更新发生变化的字段，只能依据给定内容，不要编造。
+
+输出格式必须严格是：
+<memory_updates>
+  <memory_update templateId="模板ID" tableId="表格ID">
+    <field fieldId="字段ID">新值</field>
+    <row op="add">
+      <field fieldId="字段ID">值</field>
+    </row>
+    <row op="update" rowId="现有行ID">
+      <field fieldId="字段ID">新值</field>
+    </row>
+    <row op="delete" rowId="现有行ID"></row>
+  </memory_update>
+</memory_updates>
+
+如果没有变化，输出 <memory_updates></memory_updates>。
+rows 表请使用 row 节点，不要把 rows 表伪装成普通 field。
+
+角色信息：
+- 角色名：${chat.realName || ''}
+- 用户称呼：${chat.myName || ''}
+
+模板定义：
+${templateText}
+
+长期记忆内容：
+${text}`;
+        const rawContent = await requestSummaryContent(prompt, 0.2);
+        const changedFields = applyMemoryUpdatesFromXml(chat, rawContent, {
+            source: options.source || 'api',
+            targetTemplateIds
+        });
+        await saveCharacter(chat.id);
+        renderMemoryTableScreen();
+        return changedFields.length;
+    }
+
+    window.ensureMemoryTableState = ensureMemoryTableState;
+    window.setupMemoryTableScreen = setupMemoryTableScreen;
+    window.renderMemoryTableScreen = renderMemoryTableScreen;
+    window.getMemoryTableContextBlock = getMemoryContextBlock;
+    window.exportMemoryTableContext = exportMemoryTableContext;
+    window.getBoundMemoryTableTemplateIds = getBoundMemoryTableTemplateIds;
+    window.convertTextToMemoryTable = convertTextToMemoryTable;
+    window.checkAndTriggerAutoTableUpdate = checkAndTriggerAutoTableUpdate;
+})();

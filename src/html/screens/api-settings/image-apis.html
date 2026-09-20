@@ -1,0 +1,635 @@
+<!-- TAB 2: 生图服务 (Image) -->
+                    <div class="api-tab-pane" id="api-pane-image" data-category="image">
+                        <!-- 全局生图与自动压缩控制 -->
+                        <section class="kkt-group api-section-card">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 class="api-card-title">生图全局偏好</h2>
+                                    <p class="api-card-desc">控制 AI 生图的超时与存储优化策略</p>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">
+                                    自动压缩生成图片
+                                    <span class="api-field-tip">生成的图片自动优化体积，节省设备存储</span>
+                                </div>
+                                <div class="kkt-item-control">
+                                    <label class="kkt-switch">
+                                        <input type="checkbox" id="global-auto-compress-image" checked>
+                                        <span class="kkt-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">
+                                    请求超时时间 (秒)
+                                    <span class="api-field-tip">超过此时间自动终止；设为 0 表示不限制</span>
+                                </div>
+                                <div class="kkt-item-control">
+                                    <input type="number" id="global-image-gen-timeout" value="0" min="0" step="1" class="api-num-input">
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Google Gemini 图片生成 -->
+                        <section class="kkt-group api-section-card">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 class="api-card-title">Google Gemini 生图</h2>
+                                    <p class="api-card-desc">调用官方 Gemini 图片模型进行画面绘制</p>
+                                </div>
+                                <label class="kkt-switch">
+                                    <input type="checkbox" id="google-image-enabled">
+                                    <span class="kkt-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API 地址</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="google-image-url" autocomplete="off" placeholder="https://generativelanguage.googleapis.com">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API Key</div>
+                                <div class="kkt-item-control">
+                                    <input type="password" id="google-image-key" autocomplete="new-password" placeholder="输入 Google API Key">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">模型</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="google-image-model" autocomplete="off" placeholder="gemini-3.1-flash-image">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">画面比例</div>
+                                <div class="kkt-item-control">
+                                    <select id="google-image-aspect-ratio">
+                                        <option value="">由模型决定</option>
+                                        <option value="1:1">1:1 (方形)</option>
+                                        <option value="3:4">3:4 (竖版)</option>
+                                        <option value="4:3">4:3 (横版)</option>
+                                        <option value="9:16">9:16 (手机壁纸)</option>
+                                        <option value="16:9">16:9 (宽屏)</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item api-textarea-item">
+                                <div class="kkt-item-label">系统附加词</div>
+                                <textarea id="google-image-system-prompt" rows="2" placeholder="自动追加到所有 Gemini 生图提示词中"></textarea>
+                            </div>
+
+                            <div class="kkt-item api-textarea-item">
+                                <div class="kkt-item-label">避免内容 (负面词)</div>
+                                <textarea id="google-image-negative-prompt" rows="2" placeholder="不希望在画面中出现的内容"></textarea>
+                            </div>
+
+                            <div class="api-actions-row">
+                                <button type="button" class="btn btn-primary" id="google-image-save-btn">保存设置</button>
+                                <button type="button" class="btn btn-secondary" id="google-image-test-btn">
+                                    <span class="btn-text">测试生图</span>
+                                    <div class="spinner"></div>
+                                </button>
+                            </div>
+                            <div id="google-image-test-preview" class="api-preview-card" style="display:none;">
+                                <img id="google-image-test-image" alt="Google 生图测试结果">
+                            </div>
+
+                            <!-- Google 预设紧凑条 -->
+                            <div class="api-sub-presets-strip" id="google-image-presets-control">
+                                <span class="api-sub-presets-label">预设:</span>
+                                <select id="google-image-preset-select" class="api-sub-preset-select">
+                                    <option value="">— 选择 —</option>
+                                </select>
+                                <div class="api-sub-preset-btns">
+                                    <button type="button" id="google-image-apply-preset" class="btn btn-small btn-primary">应用</button>
+                                    <button type="button" id="google-image-save-preset" class="btn btn-small btn-secondary">另存</button>
+                                    <button type="button" id="google-image-manage-presets" class="btn btn-small btn-neutral">管理</button>
+                                    <button type="button" id="google-image-import-presets" class="btn btn-small btn-neutral">导入</button>
+                                    <button type="button" id="google-image-export-presets" class="btn btn-small btn-neutral">导出</button>
+                                </div>
+                            </div>
+                            <div id="google-image-presets-modal" class="api-modal-backdrop">
+                                <div class="api-clean-modal">
+                                    <h3>Google 生图预设管理</h3>
+                                    <div id="google-image-presets-list" class="api-modal-scroll-list"></div>
+                                    <div class="api-modal-footer">
+                                        <button type="button" id="google-image-close-modal" class="btn btn-primary">完成</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Stability AI 生图 -->
+                        <section class="kkt-group api-section-card">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 class="api-card-title">Stability AI 生图</h2>
+                                    <p class="api-card-desc">调用 Stability 官方 Stable Image 核心服务</p>
+                                </div>
+                                <label class="kkt-switch">
+                                    <input type="checkbox" id="stability-image-enabled">
+                                    <span class="kkt-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API 地址</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="stability-image-url" autocomplete="off" placeholder="https://api.stability.ai">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API Key</div>
+                                <div class="kkt-item-control">
+                                    <input type="password" id="stability-image-key" autocomplete="new-password" placeholder="输入 Stability API Key">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">生成服务</div>
+                                <div class="kkt-item-control">
+                                    <select id="stability-image-service">
+                                        <option value="core">Stable Image Core</option>
+                                        <option value="ultra">Stable Image Ultra</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">画面比例</div>
+                                <div class="kkt-item-control">
+                                    <select id="stability-image-aspect-ratio">
+                                        <option value="1:1">1:1</option>
+                                        <option value="3:4">3:4</option>
+                                        <option value="4:3">4:3</option>
+                                        <option value="9:16">9:16</option>
+                                        <option value="16:9">16:9</option>
+                                        <option value="2:3">2:3</option>
+                                        <option value="3:2">3:2</option>
+                                        <option value="21:9">21:9</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">输出格式</div>
+                                <div class="kkt-item-control">
+                                    <select id="stability-image-output-format">
+                                        <option value="png">PNG</option>
+                                        <option value="jpeg">JPEG</option>
+                                        <option value="webp">WebP</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">风格预设</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="stability-image-style-preset" autocomplete="off" placeholder="可选预设名称">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">随机种子 (Seed)</div>
+                                <div class="kkt-item-control">
+                                    <input type="number" id="stability-image-seed" min="0" step="1" placeholder="留空随机" class="api-num-input">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item api-textarea-item">
+                                <div class="kkt-item-label">系统附加词</div>
+                                <textarea id="stability-image-system-prompt" rows="2" placeholder="自动追加到所有 Stability 生图提示词"></textarea>
+                            </div>
+
+                            <div class="kkt-item api-textarea-item">
+                                <div class="kkt-item-label">负面提示词</div>
+                                <textarea id="stability-image-negative-prompt" rows="2" placeholder="不希望在画面中出现的内容"></textarea>
+                            </div>
+
+                            <div class="api-actions-row">
+                                <button type="button" class="btn btn-primary" id="stability-image-save-btn">保存设置</button>
+                                <button type="button" class="btn btn-secondary" id="stability-image-test-btn">
+                                    <span class="btn-text">测试生图</span>
+                                    <div class="spinner"></div>
+                                </button>
+                            </div>
+                            <div id="stability-image-test-preview" class="api-preview-card" style="display:none;">
+                                <img id="stability-image-test-image" alt="Stability 生图测试结果">
+                            </div>
+
+                            <!-- Stability 预设紧凑条 -->
+                            <div class="api-sub-presets-strip" id="stability-image-presets-control">
+                                <span class="api-sub-presets-label">预设:</span>
+                                <select id="stability-image-preset-select" class="api-sub-preset-select">
+                                    <option value="">— 选择 —</option>
+                                </select>
+                                <div class="api-sub-preset-btns">
+                                    <button type="button" id="stability-image-apply-preset" class="btn btn-small btn-primary">应用</button>
+                                    <button type="button" id="stability-image-save-preset" class="btn btn-small btn-secondary">另存</button>
+                                    <button type="button" id="stability-image-manage-presets" class="btn btn-small btn-neutral">管理</button>
+                                    <button type="button" id="stability-image-import-presets" class="btn btn-small btn-neutral">导入</button>
+                                    <button type="button" id="stability-image-export-presets" class="btn btn-small btn-neutral">导出</button>
+                                </div>
+                            </div>
+                            <div id="stability-image-presets-modal" class="api-modal-backdrop">
+                                <div class="api-clean-modal">
+                                    <h3>Stability 生图预设管理</h3>
+                                    <div id="stability-image-presets-list" class="api-modal-scroll-list"></div>
+                                    <div class="api-modal-footer">
+                                        <button type="button" id="stability-image-close-modal" class="btn btn-primary">完成</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- GPT / DALL-E 生图 -->
+                        <section class="kkt-group api-section-card">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 class="api-card-title">GPT / DALL-E 生图</h2>
+                                    <p class="api-card-desc">兼容 OpenAI DALL-E 3 及任意兼容第三方生图接口</p>
+                                </div>
+                                <label class="kkt-switch">
+                                    <input type="checkbox" id="gpt-image-enabled">
+                                    <span class="kkt-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API 地址 (Base URL)</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="gpt-image-url" autocomplete="off" placeholder="https://api.openai.com">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">密钥 (Key)</div>
+                                <div class="kkt-item-control">
+                                    <input type="password" id="gpt-image-key" autocomplete="new-password" placeholder="sk-...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">选择模型</div>
+                                <div class="kkt-item-control">
+                                    <select id="gpt-image-model-select">
+                                        <option value="">请先拉取</option>
+                                    </select>
+                                    <button type="button" class="btn btn-small btn-secondary api-fetch-btn" id="gpt-image-fetch-models-btn">
+                                        <span class="btn-text">拉取</span>
+                                        <div class="spinner"></div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">自定义模型名</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="gpt-image-model" autocomplete="off" placeholder="例如 dall-e-3">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">图片尺寸</div>
+                                <div class="kkt-item-control">
+                                    <select id="gpt-image-size">
+                                        <option value="512x512">512x512</option>
+                                        <option value="1024x1024">1024x1024 (1:1 方形)</option>
+                                        <option value="768x1024">768x1024 (3:4 竖版)</option>
+                                        <option value="1024x768">1024x768 (4:3 横版)</option>
+                                        <option value="576x1024">576x1024 (9:16 壁纸)</option>
+                                        <option value="1024x576">1024x576 (16:9 宽屏)</option>
+                                        <option value="1024x1792">1024x1792 (长竖版)</option>
+                                        <option value="1792x1024">1792x1024 (长横版)</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item api-textarea-item">
+                                <div class="kkt-item-label">系统附加词</div>
+                                <textarea id="gpt-image-system-prompt" rows="2" placeholder="自动添加到提示词前，如：anime style, masterpiece"></textarea>
+                            </div>
+
+                            <div class="kkt-item api-textarea-item">
+                                <div class="kkt-item-label">负面提示词</div>
+                                <textarea id="gpt-image-negative-prompt" rows="2" placeholder="如接口支持，通过 --no 拼接在末尾"></textarea>
+                            </div>
+
+                            <div class="api-actions-row">
+                                <button type="button" class="btn btn-primary" id="gpt-image-save-btn">保存设置</button>
+                                <button type="button" class="btn btn-secondary" id="gpt-image-test-btn">
+                                    <span class="btn-text">测试生图</span>
+                                    <div class="spinner"></div>
+                                </button>
+                            </div>
+                            <div id="gpt-image-test-preview" class="api-preview-card" style="display:none;">
+                                <img id="gpt-image-test-image" alt="GPT 生图测试结果">
+                            </div>
+
+                            <!-- GPT 预设紧凑条 -->
+                            <div class="api-sub-presets-strip" id="gpt-image-presets-control">
+                                <span class="api-sub-presets-label">预设:</span>
+                                <select id="gpt-image-preset-select" class="api-sub-preset-select">
+                                    <option value="">— 选择 —</option>
+                                </select>
+                                <div class="api-sub-preset-btns">
+                                    <button type="button" id="gpt-image-apply-preset" class="btn btn-small btn-primary">应用</button>
+                                    <button type="button" id="gpt-image-save-preset" class="btn btn-small btn-secondary">另存</button>
+                                    <button type="button" id="gpt-image-manage-presets" class="btn btn-small btn-neutral">管理</button>
+                                    <button type="button" id="gpt-image-import-presets" class="btn btn-small btn-neutral">导入</button>
+                                    <button type="button" id="gpt-image-export-presets" class="btn btn-small btn-neutral">导出</button>
+                                </div>
+                            </div>
+                            <div id="gpt-image-presets-modal" class="api-modal-backdrop">
+                                <div class="api-clean-modal">
+                                    <h3>GPT 生图预设管理</h3>
+                                    <div id="gpt-image-presets-list" class="api-modal-scroll-list"></div>
+                                    <div class="api-modal-footer">
+                                        <button type="button" id="gpt-image-close-modal" class="btn btn-primary">完成</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- NovelAI 生图配置 -->
+                        <section class="kkt-group api-section-card">
+                            <div class="api-card-header">
+                                <div>
+                                    <h2 class="api-card-title">NovelAI 生图</h2>
+                                    <p class="api-card-desc">支持 NAI Diffusion V3/V4/V5 系列专业二次元模型</p>
+                                </div>
+                                <label class="kkt-switch">
+                                    <input type="checkbox" id="novelai-enabled">
+                                    <span class="kkt-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">API Token</div>
+                                <div class="kkt-item-control">
+                                    <input type="password" id="novelai-token" autocomplete="new-password" placeholder="pst-...">
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">自定义 API 转发端点</div>
+                                <div class="kkt-item-control">
+                                    <label class="kkt-switch">
+                                        <input type="checkbox" id="novelai-custom-url-enabled">
+                                        <span class="kkt-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item" id="novelai-custom-url-container" style="display: none;">
+                                <div class="kkt-item-label">转发地址</div>
+                                <div class="kkt-item-control">
+                                    <input type="text" id="novelai-custom-url" autocomplete="off" placeholder="https://...">
+                                </div>
+                            </div>
+
+                            <div id="novelai-compatible-options" style="display:none;">
+                                <div class="kkt-item"><div class="kkt-item-label">地址类型</div><div class="kkt-item-control"><select id="novelai-endpoint-mode"><option value="auto">基础地址（自动拼接）</option><option value="full">完整生成地址</option></select><span class="kkt-arrow">›</span></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">鉴权方式</div><div class="kkt-item-control"><select id="novelai-auth-mode"><option value="bearer">Bearer Token</option><option value="header">自定义请求头</option><option value="query">查询参数</option><option value="none">无需鉴权</option></select><span class="kkt-arrow">›</span></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">普通生成路径</div><div class="kkt-item-control"><input type="text" id="novelai-generate-path" placeholder="/ai/generate-image"></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">流式生成路径</div><div class="kkt-item-control"><input type="text" id="novelai-stream-path" placeholder="/ai/generate-image-stream"></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">VIBE 编码路径</div><div class="kkt-item-control"><input type="text" id="novelai-encode-vibe-path" placeholder="/ai/encode-vibe"></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">自定义鉴权名称</div><div class="kkt-item-control"><input type="text" id="novelai-auth-name" placeholder="Authorization 或 key"></div></div>
+                                <div class="kkt-item api-textarea-item"><div class="kkt-item-label">额外请求头 JSON</div><textarea id="novelai-extra-headers" rows="2" placeholder='例如：{"X-Custom-Key":"value"}'></textarea></div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">生图模型</div>
+                                <div class="kkt-item-control">
+                                    <select id="novelai-api-model">
+                                        <option value="nai-diffusion-5-full">NAI Diffusion V5 Full（最新）</option>
+                                        <option value="nai-diffusion-5-curated">NAI Diffusion V5 Curated</option>
+                                        <option value="nai-diffusion-4-5-full">NAI Diffusion 4.5 Full</option>
+                                        <option value="nai-diffusion-4-5-curated">NAI Diffusion 4.5 Curated</option>
+                                        <option value="nai-diffusion-4-full">NAI Diffusion 4 Full</option>
+                                        <option value="nai-diffusion-4-curated-preview">NAI Diffusion 4 Curated</option>
+                                        <option value="nai-diffusion-3">NAI Diffusion 3</option>
+                                        <option value="nai-diffusion-furry-3">NAI Diffusion Furry 3</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">采样器</div>
+                                <div class="kkt-item-control">
+                                    <select id="novelai-sampler">
+                                        <option value="k_euler_ancestral">Euler Ancestral</option>
+                                        <option value="k_dpmpp_2m">DPM++ 2M</option>
+                                        <option value="k_euler">Euler</option>
+                                        <option value="k_dpmpp_2s_ancestral">DPM++ 2S Ancestral</option>
+                                        <option value="k_dpmpp_sde">DPM++ SDE</option>
+                                        <option value="ddim_v3">DDIM</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">噪声计划</div>
+                                <div class="kkt-item-control">
+                                    <select id="novelai-noise-schedule">
+                                        <option value="karras">Karras</option>
+                                        <option value="native">Native</option>
+                                        <option value="exponential">Exponential</option>
+                                        <option value="polyexponential">Polyexponential</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">质量标签增强</div>
+                                <div class="kkt-item-control">
+                                    <label class="kkt-switch">
+                                        <input type="checkbox" id="novelai-quality-toggle" checked>
+                                        <span class="kkt-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="kkt-item">
+                                <div class="kkt-item-label">负面预设模板</div>
+                                <div class="kkt-item-control">
+                                    <select id="novelai-uc-preset">
+                                        <option value="0">Heavy</option>
+                                        <option value="1">Light</option>
+                                        <option value="2">Human Focus</option>
+                                        <option value="3">None</option>
+                                    </select>
+                                    <span class="kkt-arrow">›</span>
+                                </div>
+                            </div>
+
+                            <!-- NovelAI 采样滑块 -->
+                            <div class="kkt-item api-slider-item">
+                                <div class="api-slider-header">
+                                    <div class="kkt-item-label">采样步数 (Steps)</div>
+                                    <span id="novelai-steps-value" class="api-slider-val">28</span>
+                                </div>
+                                <input type="range" id="novelai-steps" min="1" max="50" step="1" value="28">
+                            </div>
+
+                            <div class="kkt-item api-slider-item">
+                                <div class="api-slider-header">
+                                    <div class="kkt-item-label">提示词相关性 (Scale)</div>
+                                    <span id="novelai-scale-value" class="api-slider-val">5.0</span>
+                                </div>
+                                <input type="range" id="novelai-scale" min="1" max="20" step="0.5" value="5">
+                            </div>
+
+                            <!-- NovelAI 高级面板收纳 -->
+                            <details class="api-nested-details">
+                                <summary>NovelAI VIBE 视觉参考与氛围组</summary>
+                                <div id="novelai-vibe-panel" class="api-details-body">
+                                    <div class="api-details-header-row">
+                                        <div>
+                                            <strong>启用 VIBE 氛围迁移</strong>
+                                            <p id="novelai-vibe-model-status" class="api-field-tip"></p>
+                                        </div>
+                                        <label class="kkt-switch"><input type="checkbox" id="novelai-vibe-enabled"><span class="kkt-slider"></span></label>
+                                    </div>
+                                    <div class="kkt-item"><div class="kkt-item-label">当前组</div><div class="kkt-item-control"><select id="novelai-vibe-group"><option value="">不使用 VIBE 组</option></select><span class="kkt-arrow">›</span></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">组名称</div><div class="kkt-item-control"><input id="novelai-vibe-group-name" maxlength="50" placeholder="例如：柔光电影感"></div></div>
+                                    <div id="novelai-vibe-list"></div>
+                                    <div class="api-button-grid">
+                                        <button type="button" id="novelai-vibe-add-images" class="btn btn-small">添加参考图</button>
+                                        <button type="button" id="novelai-vibe-import" class="btn btn-small">导入原生 VIBE</button>
+                                        <button type="button" id="novelai-vibe-encode" class="btn btn-small">编码缺失项</button>
+                                    </div>
+                                    <div class="kkt-item"><div class="kkt-item-label">总强度超过 1 时归一化</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="novelai-vibe-normalize" checked><span class="kkt-slider"></span></label></div></div>
+                                    <div class="api-button-grid">
+                                        <button type="button" id="novelai-vibe-new" class="btn btn-small">新建</button>
+                                        <button type="button" id="novelai-vibe-save" class="btn btn-primary btn-small">保存</button>
+                                        <button type="button" id="novelai-vibe-delete" class="btn btn-danger btn-small">删除组</button>
+                                        <button type="button" id="novelai-vibe-export" class="btn btn-small">导出组包</button>
+                                        <button type="button" id="novelai-vibe-export-encodings" class="btn btn-small">仅导出编码</button>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="api-nested-details">
+                                <summary>V4.5 Precise Reference 细节参考</summary>
+                                <div id="novelai-precise-panel" class="api-details-body">
+                                    <div class="api-details-header-row">
+                                        <div><strong>启用精准参考</strong><p id="novelai-precise-status" class="api-field-tip">仅 V4.5 可用，与 VIBE 互斥</p></div>
+                                        <label class="kkt-switch"><input type="checkbox" id="novelai-precise-enabled"><span class="kkt-slider"></span></label>
+                                    </div>
+                                    <div id="novelai-precise-list"></div>
+                                    <div class="api-button-grid"><button type="button" id="novelai-precise-add" class="btn btn-small">添加参考图</button><button type="button" id="novelai-precise-clear" class="btn btn-small">清空参考图</button></div>
+                                </div>
+                            </details>
+
+                            <details class="api-nested-details" id="novelai-character-panel">
+                                <summary>多角色独立提示词控制</summary>
+                                <div class="api-details-body">
+                                    <p id="novelai-character-status" class="api-field-tip">每个角色可独立设置正面、负面提示和画面中心位置</p>
+                                    <div class="kkt-item"><div class="kkt-item-label">启用坐标</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="novelai-character-use-coords"><span class="kkt-slider"></span></label></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">按列表顺序处理</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="novelai-character-use-order" checked><span class="kkt-slider"></span></label></div></div>
+                                    <div id="novelai-character-list"></div>
+                                    <button type="button" id="novelai-character-add" class="btn btn-small" style="width:100%;margin-top:7px;">添加角色提示</button>
+                                </div>
+                            </details>
+
+                            <details class="api-nested-details">
+                                <summary>高级采样与渲染参数</summary>
+                                <div class="api-details-body">
+                                    <div class="kkt-item"><div class="kkt-item-label">SMEA</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="novelai-smea"><span class="kkt-slider"></span></label></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">SMEA DYN</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="novelai-smea-dyn"><span class="kkt-slider"></span></label></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">自动 SMEA</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="novelai-auto-smea"><span class="kkt-slider"></span></label></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">CFG Rescale</div><div class="kkt-item-control"><input type="number" id="novelai-cfg-rescale" min="0" max="1" step="0.05" value="0" class="api-num-input"></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">Seed</div><div class="kkt-item-control"><input type="number" id="novelai-seed" min="0" step="1" placeholder="留空随机" class="api-num-input"></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">输出格式 (V5)</div><div class="kkt-item-control"><select id="novelai-image-format"><option value="png">PNG</option><option value="webp">WebP</option></select><span class="kkt-arrow">›</span></div></div>
+                                </div>
+                            </details>
+
+                            <div class="kkt-item api-textarea-item">
+                                <div class="kkt-item-label">系统通用 Prompt</div>
+                                <textarea id="novelai-system-prompt" rows="2" placeholder="masterpiece, best quality, amazing quality"></textarea>
+                            </div>
+
+                            <div class="kkt-item api-textarea-item">
+                                <div class="kkt-item-label">默认负面提示词</div>
+                                <textarea id="novelai-negative-prompt" rows="3" placeholder="lowres, bad anatomy..."></textarea>
+                            </div>
+
+                            <div class="api-actions-row">
+                                <button type="button" class="btn btn-primary" id="novelai-save-btn">保存设置</button>
+                                <button type="button" class="btn btn-secondary" id="novelai-test-btn">
+                                    <span class="btn-text">测试生图</span>
+                                    <div class="spinner"></div>
+                                </button>
+                            </div>
+                            <div id="novelai-test-preview" class="api-preview-card" style="display:none;">
+                                <img id="novelai-test-image" alt="NovelAI 生图测试结果">
+                            </div>
+
+                            <!-- NovelAI 预设紧凑条 -->
+                            <div class="api-sub-presets-strip" id="novelai-presets-control">
+                                <span class="api-sub-presets-label">预设:</span>
+                                <select id="novelai-preset-select" class="api-sub-preset-select">
+                                    <option value="">— 选择 —</option>
+                                </select>
+                                <div class="api-sub-preset-btns">
+                                    <button type="button" id="novelai-apply-preset" class="btn btn-small btn-primary">应用</button>
+                                    <button type="button" id="novelai-save-preset" class="btn btn-small btn-secondary">另存</button>
+                                    <button type="button" id="novelai-manage-presets" class="btn btn-small btn-neutral">管理</button>
+                                    <button type="button" id="novelai-import-presets" class="btn btn-small btn-neutral">导入</button>
+                                    <button type="button" id="novelai-export-presets" class="btn btn-small btn-neutral">导出</button>
+                                </div>
+                            </div>
+                            <div id="novelai-presets-modal" class="api-modal-backdrop">
+                                <div class="api-clean-modal">
+                                    <h3>NovelAI 生图预设管理</h3>
+                                    <div id="novelai-presets-list" class="api-modal-scroll-list"></div>
+                                    <div class="api-modal-footer">
+                                        <button type="button" id="novelai-close-modal" class="btn btn-primary">完成</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 旧文字氛围预设：历史归档收纳仓（折叠不干扰） -->
+                        <details class="api-nested-details api-archive-box">
+                            <summary>旧文字氛围预设 (已停用 / 历史数据归档)</summary>
+                            <div class="api-details-body">
+                                <p class="api-field-tip" style="margin-bottom:10px;">兼容保留历史预设查看与导出。该预设不会再注入任何平台的实际生图请求。</p>
+                                <div class="kkt-item"><div class="kkt-item-label">当前预设</div><div class="kkt-item-control"><select id="image-atmosphere-select"><option value="">不选择旧文字预设</option></select><span class="kkt-arrow">›</span></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">名称</div><div class="kkt-item-control"><input type="text" id="image-atmosphere-name" maxlength="50" placeholder="例如：雨夜电影感"></div></div>
+                                <div class="kkt-item api-textarea-item"><div class="kkt-item-label">通用氛围描述</div><textarea id="image-atmosphere-prompt" rows="2" placeholder="场景、时间、光线等"></textarea></div>
+                                <div class="kkt-item api-textarea-item"><div class="kkt-item-label">通用负面限制</div><textarea id="image-atmosphere-negative" rows="2" placeholder="不希望出现的内容"></textarea></div>
+                                <details style="margin-top:8px;"><summary style="font-size:12px;color:#888;cursor:pointer;">平台专属补充词</summary>
+                                    <div class="kkt-item"><div class="kkt-item-label">GPT</div><div class="kkt-item-control"><input id="image-atmosphere-gpt" type="text"></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">NovelAI</div><div class="kkt-item-control"><input id="image-atmosphere-novelai" type="text"></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">Google</div><div class="kkt-item-control"><input id="image-atmosphere-google" type="text"></div></div>
+                                    <div class="kkt-item"><div class="kkt-item-label">Stability</div><div class="kkt-item-control"><input id="image-atmosphere-stability" type="text"></div></div>
+                                </details>
+                                <div class="api-button-grid" style="margin-top:12px;">
+                                    <button type="button" id="image-atmosphere-new" class="btn btn-small">新建</button>
+                                    <button type="button" id="image-atmosphere-save" class="btn btn-primary btn-small">保存</button>
+                                    <button type="button" id="image-atmosphere-delete" class="btn btn-danger btn-small">删除</button>
+                                    <button type="button" id="image-atmosphere-import" class="btn btn-small">导入</button>
+                                    <button type="button" id="image-atmosphere-export" class="btn btn-small">导出</button>
+                                </div>
+                            </div>
+                        </details>
+                    </div>

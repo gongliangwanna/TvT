@@ -1,0 +1,801 @@
+            });
+            prompt += '\n';
+        });
+        return prompt.trim();
+    }
+
+    function getSummaryApiConfig() {
+        let apiConfig = (db.summaryApiSettings && db.summaryApiSettings.url && db.summaryApiSettings.key && db.summaryApiSettings.model)
+            ? db.summaryApiSettings
+            : db.apiSettings;
+        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('memorySummary', apiConfig) : apiConfig;
+        if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model)) {
+            throw new Error('请先配置总结 API');
+        }
+        return apiConfig;
+    }
+
+    async function requestSummaryContent(prompt, temperature = 0.2) {
+        const apiConfig = getSummaryApiConfig();
+        let { url, key, model } = apiConfig;
+        if (url.endsWith('/')) url = url.slice(0, -1);
+        const endpoint = `${url}/v1/chat/completions`;
+        const headers = {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${key}`
+        };
+        const requestBody = {
+            model,
+            temperature,
+            messages: [{ role: 'user', content: prompt }]
+        };
+        return fetchAiResponse(apiConfig, requestBody, headers, endpoint);
+    }
+
+    function getJournalCandidates(chat) {
+        return [...(chat.memoryJournals || [])].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+
+    function openConversionModal(direction) {
+        const chat = getCurrentMemoryTableChat();
+        const modal = document.getElementById('memory-conversion-modal');
+        if (!chat || !modal) return;
+        ensureMemoryTableState(chat);
+        const boundTemplates = getBoundTemplates(chat);
+        const journals = getJournalCandidates(chat);
+
+        uiState.conversionState = {
+            direction,
+            selectedJournalIds: direction === 'journalToTable'
+                ? journals.filter(item => item.isFavorited).map(item => item.id)
+                : [],
+            selectedTemplateIds: boundTemplates.map(item => item.id),
+            strategy: 'overwrite_unlocked',
+            journalStyle: 'objective',
+            autoFavorite: false,
+            titlePrefix: ''
+        };
+        renderConversionModal();
+        modal.classList.add('visible');
+    }
+
+    function closeConversionModal() {
+        const modal = document.getElementById('memory-conversion-modal');
+        if (modal) modal.classList.remove('visible');
+        uiState.conversionState = null;
+    }
+
+    function renderConversionModal() {
+        const state = uiState.conversionState;
+        const chat = getCurrentMemoryTableChat();
+        const body = document.getElementById('memory-conversion-body');
+        const title = document.getElementById('memory-conversion-title');
+        if (!state || !chat || !body || !title) return;
+
+        const journals = getJournalCandidates(chat);
+        const templates = getBoundTemplates(chat);
+        title.textContent = state.direction === 'journalToTable' ? '日记转表格' : '表格转日记';
+
+        if (state.direction === 'journalToTable') {
+            const selectedJournals = journals.filter(item => state.selectedJournalIds.includes(item.id));
+            const selectedTemplates = templates.filter(item => state.selectedTemplateIds.includes(item.id));
+            body.innerHTML = `
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                    <button type="button" class="btn btn-small btn-secondary" data-conversion-action="select-favorited">仅收藏</button>
+                    <button type="button" class="btn btn-small btn-secondary" data-conversion-action="select-all-journals">全选日记</button>
+                    <button type="button" class="btn btn-small btn-neutral" data-conversion-action="clear-journals">清空日记</button>
+                </div>
+                <div class="form-group">
+                    <label>选择要读取的日记</label>
+                    <div style="max-height:180px; overflow:auto; border:1px solid #ececec; border-radius:12px; padding:10px; background:#fafafa;">
+                        ${journals.length === 0 ? '<div style="font-size:13px; color:#999;">没有可用日记</div>' : journals.map(item => `
+                            <label style="display:flex; gap:8px; align-items:flex-start; padding:8px 0; border-bottom:1px dashed #eee;">
+                                <input type="checkbox" data-conversion-role="journal-toggle" value="${item.id}" ${state.selectedJournalIds.includes(item.id) ? 'checked' : ''}>
+                                <span style="font-size:13px; color:#444;">
+                                    <strong>${escapeHtml(item.title || '无标题')}</strong>
+                                    <span style="display:block; color:#999; margin-top:2px;">${item.isFavorited ? '已收藏' : '未收藏'} · ${formatDateTime(item.createdAt || Date.now())}</span>
+                                </span>
+                            </label>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>目标模板</label>
+                    <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                        ${templates.map(item => `
+                            <label style="padding:8px 10px; border:1px solid #ececec; border-radius:999px; background:${state.selectedTemplateIds.includes(item.id) ? 'rgba(91,140,255,0.08)' : '#fff'}; font-size:13px;">
+                                <input type="checkbox" data-conversion-role="template-toggle" value="${item.id}" ${state.selectedTemplateIds.includes(item.id) ? 'checked' : ''}>
+                                ${escapeHtml(item.name)}
+                            </label>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>覆盖策略</label>
+                    <select data-conversion-role="strategy">
+                        <option value="overwrite_unlocked" ${state.strategy === 'overwrite_unlocked' ? 'selected' : ''}>覆盖所有未锁定字段</option>
+                        <option value="fill_empty" ${state.strategy === 'fill_empty' ? 'selected' : ''}>只填空字段</option>
+                    </select>
+                </div>
+                <div style="background:#fafafa; border:1px solid #ececec; border-radius:12px; padding:12px;">
+                    <div style="font-size:13px; font-weight:700; color:#444;">转换预览</div>
+                    <div style="font-size:12px; color:#777; margin-top:8px; line-height:1.6;">
+                        将读取 <strong>${selectedJournals.length}</strong> 篇日记，写入 <strong>${selectedTemplates.length}</strong> 个模板。<br>
+                        当前策略：${state.strategy === 'fill_empty' ? '只填空字段' : '覆盖所有未锁定字段'}。
+                    </div>
+                    ${selectedJournals.length > 0 ? `<div style="margin-top:10px; font-size:12px; color:#666;">样本：${selectedJournals.slice(0, 3).map(item => escapeHtml(item.title)).join('、')}${selectedJournals.length > 3 ? '...' : ''}</div>` : ''}
+                </div>
+            `;
+        } else {
+            const selectedTemplates = templates.filter(item => state.selectedTemplateIds.includes(item.id));
+            const previewBlock = getMemoryContextBlock(chat, { force: true, templateIds: state.selectedTemplateIds });
+            body.innerHTML = `
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                    <button type="button" class="btn btn-small btn-secondary" data-conversion-action="select-all-templates">全选模板</button>
+                    <button type="button" class="btn btn-small btn-neutral" data-conversion-action="clear-templates">清空模板</button>
+                </div>
+                <div class="form-group">
+                    <label>选择要整理成日记的模板</label>
+                    <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                        ${templates.map(item => `
+                            <label style="padding:8px 10px; border:1px solid #ececec; border-radius:999px; background:${state.selectedTemplateIds.includes(item.id) ? 'rgba(91,140,255,0.08)' : '#fff'}; font-size:13px;">
+                                <input type="checkbox" data-conversion-role="template-toggle" value="${item.id}" ${state.selectedTemplateIds.includes(item.id) ? 'checked' : ''}>
+                                ${escapeHtml(item.name)}
+                            </label>
+                        `).join('')}
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px;">
+                    <div class="form-group">
+                        <label>整理风格</label>
+                        <select data-conversion-role="journal-style">
+                            <option value="objective" ${state.journalStyle === 'objective' ? 'selected' : ''}>客观回忆</option>
+                            <option value="timeline" ${state.journalStyle === 'timeline' ? 'selected' : ''}>时间线整理</option>
+                            <option value="archive" ${state.journalStyle === 'archive' ? 'selected' : ''}>档案总结</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>标题前缀</label>
+                        <input type="text" data-conversion-role="title-prefix" value="${escapeAttribute(state.titlePrefix || '')}" placeholder="可选，例如：结构记忆·">
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; padding: 10px 12px; border: 1px solid #ececec; border-radius: 12px; background: #fff;">
+                    <span style="font-size:14px; color:#444; font-weight:bold;">生成后自动收藏</span>
+                    <label class="kkt-switch">
+                        <input type="checkbox" data-conversion-role="auto-favorite" ${state.autoFavorite ? 'checked' : ''}>
+                        <span class="kkt-slider"></span>
+                    </label>
+                </div>
+                <div style="background:#fafafa; border:1px solid #ececec; border-radius:12px; padding:12px;">
+                    <div style="font-size:13px; font-weight:700; color:#444;">转换预览</div>
+                    <div style="font-size:12px; color:#777; margin-top:8px; line-height:1.6;">
+                        将读取 <strong>${selectedTemplates.length}</strong> 个模板，并生成一篇新的记忆日记。<br>
+                        风格：${state.journalStyle === 'timeline' ? '时间线整理' : state.journalStyle === 'archive' ? '档案总结' : '客观回忆'}。
+                    </div>
+                    <pre style="white-space:pre-wrap; margin:10px 0 0; font-size:12px; color:#555; max-height:180px; overflow:auto;">${escapeHtml(previewBlock || '暂无可用表格内容')}</pre>
+                </div>
+            `;
+        }
+    }
+
+    function getHistoryMessageContent(item) {
+        let content = item.content || '';
+        if (item.parts && item.parts.length > 0) {
+            content = item.parts.map(part => part.text || '[图片]').join('');
+        }
+        return content;
+    }
+
+    function collectMessagesForMemoryTable(chat, options = {}) {
+        let history = Array.isArray(chat.history) ? [...chat.history] : [];
+        if (options.start && options.end) {
+            const startIndex = Math.max(0, options.start - 1);
+            const endIndex = Math.min(history.length, options.end);
+            history = history.slice(startIndex, endIndex);
+        }
+        if (typeof filterHistoryForAI === 'function') {
+            history = filterHistoryForAI(chat, history);
+        }
+        history = history.filter(item => !item.isContextDisabled && !item.isThinking);
+        if (!options.start && !options.end) {
+            history = history.slice(-MEMORY_TABLE_MAX_CONTEXT_MESSAGES);
+        }
+        return history;
+    }
+
+    function buildTemplateDefinitionForPrompt(chat, templates) {
+        return templates.map(template => {
+            return [
+                `模板ID=${template.id} 名称=${template.name}`,
+                template.description ? `描述=${template.description}` : '',
+                ...(template.tables || []).map(table => {
+                    const tableRowsText = isRowsTable(table)
+                        ? (() => {
+                            const rows = getRows(chat, template.id, table);
+                            if (!rows.length) return '  现有行=空';
+                            return rows.map((row, rowIndex) => {
+                                const cells = (table.columns || []).map(field => `${field.key}=${getFieldDisplayValue(field, row.cells[field.id]) || '空'}`).join(' | ');
+                                return `  行ID=${row.id} 行号=${rowIndex + 1} ${cells}`;
+                            }).join('\n');
+                        })()
+                        : '';
+                    return [
+                        `  表格ID=${table.id} 名称=${table.name} 模式=${isRowsTable(table) ? 'rows' : 'keyValue'}`,
+                        table.extractPrompt ? `  表格提取规则=${table.extractPrompt}` : '',
+                        ...(table.columns || []).map(field => {
+                            const currentValue = isRowsTable(table)
+                                ? '见现有行'
+                                : getFieldDisplayValue(field, getFieldValue(chat, template.id, table.id, field));
+                            const locked = isFieldLocked(chat, template.id, table.id, field.id);
+                            const options = Array.isArray(field.options) && field.options.length > 0 ? ` 可选值=${field.options.join('|')}` : '';
+                            const range = (typeof field.min === 'number' || typeof field.max === 'number')
+                                ? ` 范围=${field.min ?? ''}~${field.max ?? ''}`
+                                : '';
+                            const group = field.group ? ` 分组=${field.group}` : '';
+                            return `    字段ID=${field.id} 字段名=${field.key}${group} 类型=${field.type}${options}${range} 当前值=${currentValue || '空'} 锁定=${locked ? '是' : '否'} AI可编辑=${field.aiEditable === false ? '否' : '是'} 说明=${field.aiHint || '无'}`;
+                        }),
+                        tableRowsText
+                    ].filter(Boolean).join('\n');
+                })
+            ].filter(Boolean).join('\n');
+        }).join('\n\n');
+    }
+
+    function buildHistoryTextForPrompt(chat, history) {
+        return history.map(item => {
+            const name = item.role === 'user' ? (chat.myName || '用户') : (chat.realName || '角色');
+            return `${name}: ${getHistoryMessageContent(item)}`;
+        }).join('\n');
+    }
+
+    async function updateMemoryTablesFromApi(options = {}) {
+        const chat = options.chat || getCurrentMemoryTableChat();
+        if (!chat) {
+            showToast('请先进入一个角色聊天');
+            return { status: 'noop', changedFields: [] };
+        }
+
+        const templates = (Array.isArray(options.templateIds) && options.templateIds.length > 0
+            ? getBoundTemplates(chat).filter(item => options.templateIds.includes(item.id))
+            : getBoundTemplates(chat));
+        if (templates.length === 0) {
+            showToast('请先绑定至少一个模板');
+            return { status: 'noop', changedFields: [] };
+        }
+
+        const history = collectMessagesForMemoryTable(chat, {
+            start: options.start,
+            end: options.end
+        });
+
+        if (history.length === 0) {
+            if (!options.silent) showToast('聊天记录不足，暂时无法提取');
+            return { status: 'noop', changedFields: [] };
+        }
+
+        templates.forEach(template => ensureTemplateDataForChat(chat, template));
+
+        const templateText = buildTemplateDefinitionForPrompt(chat, templates);
+        const historyText = buildHistoryTextForPrompt(chat, history);
+        const prompt = `你现在要帮一个聊天角色更新“结构化记忆表”。请根据给定的模板、字段规则和最近聊天记录，只提取明确发生过的信息，并且只输出发生变化的字段。
+
+严格要求：
+1. 只更新没有锁定且允许 AI 编辑的字段。
+2. keyValue 表只能输出 <field>。
+3. rows 表必须使用 <row op="add|update|delete">：
+   - 新增一行用 <row op="add">，可不给 rowId。
+   - 修改已有行用 <row op="update" rowId="现有行ID">。
+   - 删除一行用 <row op="delete" rowId="现有行ID"></row>。
+4. 如果某字段或某一行没有新变化，就不要输出它。
+5. 不要臆测、不要补完、不要写解释。
+6. 如果没有任何变化，输出 <memory_updates></memory_updates>
+7. 你必须严格使用以下 XML：
+<memory_updates>
+  <memory_update templateId="模板ID" tableId="表格ID">
+    <field fieldId="字段ID">新值</field>
+    <row op="add">
+      <field fieldId="字段ID">值</field>
+    </row>
+    <row op="update" rowId="现有行ID">
+      <field fieldId="字段ID">新值</field>
+    </row>
+    <row op="delete" rowId="现有行ID"></row>
+  </memory_update>
+</memory_updates>
+
+角色信息：
+- 角色名：${chat.realName || ''}
+- 角色人设：${chat.persona || ''}
+- 用户称呼：${chat.myName || ''}
+- 用户人设：${chat.myPersona || ''}
+
+模板定义如下：
+${templateText}
+
+最近聊天记录如下：
+${historyText}`;
+
+        try {
+            const rawContent = await requestSummaryContent(prompt, 0.2);
+            const changedFields = applyMemoryUpdatesFromXml(chat, rawContent, { source: options.source || 'api' });
+            if (!options.isAutoUpdate && !options.skipCursorSync) {
+                const endIndex = options.end || (Array.isArray(chat.history) ? chat.history.length : 0);
+                if (endIndex > 0) {
+                    setMemoryTableAutoUpdateCursorByEndIndex(chat, endIndex);
+                    chat.memoryTables.autoUpdatePending = false;
+                }
+            }
+            await saveCharacter(chat.id);
+            if (!options.skipRender) {
+                renderMemoryTableScreen();
+            }
+            if (!options.suppressSuccessToast) {
+                showToast(changedFields.length > 0
+                    ? `表格已更新，变更 ${changedFields.length} 项`
+                    : '没有检测到可更新的字段');
+            }
+            return { status: 'success', changedFields };
+        } catch (error) {
+            console.error('[MemoryTable] update failed:', error);
+            if (options.propagateError) throw error;
+            if (typeof showApiError === 'function') showApiError(error);
+            else showToast(error.message || '更新表格失败');
+            return { status: 'failed', changedFields: [], error };
+        }
+    }
+
+    async function processMemoryTableAutoUpdate(chat, options = {}) {
+        if (!chat) return { status: 'noop', updatedCount: 0 };
+        ensureMemoryTableAutoUpdateState(chat);
+        if (getBoundTemplates(chat).length === 0) {
+            refreshMemoryTableAutoUpdateControls(chat, false);
+            return { status: 'noop', updatedCount: 0 };
+        }
+
+        if (!options.force && !chat.memoryTables.autoUpdateEnabled) {
+            refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+            return { status: 'disabled', updatedCount: 0 };
+        }
+
+        if (chat.memoryTables.autoUpdateState === 'failed' && !options.ignoreFailedState) {
+            refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+            return { status: 'failed', updatedCount: 0 };
+        }
+
+        if (chat.memoryTables.autoUpdateState === 'running') {
+            return { status: 'running', updatedCount: 0 };
+        }
+
+        const nextRange = getNextMemoryTableAutoUpdateRange(chat);
+        if (!nextRange) {
+            chat.memoryTables.autoUpdatePending = false;
+            chat.memoryTables.autoUpdateState = 'idle';
+            refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+            if (!options.showNoPendingToast) {
+                showToast('当前没有可补的表格自动更新范围');
+            }
+            return { status: 'noop', updatedCount: 0 };
+        }
+
+        let updatedCount = 0;
+        chat.memoryTables.autoUpdateState = 'running';
+        chat.memoryTables.autoUpdatePending = false;
+        refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+
+        try {
+            do {
+                const currentRange = getNextMemoryTableAutoUpdateRange(chat);
+                if (!currentRange) break;
+                await updateMemoryTablesFromApi({
+                    chat,
+                    start: currentRange.start,
+                    end: currentRange.end,
+                    source: 'auto',
+                    isAutoUpdate: true,
+                    silent: true,
+                    skipRender: true,
+                    suppressSuccessToast: true,
+                    propagateError: true
+                });
+                setMemoryTableAutoUpdateCursorByEndIndex(chat, currentRange.end);
+                updatedCount++;
+                await saveCharacter(chat.id);
+            } while (options.processAllAvailable && getNextMemoryTableAutoUpdateRange(chat));
+
+            chat.memoryTables.autoUpdateState = 'idle';
+            chat.memoryTables.autoUpdatePending = false;
+            await saveCharacter(chat.id);
+            renderMemoryTableScreen();
+            refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+            if (options.showSuccessToast && updatedCount > 0) {
+                showToast(updatedCount > 1 ? `已补做 ${updatedCount} 次表格自动更新` : '表格自动更新已补做');
+            }
+            return { status: 'success', updatedCount };
+        } catch (error) {
+            console.error('[MemoryTable] auto update failed:', error);
+            chat.memoryTables.autoUpdateState = 'failed';
+            chat.memoryTables.autoUpdatePending = false;
+            await saveCharacter(chat.id);
+            refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+            if (typeof showApiError === 'function') showApiError(error);
+            else showToast(error.message || '表格自动更新失败');
+            return { status: 'failed', updatedCount, error };
+        }
+    }
+
+    async function retryMemoryTableAutoUpdate(chat) {
+        if (!chat) return { status: 'noop', updatedCount: 0 };
+        ensureMemoryTableAutoUpdateState(chat);
+        chat.memoryTables.autoUpdateState = 'idle';
+        return processMemoryTableAutoUpdate(chat, {
+            force: true,
+            processAllAvailable: true,
+            showNoPendingToast: false,
+            showSuccessToast: true,
+            ignoreFailedState: true
+        });
+    }
+
+    async function updateMemoryTableToLatest(chat) {
+        if (!chat) return { status: 'noop', changedFields: [] };
+        ensureMemoryTableAutoUpdateState(chat);
+        if (getBoundTemplates(chat).length === 0) {
+            showToast('请先绑定至少一个模板');
+            return { status: 'noop', changedFields: [] };
+        }
+        if (chat.memoryTables.autoUpdateState === 'running') {
+            showToast('表格自动更新进行中，请稍候...');
+            return { status: 'running', changedFields: [] };
+        }
+        const info = getMemoryTableAutoUpdateCursorInfo(chat);
+        if (info.unsyncedCount <= 0) {
+            showToast('当前没有新增消息需要更新表格');
+            return { status: 'noop', changedFields: [] };
+        }
+
+        chat.memoryTables.autoUpdateState = 'running';
+        chat.memoryTables.autoUpdatePending = false;
+        refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+
+        try {
+            const result = await updateMemoryTablesFromApi({
+                chat,
+                start: info.nextStartIndex + 1,
+                end: info.history.length,
+                source: 'auto_latest',
+                isAutoUpdate: true,
+                silent: true,
+                skipRender: true,
+                suppressSuccessToast: true,
+                propagateError: true
+            });
+            setMemoryTableAutoUpdateCursorByEndIndex(chat, info.history.length);
+            chat.memoryTables.autoUpdateState = 'idle';
+            chat.memoryTables.autoUpdatePending = false;
+            await saveCharacter(chat.id);
+            renderMemoryTableScreen();
+            refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+            showToast(`表格已更新到最新（处理 ${info.unsyncedCount} 条新消息）`);
+            return result;
+        } catch (error) {
+            console.error('[MemoryTable] update latest failed:', error);
+            chat.memoryTables.autoUpdateState = 'failed';
+            chat.memoryTables.autoUpdatePending = false;
+            await saveCharacter(chat.id);
+            refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+            if (typeof showApiError === 'function') showApiError(error);
+            else showToast(error.message || '更新到最新失败');
+            return { status: 'failed', changedFields: [], error };
+        }
+    }
+
+    async function checkAndTriggerAutoTableUpdate(chat) {
+        if (!chat || !chat.memoryTables || !chat.memoryTables.autoUpdateEnabled) return;
+        ensureMemoryTableAutoUpdateState(chat);
+        if (chat.memoryTables.autoUpdateState === 'failed') {
+            refreshMemoryTableAutoUpdateControls(chat, getBoundTemplates(chat).length > 0);
+            return;
+        }
+        await processMemoryTableAutoUpdate(chat, {
+            force: false,
+            processAllAvailable: true,
+            showNoPendingToast: true
+        });
+    }
+
+    async function convertJournalsToTables() {
+        const chat = getCurrentMemoryTableChat();
+        if (!chat) {
+            showToast('请先进入一个角色聊天');
+            return;
+        }
+        openConversionModal('journalToTable');
+    }
+
+    async function convertTablesToJournal() {
+        const chat = getCurrentMemoryTableChat();
+        if (!chat) {
+            showToast('请先进入一个角色聊天');
+            return;
+        }
+        openConversionModal('tableToJournal');
+    }
+
+    async function executeConversionFromModal() {
+        const state = uiState.conversionState;
+        const chat = getCurrentMemoryTableChat();
+        if (!state || !chat) return;
+
+        if (state.direction === 'journalToTable') {
+            const templates = getBoundTemplates(chat).filter(item => state.selectedTemplateIds.includes(item.id));
+            const journals = getJournalCandidates(chat).filter(item => state.selectedJournalIds.includes(item.id));
+            if (templates.length === 0) {
+                showToast('请至少选择一个目标模板');
+                return;
+            }
+            if (journals.length === 0) {
+                showToast('请至少选择一篇日记');
+                return;
+            }
+
+            templates.forEach(template => ensureTemplateDataForChat(chat, template));
+            const templateText = buildTemplateDefinitionForPrompt(chat, templates);
+
+            const journalText = journals.map(item => `标题：${item.title}\n内容：${item.content}`).join('\n\n---\n\n');
+            const prompt = `请把下面这些“已确认长期记忆”的日记，抽取进结构化记忆表。只更新发生变化的字段，只能依据给定日记内容，不要编造。
+
+输出格式必须严格是：
+<memory_updates>
+  <memory_update templateId="模板ID" tableId="表格ID">
+    <field fieldId="字段ID">新值</field>
+    <row op="add">
+      <field fieldId="字段ID">值</field>
+    </row>
+    <row op="update" rowId="现有行ID">
+      <field fieldId="字段ID">新值</field>
+    </row>
+    <row op="delete" rowId="现有行ID"></row>
+  </memory_update>
+</memory_updates>
+
+如果没有变化，输出 <memory_updates></memory_updates>。
+rows 表请使用 row 节点，不要把 rows 表伪装成普通 field。
+
+角色信息：
+- 角色名：${chat.realName || ''}
+- 用户称呼：${chat.myName || ''}
+
+模板定义：
+${templateText}
+
+日记内容：
+${journalText}`;
+
+            try {
+                const rawContent = await requestSummaryContent(prompt, 0.2);
+                const changedFields = applyMemoryUpdatesFromXml(chat, rawContent, {
+                    source: 'api',
+                    targetTemplateIds: state.selectedTemplateIds,
+                    strategy: state.strategy
+                });
+                await saveCharacter(chat.id);
+                closeConversionModal();
+                renderMemoryTableScreen();
+                showToast(changedFields.length > 0 ? `已从日记提取 ${changedFields.length} 项表格变更` : '没有检测到可提取的新字段');
+            } catch (error) {
+                console.error('[MemoryTable] journal to table failed:', error);
+                if (typeof showApiError === 'function') showApiError(error);
+                else showToast(error.message || '日记转表格失败');
+            }
+        } else {
+            const selectedTemplateIds = state.selectedTemplateIds || [];
+            const tableContext = getMemoryContextBlock(chat, { force: true, templateIds: selectedTemplateIds });
+            if (!tableContext) {
+                showToast('当前没有可转换的表格内容');
+                return;
+            }
+            const styleInstruction = state.journalStyle === 'timeline'
+                ? '请按时间线整理，突出变化过程。'
+                : state.journalStyle === 'archive'
+                    ? '请写成结构清晰、偏档案整理风格的总结。'
+                    : '请使用客观回忆风格。';
+            const prompt = `请把下面的结构化记忆整理成一篇“客观、连贯、适合长期回忆”的记忆日记。不要额外解释，只输出以下 XML：
+<journal>
+  <title>标题</title>
+  <content>正文</content>
+</journal>
+
+要求：
+1. 语气客观，不要像聊天。
+2. 可以按时间线整理，但不要凭空补完。
+3. 标题简洁。
+4. ${styleInstruction}
+
+结构化记忆如下：
+${tableContext}`;
+
+            try {
+                const rawContent = await requestSummaryContent(prompt, 0.5);
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(`<root>${rawContent || ''}</root>`, 'text/xml');
+                if (xmlDoc.querySelector('parsererror')) {
+                    throw new Error('表格转日记返回格式解析失败');
+                }
+                const generatedTitle = xmlDoc.querySelector('title')?.textContent?.trim() || '结构化记忆整理';
+                const title = `${state.titlePrefix || ''}${generatedTitle}`;
+                const content = xmlDoc.querySelector('content')?.textContent?.trim() || '';
+                if (!content) {
+                    throw new Error('没有提取到有效日记内容');
+                }
+                if (!Array.isArray(chat.memoryJournals)) chat.memoryJournals = [];
+                chat.memoryJournals.unshift({
+                    id: createMemoryId('journal'),
+                    range: null,
+                    title,
+                    content,
+                    createdAt: Date.now(),
+                    chatId: chat.id,
+                    chatType: 'private',
+                    isFavorited: !!state.autoFavorite,
+                    source: 'memory_table_conversion'
+                });
+                await saveCharacter(chat.id);
+                closeConversionModal();
+                renderMemoryTableScreen();
+                showToast('已根据表格生成新日记');
+            } catch (error) {
+                console.error('[MemoryTable] table to journal failed:', error);
+                if (typeof showApiError === 'function') showApiError(error);
+                else showToast(error.message || '表格转日记失败');
+            }
+        }
+    }
+
+    function applyMemoryUpdatesFromXml(chat, rawContent, options = {}) {
+        ensureMemoryTableState(chat);
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(`<root>${rawContent || ''}</root>`, 'text/xml');
+        if (xmlDoc.querySelector('parsererror')) {
+            throw new Error('结构化记忆返回格式解析失败');
+        }
+
+        const updates = Array.from(xmlDoc.querySelectorAll('memory_update'));
+        if (updates.length === 0) {
+            chat.memoryTables.lastChangedFieldPaths = [];
+            return [];
+        }
+
+        const changedFields = [];
+        updates.forEach(updateNode => {
+            const templateId = updateNode.getAttribute('templateId');
+            const tableId = updateNode.getAttribute('tableId');
+            if (Array.isArray(options.targetTemplateIds) && options.targetTemplateIds.length > 0 && !options.targetTemplateIds.includes(templateId)) {
+                return;
+            }
+            const template = db.memoryTableTemplates.find(item => item.id === templateId);
+            const table = template ? (template.tables || []).find(item => item.id === tableId) : null;
+            if (!template || !table) return;
+            ensureTemplateDataForChat(chat, template);
+
+            if (isRowsTable(table)) {
+                Array.from(updateNode.querySelectorAll('row')).forEach(rowNode => {
+                    const op = (rowNode.getAttribute('op') || 'update').trim().toLowerCase();
+                    const rowId = rowNode.getAttribute('rowId') || '';
+                    if (op === 'delete') {
+                        const existingRow = rowId ? findRowById(chat, templateId, table, rowId) : null;
+                        if (!existingRow) return;
+                        (table.columns || []).forEach(field => {
+                            changedFields.push({
+                                templateId,
+                                tableId,
+                                rowId,
+                                fieldId: field.id,
+                                label: `${table.name} / ${field.key}（删除行）`,
+                                oldValue: existingRow.cells[field.id],
+                                newValue: ''
+                            });
+                        });
+                        deleteRow(chat, templateId, table, rowId, { source: options.source || 'api', skipHistory: true });
+                        return;
+                    }
+
+                    if (op === 'add') {
+                        const initialValues = {};
+                        Array.from(rowNode.querySelectorAll('field')).forEach(fieldNode => {
+                            const fieldId = fieldNode.getAttribute('fieldId');
+                            const field = (table.columns || []).find(item => item.id === fieldId);
+                            if (!field || field.aiEditable === false || isFieldLocked(chat, templateId, tableId, fieldId)) return;
+                            initialValues[fieldId] = fieldNode.textContent || '';
+                        });
+                        if (Object.keys(initialValues).length === 0) return;
+                        const addedRow = addRow(chat, templateId, table, initialValues, { source: options.source || 'api', skipHistory: true });
+                        (table.columns || []).forEach(field => {
+                            if (initialValues[field.id] === undefined) return;
+                            changedFields.push({
+                                templateId,
+                                tableId,
+                                rowId: addedRow.id,
+                                fieldId: field.id,
+                                label: `${table.name} / ${field.key}（新增行）`,
+                                oldValue: '',
+                                newValue: addedRow.cells[field.id]
+                            });
+                        });
+                        return;
+                    }
+
+                    const targetRow = rowId ? findRowById(chat, templateId, table, rowId) : null;
+                    if (!targetRow) return;
+                    Array.from(rowNode.querySelectorAll('field')).forEach(fieldNode => {
+                        const fieldId = fieldNode.getAttribute('fieldId');
+                        const field = (table.columns || []).find(item => item.id === fieldId);
+                        if (!field || field.aiEditable === false || isFieldLocked(chat, templateId, tableId, fieldId)) return;
+                        const oldValue = targetRow.cells[field.id];
+                        if (options.strategy === 'fill_empty' && !isEmptyMemoryValue(field, oldValue)) return;
+                        const newValue = normalizeFieldValue(field, fieldNode.textContent || '');
+                        if (isSameMemoryValue(oldValue, newValue)) return;
+                        targetRow.cells[field.id] = newValue;
+                        changedFields.push({
+                            templateId,
+                            tableId,
+                            rowId,
+                            fieldId,
+                            label: `${table.name} / ${field.key}`,
+                            oldValue,
+                            newValue
+                        });
+                    });
+                });
+                return;
+            }
+
+            Array.from(updateNode.children)
+                .filter(node => node.tagName === 'field')
+                .forEach(fieldNode => {
+                    const fieldId = fieldNode.getAttribute('fieldId');
+                    const field = (table.columns || []).find(item => item.id === fieldId);
+                    if (!field) return;
+                    if (field.aiEditable === false) return;
+                    if (isFieldLocked(chat, templateId, tableId, fieldId)) return;
+
+                    const oldValue = getFieldValue(chat, templateId, tableId, field);
+                    if (options.strategy === 'fill_empty' && !isEmptyMemoryValue(field, oldValue)) return;
+                    const newValue = normalizeFieldValue(field, fieldNode.textContent || '');
+                    if (isSameMemoryValue(oldValue, newValue)) return;
+
+                    if (!chat.memoryTables.data[templateId]) chat.memoryTables.data[templateId] = {};
+                    if (!chat.memoryTables.data[templateId][tableId]) chat.memoryTables.data[templateId][tableId] = {};
+                    chat.memoryTables.data[templateId][tableId][fieldId] = newValue;
+                    changedFields.push({
+                        templateId,
+                        tableId,
+                        fieldId,
+                        label: field.key,
+                        oldValue,
+                        newValue
+                    });
+                });
+        });
+
+        pushMemoryHistory(chat, changedFields, {
+            source: options.source || 'api'
+        });
+        return changedFields;
+    }
+
+    async function restoreHistoryEntry(historyId) {
+        const chat = getCurrentMemoryTableChat();
+        if (!chat) return;
+        const entry = (chat.memoryTables.history || []).find(item => item.id === historyId);
+        if (!entry) return;
+
+        chat.memoryTables.data = deepClone(entry.snapshot || {});
+        chat.memoryTables.lastChangedFieldPaths = [];
+        await saveCharacter(chat.id);
+        renderMemoryTableScreen();
+        showToast('已恢复到该历史快照');
+    }
+
+    async function persistTemplateNormalized(normalized) {
+        const existingIndex = db.memoryTableTemplates.findIndex(item => item.id === normalized.id);
+        if (existingIndex >= 0) {

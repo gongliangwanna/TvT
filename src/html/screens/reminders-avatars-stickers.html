@@ -1,0 +1,448 @@
+        <!-- 提醒事项屏幕 -->
+        <div id="reminder-screen" class="screen">
+            <header class="app-header">
+                <button class="back-btn" data-target="chat-room-screen">‹</button>
+                <div class="title-container">
+                    <h1 class="title">提醒事项</h1>
+                </div>
+                <div class="placeholder"></div>
+            </header>
+            <main class="content reminder-content-wrapper">
+                <!-- 1. 紧凑型滑动日历 -->
+                <div class="compact-calendar">
+                    <div class="calendar-header-mini">
+                        <button class="cal-nav-btn" id="reminder-cal-prev">
+                            <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                        </button>
+                        <div class="month-title-wrapper" style="position: relative; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <span class="month-title" id="reminder-month-title"></span>
+                            <input type="month" id="reminder-month-picker" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; margin: 0; border: none;">
+                        </div>
+                        <button class="cal-nav-btn" id="reminder-cal-next">
+                            <svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                        </button>
+                    </div>
+                    <div class="calendar-strip" id="reminder-calendar-days"></div>
+                </div>
+
+                <!-- 2. 角色/用户 分类切换 -->
+                <div class="reminder-tabs" id="reminder-tabs">
+                    <div class="reminder-tab-indicator" id="reminder-tab-indicator"></div>
+                    <div class="reminder-tab active" data-tab="char">角色提醒</div>
+                    <div class="reminder-tab" data-tab="user">我的提醒</div>
+                </div>
+
+                <!-- 3. 卡片瀑布流列表 -->
+                <div class="reminder-list-area" id="reminder-list-area">
+                    <div class="reminder-empty">今天暂无提醒事项</div>
+                </div>
+
+                <!-- 4. 渐变悬浮新建按钮 -->
+                <button class="reminder-fab" id="reminder-add-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                </button>
+            </main>
+        </div>
+
+        <!-- 新建提醒模态框 -->
+        <div id="reminder-form-modal" class="modal-overlay">
+            <div class="reminder-form-sheet">
+                <h3 id="reminder-form-title">新建提醒</h3>
+                <div class="reminder-form-group">
+                    <label>内容</label>
+                    <input type="text" id="reminder-input-title" placeholder="提醒内容..." maxlength="100">
+                </div>
+                <div class="reminder-form-group">
+                    <label>日期</label>
+                    <input type="date" id="reminder-input-date">
+                </div>
+                <div class="reminder-form-group">
+                    <label>时间</label>
+                    <input type="time" id="reminder-input-time">
+                </div>
+                <div class="reminder-form-group">
+                    <label>类型</label>
+                    <div class="reminder-type-selector">
+                        <div class="reminder-type-option active" data-type="toUser">提醒我</div>
+                        <div class="reminder-type-option" data-type="toSelf">TA的待办</div>
+                        <div class="reminder-type-option" data-type="remindChar">提醒TA</div>
+                    </div>
+                </div>
+                <div class="reminder-form-group">
+                    <label>重复</label>
+                    <select id="reminder-input-repeat">
+                        <option value="none">不重复</option>
+                        <option value="daily">每天</option>
+                        <option value="weekly">每周</option>
+                        <option value="monthly">每月</option>
+                    </select>
+                </div>
+                <div class="reminder-form-actions">
+                    <button class="reminder-btn-cancel" id="reminder-form-cancel">取消</button>
+                    <button class="reminder-btn-save" id="reminder-form-save">保存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 头像识别结果弹窗（用户头像库） -->
+        <div id="avatar-recognition-modal" class="ar-modal-overlay">
+            <div class="ar-modal">
+                <div class="ar-modal-title">头像识别</div>
+                <div class="ar-modal-body">
+                    <div class="ar-preview-wrap">
+                        <img id="ar-preview-img" src="" alt="">
+                    </div>
+                    <label class="ar-desc-label">名称（必填，如：开心、生气）</label>
+                    <input type="text" id="ar-name-input" class="ar-name-input" placeholder="自己起的昵称" maxlength="30">
+                    <label class="ar-desc-label">描述（选填，可为 AI 识别结果）</label>
+                    <textarea id="ar-description-input" class="ar-desc-input" placeholder="图片内容描述" rows="4"></textarea>
+                    <div class="ar-modal-actions">
+                        <button type="button" id="ar-cancel-btn" class="btn btn-small btn-neutral">取消</button>
+                        <button type="button" id="ar-confirm-btn" class="btn btn-small btn-primary">使用并保存</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 头像库管理弹窗 -->
+        <div id="avatar-library-modal" class="ar-modal-overlay ar-library-modal">
+            <div class="ar-modal">
+                <div class="ar-modal-title">头像库管理</div>
+                <div class="ar-modal-body">
+                    <div class="ar-upload-row">
+                        <input type="file" id="ar-user-library-file-input" accept="image/*" style="display:none;">
+                        <button type="button" id="ar-user-library-upload-local" class="btn btn-small btn-neutral ar-btn-upload">本地上传</button>
+                        <div class="ar-url-row">
+                            <input type="text" id="ar-user-library-url-input" class="ar-url-input" placeholder="图片链接">
+                            <button type="button" id="ar-user-library-upload-url" class="btn btn-small btn-primary">URL 上传</button>
+                        </div>
+                    </div>
+                    <div id="ar-library-list" class="ar-library-list"></div>
+                </div>
+                <div class="ar-library-toolbar">
+                    <button type="button" class="btn btn-small btn-neutral ar-library-close ar-library-close-btn">关闭</button>
+                    <div class="ar-toolbar-actions">
+                        <button type="button" id="ar-library-batch-delete" class="btn btn-small btn-neutral ar-library-batch-delete">批量删除</button>
+                        <button type="button" id="ar-library-clear-all" class="btn btn-small btn-danger ar-library-clear-all">清除全部缓存</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 用户头像库·添加弹窗 -->
+        <div id="user-avatar-add-modal" class="ar-modal-overlay">
+            <div class="ar-modal">
+                <div class="ar-modal-title">添加到用户头像库</div>
+                <div class="ar-modal-body">
+                    <div class="ar-preview-wrap">
+                        <img id="ar-user-add-preview-img" src="" alt="">
+                    </div>
+                    <label class="ar-option-row">
+                        <input type="checkbox" id="ar-user-add-use-ai">
+                        <span>上传时调用 API 自动识别并填入描述（可选）</span>
+                    </label>
+                    <button type="button" id="ar-user-add-recognize-btn" class="btn btn-small btn-neutral" style="margin-bottom:8px;">识别图像填入描述</button>
+                    <label class="ar-desc-label">名称（必填，如：开心、生气）</label>
+                    <input type="text" id="ar-user-add-name-input" class="ar-name-input" placeholder="自己起的昵称" maxlength="30">
+                    <label class="ar-desc-label">描述（选填，可为 AI 识别结果）</label>
+                    <textarea id="ar-user-add-description-input" class="ar-desc-input" placeholder="图片内容描述" rows="3"></textarea>
+                    <div class="ar-modal-actions">
+                        <button type="button" id="ar-user-add-cancel-btn" class="btn btn-small btn-neutral">取消</button>
+                        <button type="button" id="ar-user-add-confirm-btn" class="btn btn-small btn-primary">添加</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 头像库单项编辑弹窗（用户头像库） -->
+        <div id="avatar-library-edit-modal" class="ar-modal-overlay">
+            <div class="ar-modal ar-edit-modal">
+                <div class="ar-modal-title">编辑头像</div>
+                <div class="ar-modal-body">
+                    <div class="ar-preview-wrap">
+                        <img id="ar-edit-preview-img" src="" alt="">
+                    </div>
+                    <label class="ar-desc-label">名称</label>
+                    <input type="text" id="ar-edit-name-input" class="ar-name-input" placeholder="简短名称" maxlength="30">
+                    <label class="ar-desc-label">描述（选填）</label>
+                    <textarea id="ar-edit-description-input" class="ar-desc-input" placeholder="描述" rows="4"></textarea>
+                    <div class="ar-edit-meta" id="ar-edit-meta"></div>
+                    <div class="ar-modal-actions">
+                        <button type="button" id="ar-edit-apply-btn" class="btn btn-small btn-primary">应用为当前头像</button>
+                        <button type="button" id="ar-edit-save-btn" class="btn btn-small btn-neutral">保存</button>
+                        <button type="button" id="ar-edit-delete-btn" class="btn btn-small btn-danger">删除此项</button>
+                        <button type="button" id="ar-edit-close-btn" class="btn btn-small btn-neutral">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 角色头像库管理弹窗 -->
+        <div id="char-avatar-library-modal" class="ar-modal-overlay ar-library-modal ar-char-library-modal">
+            <div class="ar-modal">
+                <div class="ar-modal-title">角色头像库</div>
+                <div class="ar-modal-body">
+                    <div class="ar-upload-row">
+                        <input type="file" id="ar-char-library-file-input" accept="image/*" style="display:none;">
+                        <button type="button" id="ar-char-library-upload-local" class="btn btn-small btn-neutral ar-btn-upload">本地上传</button>
+                        <div class="ar-url-row">
+                            <input type="text" id="ar-char-library-url-input" class="ar-url-input" placeholder="图片链接">
+                            <button type="button" id="ar-char-library-upload-url" class="btn btn-small btn-primary">URL 上传</button>
+                        </div>
+                    </div>
+                    <div id="ar-char-library-list" class="ar-library-list"></div>
+                </div>
+                <div class="ar-library-toolbar">
+                    <button type="button" class="btn btn-small btn-neutral ar-library-close ar-char-library-close-btn">关闭</button>
+                    <div class="ar-toolbar-actions">
+                        <button type="button" id="ar-char-library-batch-delete" class="btn btn-small btn-neutral ar-library-batch-delete">批量删除</button>
+                        <button type="button" id="ar-char-library-clear-all" class="btn btn-small btn-danger ar-library-clear-all">清除全部</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 角色头像库·添加/上传弹窗 -->
+        <div id="char-avatar-add-modal" class="ar-modal-overlay">
+            <div class="ar-modal">
+                <div class="ar-modal-title">添加到角色头像库</div>
+                <div class="ar-modal-body">
+                    <div class="ar-preview-wrap">
+                        <img id="ar-char-add-preview-img" src="" alt="">
+                    </div>
+                    <label class="ar-option-row">
+                        <input type="checkbox" id="ar-char-add-use-ai">
+                        <span>上传时调用 API 自动识别图片（默认关闭）</span>
+                    </label>
+                    <label class="ar-desc-label">名称（必填）</label>
+                    <input type="text" id="ar-char-add-name-input" class="ar-name-input" placeholder="如：生气、开心" maxlength="30">
+                    <label class="ar-desc-label">描述（选填）</label>
+                    <textarea id="ar-char-add-description-input" class="ar-desc-input" placeholder="描述" rows="3"></textarea>
+                    <div class="ar-modal-actions">
+                        <button type="button" id="ar-char-add-cancel-btn" class="btn btn-small btn-neutral">取消</button>
+                        <button type="button" id="ar-char-add-confirm-btn" class="btn btn-small btn-primary">添加</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 角色头像库·单项编辑弹窗 -->
+        <div id="char-avatar-library-edit-modal" class="ar-modal-overlay">
+            <div class="ar-modal ar-edit-modal">
+                <div class="ar-modal-title">编辑角色头像</div>
+                <div class="ar-modal-body">
+                    <div class="ar-preview-wrap">
+                        <img id="ar-char-edit-preview-img" src="" alt="">
+                    </div>
+                    <label class="ar-desc-label">名称</label>
+                    <input type="text" id="ar-char-edit-name-input" class="ar-name-input" placeholder="名称" maxlength="30">
+                    <label class="ar-desc-label">描述（选填）</label>
+                    <textarea id="ar-char-edit-description-input" class="ar-desc-input" placeholder="描述" rows="4"></textarea>
+                    <div class="ar-edit-meta" id="ar-char-edit-meta"></div>
+                    <div class="ar-modal-actions">
+                        <button type="button" id="ar-char-edit-apply-btn" class="btn btn-small btn-primary">应用为当前角色头像</button>
+                        <button type="button" id="ar-char-edit-save-btn" class="btn btn-small btn-neutral">保存</button>
+                        <button type="button" id="ar-char-edit-delete-btn" class="btn btn-small btn-danger">删除此项</button>
+                        <button type="button" id="ar-char-edit-close-btn" class="btn btn-small btn-neutral">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 情头库管理弹窗 -->
+        <div id="couple-avatar-library-modal" class="ar-modal-overlay ar-library-modal ar-couple-library-modal">
+            <div class="ar-modal">
+                <div class="ar-modal-title">情头库</div>
+                <div class="ar-modal-body">
+                    <div class="ar-upload-row">
+                        <input type="file" id="ar-couple-library-file-input" accept="image/*" style="display:none;">
+                        <input type="file" id="ar-couple-library-file-input-char" accept="image/*" style="display:none;">
+                        <button type="button" id="ar-couple-library-upload-local" class="btn btn-small btn-neutral ar-btn-upload">本地上传</button>
+                        <div class="ar-url-row">
+                            <input type="text" id="ar-couple-library-url-input" class="ar-url-input" placeholder="图片链接">
+                            <button type="button" id="ar-couple-library-upload-url" class="btn btn-small btn-primary">URL 上传</button>
+                        </div>
+                    </div>
+                    <div id="couple-avatar-library-list" class="ar-library-list ar-couple-library-list"></div>
+                </div>
+                <div class="ar-library-toolbar">
+                    <button type="button" class="ar-library-close couple-avatar-library-close-btn btn btn-small btn-neutral">关闭</button>
+                    <div class="ar-toolbar-actions">
+                        <button type="button" id="couple-avatar-library-batch-delete" class="btn btn-small btn-neutral ar-library-batch-delete">批量删除</button>
+                        <button type="button" id="couple-avatar-library-clear-all" class="btn btn-small btn-danger ar-library-clear-all">清除全部</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 情头库·单项编辑弹窗 -->
+        <div id="couple-avatar-edit-modal" class="ar-modal-overlay">
+            <div class="ar-modal ar-edit-modal ar-couple-edit-modal">
+                <div class="ar-modal-title">编辑情头</div>
+                <div class="ar-modal-body">
+                    <div class="ar-couple-edit-preview">
+                        <div class="ar-couple-edit-pair">
+                            <span class="ar-couple-edit-label">用户</span>
+                            <img id="couple-edit-user-img" src="" alt="">
+                        </div>
+                        <div class="ar-couple-edit-pair">
+                            <span class="ar-couple-edit-label">角色</span>
+                            <img id="couple-edit-char-img" src="" alt="">
+                        </div>
+                    </div>
+                    <label class="ar-desc-label">名称</label>
+                    <input type="text" id="couple-edit-name-input" class="ar-name-input" placeholder="情头名称" maxlength="30">
+                    <label class="ar-desc-label">描述（选填）</label>
+                    <textarea id="couple-edit-description-input" class="ar-desc-input" placeholder="描述" rows="3"></textarea>
+                    <div class="ar-modal-actions">
+                        <button type="button" id="couple-edit-apply-btn" class="btn btn-small btn-primary">应用为当前情头</button>
+                        <button type="button" id="couple-edit-save-btn" class="btn btn-small btn-neutral">保存</button>
+                        <button type="button" id="couple-edit-delete-btn" class="btn btn-small btn-danger">删除此项</button>
+                        <button type="button" id="couple-edit-close-btn" class="btn btn-small btn-neutral">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 情头库·手动上传添加弹窗 -->
+        <div id="couple-avatar-add-modal" class="ar-modal-overlay">
+            <div class="ar-modal ar-couple-edit-modal">
+                <div class="ar-modal-title">添加到情头库</div>
+                <div class="ar-modal-body">
+                    <div class="ar-couple-edit-preview">
+                        <div class="ar-couple-edit-pair">
+                            <span class="ar-couple-edit-label">用户头像</span>
+                            <img id="ar-couple-add-user-img" src="" alt="">
+                        </div>
+                        <div class="ar-couple-edit-pair">
+                            <span class="ar-couple-edit-label">角色头像</span>
+                            <img id="ar-couple-add-char-img" src="" alt="" style="cursor:pointer; border:2px dashed #ccc;" title="点击选择角色头像">
+                            <input type="file" id="ar-couple-add-char-file" accept="image/*" style="display:none;">
+                            <div class="ar-url-row" style="margin-top:6px;">
+                                <input type="text" id="ar-couple-add-char-url-input" class="ar-url-input" placeholder="角色头像链接" style="font-size:12px;">
+                                <button type="button" id="ar-couple-add-char-url-btn" class="btn btn-small btn-neutral" style="font-size:12px; padding:4px 8px;">URL</button>
+                            </div>
+                        </div>
+                    </div>
+                    <label class="ar-option-row">
+                        <input type="checkbox" id="ar-couple-add-use-ai">
+                        <span>上传时调用 API 自动识别并填入描述（可选）</span>
+                    </label>
+                    <button type="button" id="ar-couple-add-recognize-btn" class="btn btn-small btn-neutral" style="margin-bottom:8px;">识别图像填入描述</button>
+                    <label class="ar-desc-label">名称（必填，如：甜蜜情头、校园情头）</label>
+                    <input type="text" id="ar-couple-add-name-input" class="ar-name-input" placeholder="情头名称" maxlength="30">
+                    <label class="ar-desc-label">描述（选填，可为 AI 识别结果）</label>
+                    <textarea id="ar-couple-add-description-input" class="ar-desc-input" placeholder="情头描述" rows="3"></textarea>
+                    <div class="ar-modal-actions">
+                        <button type="button" id="ar-couple-add-cancel-btn" class="btn btn-small btn-neutral">取消</button>
+                        <button type="button" id="ar-couple-add-confirm-btn" class="btn btn-small btn-primary">添加</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 头像识别字数选择弹窗 -->
+        <div id="avatar-recognition-detail-modal" class="ar-modal-overlay">
+            <div class="ar-modal">
+                <div class="ar-modal-title">头像识别字数</div>
+                <div class="ar-modal-body">
+                    <label class="ar-detail-option">
+                        <input type="radio" name="ar-detail-level" value="brief">
+                        <span>简洁（10-20字）</span>
+                    </label>
+                    <label class="ar-detail-option">
+                        <input type="radio" name="ar-detail-level" value="standard">
+                        <span>标准（30-50字）</span>
+                    </label>
+                    <label class="ar-detail-option">
+                        <input type="radio" name="ar-detail-level" value="detailed" checked>
+                        <span>详细（不限）</span>
+                    </label>
+                    <label class="ar-detail-option">
+                        <input type="radio" name="ar-detail-level" value="custom">
+                        <span>自定义</span>
+                    </label>
+                    <div id="ar-custom-words-container" style="display:none; margin-top:10px; padding:10px; background:#f9f9f9; border-radius:8px;">
+                        <label style="font-size:13px; color:#666; display:block; margin-bottom:6px;">自定义字数（5-500）</label>
+                        <input type="number" id="ar-custom-words-input" min="5" max="500" placeholder="请输入字数" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px; text-align:center; box-sizing:border-box;">
+                    </div>
+                    <div class="ar-modal-actions">
+                        <button type="button" id="ar-detail-cancel-btn" class="btn btn-small btn-neutral">取消</button>
+                        <button type="button" id="ar-detail-confirm-btn" class="btn btn-small btn-primary">确定</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 新增：管理菜单 (点击右上角菜单键出现) -->
+        <div id="sticker-menu-actionsheet" class="action-sheet-overlay">
+            <div class="action-sheet">
+                <button class="action-sheet-button" id="menu-multi-select-btn">多选管理</button>
+                <button class="action-sheet-button" id="menu-batch-import-btn">批量导入</button>
+                <button class="action-sheet-button" id="menu-add-new-btn">添加新表情</button>
+                <button class="action-sheet-button" id="menu-category-manage-btn">分类管理</button>
+                <button class="action-sheet-button danger" id="menu-cancel-btn">取消</button>
+            </div>
+        </div>
+
+        <!-- 表情包分类管理弹窗 -->
+        <div id="sticker-category-manage-modal" class="modal-overlay">
+            <div class="modal-window" style="max-height: 80vh; display: flex; flex-direction: column;">
+                <h3 style="margin-top: 0;">分类管理</h3>
+                <div style="display:flex; gap:10px; margin-bottom: 10px;">
+                    <input type="text" id="new-sticker-category-input" placeholder="输入新分类名称" style="flex:1; padding:8px; border:1px solid #eee; border-radius:6px;">
+                    <button type="button" class="btn btn-primary btn-small" id="add-sticker-category-btn">新建</button>
+                </div>
+                <div id="sticker-category-manage-list" style="flex: 1; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; padding: 5px;">
+                    <!-- JS 生成列表 -->
+                </div>
+                <div style="display: flex; justify-content: flex-end; margin-top: 15px;">
+                    <button type="button" class="btn btn-neutral" id="close-sticker-category-manage-btn">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 长按分类操作菜单 -->
+        <div id="sticker-category-actionsheet" class="action-sheet-overlay">
+            <div class="action-sheet">
+                <div class="action-sheet-title" id="sticker-category-action-title" style="text-align: center; color: #888; font-size: 13px; padding-bottom: 10px; border-bottom: 1px solid #eee; margin-bottom: 10px;">分类操作</div>
+                <button class="action-sheet-button" id="sc-rename-btn">重命名分类</button>
+                <button class="action-sheet-button" id="sc-dissolve-btn">解散分类 (表情移至未分类)</button>
+                <button class="action-sheet-button danger" id="sc-delete-btn">彻底删除分类及表情</button>
+                <button class="action-sheet-button" id="sc-cancel-btn" style="color: #666; margin-top: 5px;">取消</button>
+            </div>
+        </div>
+
+        <!-- 重命名分类弹窗 -->
+        <div id="sticker-category-rename-modal" class="modal-overlay">
+            <div class="modal-window" style="max-width: 320px;">
+                <h3>重命名分类</h3>
+                <input type="hidden" id="sc-rename-old-name">
+                <div class="form-group">
+                    <input type="text" id="sc-rename-new-name" placeholder="新分类名称" required>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 15px;">
+                    <button type="button" class="btn btn-primary" id="sc-rename-confirm-btn" style="flex: 1;">确认</button>
+                    <button type="button" class="btn btn-neutral" id="sc-rename-cancel-btn" style="flex: 1;">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 新增：移动分组弹窗 -->
+        <div id="move-sticker-modal" class="modal-overlay">
+            <div class="modal-window">
+                <h3>移动到分组</h3>
+                <div class="form-group">
+                    <label>选择或输入新分组名称</label>
+                    <input type="text" id="move-target-group-input" placeholder="例如：猫猫图" list="existing-groups-list">
+                    <datalist id="existing-groups-list">
+                        <!-- JS 自动填充现有分组 -->
+                    </datalist>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="confirm-move-sticker-btn" class="btn btn-primary" style="flex: 1;">确认移动</button>
+                    <button id="cancel-move-sticker-btn" class="btn btn-neutral" style="flex: 1;">取消</button>
+                </div>
+            </div>
+        </div>
+

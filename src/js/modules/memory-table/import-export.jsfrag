@@ -1,0 +1,420 @@
+            db.memoryTableTemplates.splice(existingIndex, 1, normalized);
+        } else {
+            db.memoryTableTemplates.unshift(normalized);
+        }
+
+        db.characters.forEach(chat => {
+            ensureMemoryTableState(chat);
+            if (chat.memoryTables.boundTemplateIds.includes(normalized.id)) {
+                ensureTemplateDataForChat(chat, normalized);
+            }
+        });
+
+        await saveData();
+        renderMemoryTableScreen();
+    }
+
+    async function bindTemplateToChat(chat, templateId, shouldBind) {
+        ensureMemoryTableState(chat);
+        if (shouldBind) {
+            if (!chat.memoryTables.boundTemplateIds.includes(templateId)) {
+                chat.memoryTables.boundTemplateIds.push(templateId);
+            }
+            const template = db.memoryTableTemplates.find(item => item.id === templateId);
+            if (template) ensureTemplateDataForChat(chat, template);
+        } else {
+            chat.memoryTables.boundTemplateIds = chat.memoryTables.boundTemplateIds.filter(id => id !== templateId);
+        }
+        await saveCharacter(chat.id);
+        renderMemoryTableScreen();
+    }
+
+    function openTemplateEditor(template) {
+        const modal = document.getElementById('memory-template-editor-modal');
+        const textarea = document.getElementById('memory-template-json');
+        if (!modal || !textarea) return;
+
+        const working = template
+            ? deepClone(template)
+            : (uiState.templateDraft ? deepClone(uiState.templateDraft) : createStarterTemplate());
+        uiState.editingTemplateId = working.id || (template ? template.id : null);
+        textarea.value = JSON.stringify(working, null, 2);
+        modal.classList.add('visible');
+    }
+
+    function closeTemplateEditor() {
+        const modal = document.getElementById('memory-template-editor-modal');
+        if (modal) modal.classList.remove('visible');
+        uiState.editingTemplateId = null;
+    }
+
+    async function saveTemplateFromEditor() {
+        ensureMemoryTemplateStore();
+        const textarea = document.getElementById('memory-template-json');
+        if (!textarea) return;
+        let parsed;
+        try {
+            parsed = JSON.parse(textarea.value);
+        } catch (error) {
+            showToast('JSON 解析失败，请检查格式');
+            return;
+        }
+
+        let normalized;
+        try {
+            normalized = normalizeTemplate(parsed, uiState.editingTemplateId || undefined);
+        } catch (error) {
+            showToast(error.message || '模板格式不合法');
+            return;
+        }
+        uiState.templateDraft = deepClone(normalized);
+        await persistTemplateNormalized(normalized);
+        closeTemplateEditor();
+        if (document.getElementById('memory-template-designer-modal')?.classList.contains('visible')) {
+            renderTemplateDesigner();
+        }
+        renderMemoryTableScreen();
+        showToast('模板已保存');
+    }
+
+    function getDesignerDraftTarget(tableIndex, fieldIndex) {
+        const draft = uiState.templateDraft;
+        if (!draft) return null;
+        if (tableIndex === undefined || tableIndex === null) return draft;
+        const table = draft.tables?.[tableIndex];
+        if (!table) return null;
+        if (fieldIndex === undefined || fieldIndex === null) return table;
+        return table.columns?.[fieldIndex] || null;
+    }
+
+    function updateDesignerDraftFromInput(target) {
+        const role = target.dataset.designerRole;
+        if (!role || !uiState.templateDraft) return;
+        const tableIndex = target.dataset.tableIndex !== undefined ? Number(target.dataset.tableIndex) : undefined;
+        const fieldIndex = target.dataset.fieldIndex !== undefined ? Number(target.dataset.fieldIndex) : undefined;
+        const draftTarget = getDesignerDraftTarget(tableIndex, fieldIndex);
+        if (!draftTarget) return;
+
+        const value = target.type === 'checkbox' ? target.checked : target.value;
+        switch (role) {
+            case 'template-name':
+                uiState.templateDraft.name = value;
+                break;
+            case 'template-description':
+                uiState.templateDraft.description = value;
+                break;
+            case 'table-name':
+                draftTarget.name = value;
+                break;
+            case 'table-mode':
+                draftTarget.mode = value === 'rows' ? 'rows' : 'keyValue';
+                break;
+            case 'table-extract-prompt':
+                draftTarget.extractPrompt = value;
+                break;
+            case 'field-key':
+                draftTarget.key = value;
+                break;
+            case 'field-group':
+                draftTarget.group = value;
+                break;
+            case 'field-type':
+                draftTarget.type = normalizeFieldType(value);
+                break;
+            case 'field-default':
+                draftTarget.default = draftTarget.type === 'tags' ? parseOptionText(value) : value;
+                break;
+            case 'field-ai-editable':
+                draftTarget.aiEditable = value !== 'false';
+                break;
+            case 'field-min':
+                draftTarget.min = value === '' ? undefined : Number(value);
+                break;
+            case 'field-max':
+                draftTarget.max = value === '' ? undefined : Number(value);
+                break;
+            case 'field-options':
+                draftTarget.options = parseOptionText(value);
+                break;
+            case 'field-ai-hint':
+                draftTarget.aiHint = value;
+                break;
+            case 'field-conditional-rules':
+                draftTarget.conditionalRules = parseConditionalRulesText(value);
+                break;
+            default:
+                break;
+        }
+    }
+
+    function mutateDesignerDraft(action, tableIndex, fieldIndex) {
+        const draft = uiState.templateDraft;
+        if (!draft) return;
+        if (action === 'add-table') {
+            draft.tables.push(createEmptyTableDraft());
+        } else if (action === 'remove-table') {
+            if (draft.tables.length > 1) draft.tables.splice(tableIndex, 1);
+        } else if (action === 'move-table-up') {
+            moveArrayItem(draft.tables, tableIndex, tableIndex - 1);
+        } else if (action === 'move-table-down') {
+            moveArrayItem(draft.tables, tableIndex, tableIndex + 1);
+        } else if (action === 'add-field') {
+            draft.tables[tableIndex].columns.push(createEmptyFieldDraft());
+        } else if (action === 'remove-field') {
+            const table = draft.tables[tableIndex];
+            if (table.columns.length > 1) table.columns.splice(fieldIndex, 1);
+        } else if (action === 'move-field-up') {
+            moveArrayItem(draft.tables[tableIndex].columns, fieldIndex, fieldIndex - 1);
+        } else if (action === 'move-field-down') {
+            moveArrayItem(draft.tables[tableIndex].columns, fieldIndex, fieldIndex + 1);
+        }
+    }
+
+    async function saveTemplateFromDesigner() {
+        if (!uiState.templateDraft) return;
+        let normalized;
+        try {
+            normalized = normalizeTemplate(uiState.templateDraft, uiState.editingTemplateId || undefined);
+        } catch (error) {
+            showToast(error.message || '模板格式不合法');
+            return;
+        }
+        uiState.templateDraft = deepClone(normalized);
+        await persistTemplateNormalized(normalized);
+        closeTemplateDesigner();
+        showToast('模板已保存');
+    }
+
+    async function deleteTemplate(templateId) {
+        const ok = confirm('删除后会解除所有角色对该模板的绑定，确定继续吗？');
+        if (!ok) return;
+
+        db.memoryTableTemplates = (db.memoryTableTemplates || []).filter(item => item.id !== templateId);
+        db.characters.forEach(chat => {
+            ensureMemoryTableState(chat);
+            chat.memoryTables.boundTemplateIds = chat.memoryTables.boundTemplateIds.filter(id => id !== templateId);
+            if (chat.memoryTables.data && chat.memoryTables.data[templateId]) delete chat.memoryTables.data[templateId];
+            if (chat.memoryTables.lockedFields && chat.memoryTables.lockedFields[templateId]) delete chat.memoryTables.lockedFields[templateId];
+        });
+        await saveData();
+        renderMemoryTableScreen();
+        showToast('模板已删除');
+    }
+
+    function exportTemplate(templateId) {
+        const template = db.memoryTableTemplates.find(item => item.id === templateId);
+        if (!template) return;
+        downloadJson(template, `${template.name || 'memory-template'}.json`);
+    }
+
+    function cloneTemplateWithFreshIds(template) {
+        const working = deepClone(normalizeTemplate(template));
+        const idMap = {
+            templateId: { [working.id]: createMemoryId('memory_tpl') },
+            tableIds: {},
+            fieldIds: {}
+        };
+        const originalTemplateId = working.id;
+        working.id = idMap.templateId[originalTemplateId];
+        working.tables = (working.tables || []).map(table => {
+            const oldTableId = table.id;
+            const newTableId = createMemoryId('memory_table');
+            idMap.tableIds[oldTableId] = newTableId;
+            table.id = newTableId;
+            table.columns = (table.columns || []).map(field => {
+                const oldFieldId = field.id;
+                const newFieldId = createMemoryId('memory_field');
+                idMap.fieldIds[`${oldTableId}::${oldFieldId}`] = newFieldId;
+                field.id = newFieldId;
+                return field;
+            });
+            return table;
+        });
+        return { template: working, idMap, originalTemplateId };
+    }
+
+    function remapTableDataForImport(template, idMap, binding = {}) {
+        const oldTemplateId = Object.keys(idMap.templateId)[0];
+        const sourceData = binding.data?.[oldTemplateId] || {};
+        const sourceLocks = binding.lockedFields?.[oldTemplateId] || {};
+        const nextData = {};
+        const nextLocks = {};
+
+        (template.tables || []).forEach(table => {
+            const oldTableId = Object.keys(idMap.tableIds).find(key => idMap.tableIds[key] === table.id);
+            const oldTableData = sourceData?.[oldTableId];
+            const oldLocked = sourceLocks?.[oldTableId] || [];
+
+            if (isRowsTable(table)) {
+                const rows = Array.isArray(oldTableData?.__rows) ? oldTableData.__rows : [];
+                nextData[table.id] = {
+                    __rows: rows.map(oldRow => {
+                        const row = { id: createMemoryId('memory_row'), cells: {} };
+                        (table.columns || []).forEach(field => {
+                            const sourceFieldId = Object.keys(idMap.fieldIds).find(key => idMap.fieldIds[key] === field.id)?.split('::')[1];
+                            const raw = oldRow?.cells?.[sourceFieldId] !== undefined ? oldRow.cells[sourceFieldId] : oldRow?.[sourceFieldId];
+                            row.cells[field.id] = raw === undefined ? getFieldDefaultValue(field) : normalizeFieldValue(field, raw);
+                        });
+                        return row;
+                    })
+                };
+            } else {
+                nextData[table.id] = {};
+                (table.columns || []).forEach(field => {
+                    const sourceFieldId = Object.keys(idMap.fieldIds).find(key => idMap.fieldIds[key] === field.id)?.split('::')[1];
+                    const raw = oldTableData?.[sourceFieldId];
+                    nextData[table.id][field.id] = raw === undefined ? getFieldDefaultValue(field) : normalizeFieldValue(field, raw);
+                });
+            }
+
+            nextLocks[table.id] = oldLocked.map(fieldId => {
+                const mappedKey = `${oldTableId}::${fieldId}`;
+                return idMap.fieldIds[mappedKey];
+            }).filter(Boolean);
+        });
+
+        return {
+            data: nextData,
+            lockedFields: nextLocks
+        };
+    }
+
+    function buildMemoryPackagePayload(templateIds) {
+        const chat = getCurrentMemoryTableChat();
+        if (!chat) return null;
+        ensureMemoryTableState(chat);
+        const boundTemplates = getBoundTemplates(chat).filter(template => templateIds.includes(template.id));
+        if (boundTemplates.length === 0) return null;
+        const binding = {
+            memoryMode: chat.memoryMode,
+            autoUpdateEnabled: !!chat.memoryTables.autoUpdateEnabled,
+            autoUpdateInterval: chat.memoryTables.autoUpdateInterval || 100,
+            data: {},
+            lockedFields: {}
+        };
+
+        boundTemplates.forEach(template => {
+            ensureTemplateDataForChat(chat, template);
+            binding.data[template.id] = deepClone(chat.memoryTables.data?.[template.id] || {});
+            binding.lockedFields[template.id] = deepClone(chat.memoryTables.lockedFields?.[template.id] || {});
+        });
+
+        return {
+            type: 'memory_table_package',
+            version: 1,
+            templates: deepClone(boundTemplates),
+            binding
+        };
+    }
+
+    function exportTemplatePackage(templateId) {
+        const template = db.memoryTableTemplates.find(item => item.id === templateId);
+        if (!template) return;
+        const payload = buildMemoryPackagePayload([templateId]) || {
+            type: 'memory_table_package',
+            version: 1,
+            templates: [deepClone(template)],
+            binding: null
+        };
+        downloadJson(payload, `${template.name || 'memory-package'}_package.json`);
+    }
+
+    function exportCurrentMemoryPackage() {
+        const chat = getCurrentMemoryTableChat();
+        if (!chat) {
+            showToast('请先进入一个角色聊天');
+            return;
+        }
+        const boundTemplates = getBoundTemplates(chat);
+        if (boundTemplates.length === 0) {
+            showToast('当前没有可导出的结构记忆模板');
+            return;
+        }
+        const payload = buildMemoryPackagePayload(boundTemplates.map(item => item.id));
+        downloadJson(payload, `${chat.remarkName || chat.realName || 'memory'}_memory_package.json`);
+    }
+
+    function exportAllTemplates() {
+        downloadJson(db.memoryTableTemplates || [], 'memory-table-templates.json');
+    }
+
+    function downloadJson(data, filename) {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    }
+
+    async function importTemplatesFromFile(file) {
+        if (!file) return;
+        const text = await file.text();
+        let parsed;
+        try {
+            parsed = JSON.parse(text);
+        } catch (error) {
+            showToast('导入失败：JSON 无法解析');
+            return;
+        }
+
+        ensureMemoryTemplateStore();
+        const isPackage = parsed && typeof parsed === 'object' && parsed.type === 'memory_table_package';
+        const list = isPackage
+            ? (Array.isArray(parsed.templates) ? parsed.templates : [])
+            : (Array.isArray(parsed) ? parsed : [parsed]);
+        const importedTemplates = [];
+        const importedMappings = [];
+
+        list.forEach(item => {
+            const cloned = cloneTemplateWithFreshIds(item);
+            importedTemplates.push(cloned.template);
+            importedMappings.push(cloned);
+            db.memoryTableTemplates.unshift(cloned.template);
+        });
+
+        const chat = getCurrentMemoryTableChat();
+        if (isPackage && parsed.binding && chat && importedMappings.length > 0) {
+            const shouldApply = window.confirm('检测到记忆包。是否把模板和已填好的表格数据一起导入到当前角色？');
+            if (shouldApply) {
+                ensureMemoryTableState(chat);
+                importedMappings.forEach(({ template, idMap }) => {
+                    if (!chat.memoryTables.boundTemplateIds.includes(template.id)) {
+                        chat.memoryTables.boundTemplateIds.push(template.id);
+                    }
+                    const remapped = remapTableDataForImport(template, idMap, parsed.binding);
+                    chat.memoryTables.data[template.id] = remapped.data;
+                    chat.memoryTables.lockedFields[template.id] = remapped.lockedFields;
+                });
+                if (parsed.binding.memoryMode) {
+                    chat.memoryMode = parsed.binding.memoryMode;
+                }
+                chat.memoryTables.autoUpdateEnabled = !!parsed.binding.autoUpdateEnabled;
+                chat.memoryTables.autoUpdateInterval = Math.max(10, parseInt(parsed.binding.autoUpdateInterval, 10) || 100);
+                await saveCharacter(chat.id);
+            }
+        }
+
+        await saveData();
+        renderMemoryTableScreen();
+        showToast(isPackage ? `已导入 ${importedTemplates.length} 个模板/记忆包` : `已导入 ${importedTemplates.length} 个模板`);
+    }
+
+    async function handleFieldInputChange(target) {
+        const chat = getCurrentMemoryTableChat();
+        if (!chat) return;
+        const templateId = target.dataset.templateId;
+        const tableId = target.dataset.tableId;
+        const fieldId = target.dataset.fieldId;
+        const template = db.memoryTableTemplates.find(item => item.id === templateId);
+        const table = template ? (template.tables || []).find(item => item.id === tableId) : null;
+        const field = table ? (table.columns || []).find(item => item.id === fieldId) : null;
+        if (!field) return;
+
+        const rawValue = target.type === 'checkbox' ? target.checked : target.value;
+        const rowId = target.dataset.rowId || '';
+        if (rowId && isRowsTable(table)) {
+            updateRowFieldValue(chat, templateId, table, rowId, field, rawValue, { source: 'manual' });

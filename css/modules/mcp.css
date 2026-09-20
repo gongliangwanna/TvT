@@ -1,0 +1,1193 @@
+/* ==========================================================================
+   MCP (Model Context Protocol) 核心中心与全套组件样式
+   - 彻底推翻旧版简陋卡片与低幼配色
+   - 采用现代原生移动端设计语言：层次清晰、动态微光、精致按键、人体工学间距
+   ========================================================================== */
+
+:root {
+  --mcp-primary: #18191b;
+  --mcp-accent: #2563eb;
+  --mcp-accent-subtle: #eff6ff;
+  --mcp-accent-glow: rgba(37, 99, 235, 0.12);
+  --mcp-bg: #f8fafc;
+  --mcp-card: #ffffff;
+  --mcp-card-elevated: #ffffff;
+  --mcp-card-border: #e2e8f0;
+  --mcp-border: #f1f5f9;
+  --mcp-text-main: #0f172a;
+  --mcp-text-muted: #64748b;
+  --mcp-text-sub: #94a3b8;
+  --mcp-control-bg: #f1f5f9;
+  --mcp-control-hover: #e2e8f0;
+  --mcp-success: #10b981;
+  --mcp-success-bg: #ecfdf5;
+  --mcp-warning: #f59e0b;
+  --mcp-warning-bg: #fffbeb;
+  --mcp-danger: #ef4444;
+  --mcp-danger-bg: #fef2f2;
+  --mcp-radius-sm: 8px;
+  --mcp-radius-md: 14px;
+  --mcp-radius-lg: 20px;
+  --mcp-radius-full: 9999px;
+  --mcp-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.03);
+  --mcp-shadow-md: 0 4px 16px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -1px rgba(15, 23, 42, 0.03);
+  --mcp-shadow-lg: 0 20px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.04);
+}
+
+body.night-mode-active {
+  --mcp-primary: #f8fafc;
+  --mcp-accent: #3b82f6;
+  --mcp-accent-subtle: rgba(59, 130, 246, 0.15);
+  --mcp-accent-glow: rgba(59, 130, 246, 0.2);
+  --mcp-bg: #090a0f;
+  --mcp-card: #13151b;
+  --mcp-card-elevated: #1a1d26;
+  --mcp-card-border: #222634;
+  --mcp-border: #1a1d26;
+  --mcp-text-main: #f1f5f9;
+  --mcp-text-muted: #94a3b8;
+  --mcp-text-sub: #64748b;
+  --mcp-control-bg: #1e222d;
+  --mcp-control-hover: #282e3d;
+  --mcp-success: #34d399;
+  --mcp-success-bg: rgba(52, 211, 153, 0.12);
+  --mcp-warning: #fbbf24;
+  --mcp-warning-bg: rgba(251, 191, 36, 0.12);
+  --mcp-danger: #f87171;
+  --mcp-danger-bg: rgba(248, 113, 113, 0.12);
+  --mcp-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --mcp-shadow-md: 0 4px 16px -2px rgba(0, 0, 0, 0.4);
+  --mcp-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+}
+
+/* 屏幕骨架 */
+#mcp-screen {
+  background: var(--mcp-bg);
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+}
+
+#mcp-screen.active {
+  display: flex;
+}
+
+/* 顶部导航栏 - 与系统风格严丝合缝 */
+#mcp-screen .app-header {
+  background: var(--mcp-bg);
+  border-bottom: 1px solid var(--mcp-border);
+}
+
+/* 主容器：强制启用独立丝滑滚动，解决任何机型滚动卡死 */
+.mcp-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding: 14px 16px calc(90px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mcp-content > * {
+  flex-shrink: 0;
+}
+
+/* 实时引擎仪表卡 (HUD Banner) */
+.mcp-engine-card {
+  position: relative;
+  background: var(--mcp-card);
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-lg);
+  padding: 16px 18px;
+  box-shadow: var(--mcp-shadow-sm);
+  overflow: hidden;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.mcp-engine-glow {
+  position: absolute;
+  top: -40px;
+  right: -40px;
+  width: 120px;
+  height: 120px;
+  background: radial-gradient(circle, var(--mcp-accent-glow) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.mcp-engine-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.mcp-pulse-wrapper {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mcp-summary-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  position: relative;
+  z-index: 2;
+  transition: background-color 0.3s ease;
+}
+
+.mcp-summary-dot.online {
+  background: var(--mcp-success);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.6);
+}
+
+.mcp-summary-dot.warning {
+  background: var(--mcp-warning);
+}
+
+.mcp-pulse-ring {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+  pointer-events: none;
+}
+
+.mcp-summary-dot.online + .mcp-pulse-ring {
+  border: 2px solid var(--mcp-success);
+  animation: mcp-pulse 2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+@keyframes mcp-pulse {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.mcp-engine-title-group h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mcp-text-main);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.mcp-engine-title-group p {
+  font-size: 12px;
+  color: var(--mcp-text-muted);
+  margin: 3px 0 0;
+  line-height: 1.35;
+}
+
+.mcp-engine-metrics {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--mcp-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+}
+
+.mcp-metric-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.mcp-metric-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--mcp-text-main);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.mcp-metric-lbl {
+  font-size: 11px;
+  color: var(--mcp-text-sub);
+  margin-top: 2px;
+}
+
+.mcp-metric-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--mcp-border);
+}
+
+/* 现代分段导航药丸 (Segmented Navigation) */
+.mcp-tabs,
+.mcp-tabs-pill {
+  margin: 0;
+  padding: 4px;
+  display: flex;
+  background: var(--mcp-control-bg);
+  border-radius: var(--mcp-radius-md);
+  gap: 3px;
+  border: 1px solid var(--mcp-card-border);
+  box-sizing: border-box;
+}
+
+.mcp-tabs button,
+.mcp-tabs-pill button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  border-radius: var(--mcp-radius-sm);
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--mcp-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.mcp-tabs button.active,
+.mcp-tabs-pill button.active {
+  background: var(--mcp-card);
+  color: var(--mcp-text-main);
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.mcp-tabs button svg,
+.mcp-tabs-pill button svg {
+  opacity: 0.7;
+}
+
+.mcp-tabs button.active svg,
+.mcp-tabs-pill button.active svg {
+  opacity: 1;
+  color: var(--mcp-accent);
+}
+
+/* 动态挂载根区域 */
+.mcp-panel-root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 200px;
+}
+
+/* 场景化快速入门向导 (Quick Starter Guide - 替代丑陋空图标) */
+.mcp-onboarding-box {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mcp-onboarding-banner {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08) 0%, rgba(16, 185, 129, 0.05) 100%);
+  border: 1px dashed rgba(37, 99, 235, 0.3);
+  border-radius: var(--mcp-radius-lg);
+  padding: 20px;
+  text-align: center;
+}
+
+.mcp-onboarding-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mcp-text-main);
+  margin: 0;
+}
+
+.mcp-onboarding-desc {
+  font-size: 12px;
+  color: var(--mcp-text-muted);
+  margin: 6px auto 0;
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+.mcp-quick-starter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.mcp-quick-type-card {
+  background: var(--mcp-card);
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-md);
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--mcp-shadow-sm);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mcp-quick-type-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--mcp-shadow-md);
+  border-color: var(--mcp-accent);
+}
+
+.mcp-quick-card-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--mcp-accent-subtle);
+  color: var(--mcp-accent);
+}
+
+.mcp-quick-card-info h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mcp-text-main);
+  margin: 0;
+}
+
+.mcp-quick-card-info p {
+  font-size: 11px;
+  color: var(--mcp-text-muted);
+  margin: 3px 0 0;
+  line-height: 1.35;
+}
+
+/* 列表分组标题 */
+.mcp-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px;
+}
+
+.mcp-list-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--mcp-text-sub);
+}
+
+.mcp-list-count {
+  font-size: 11px;
+  color: var(--mcp-text-muted);
+}
+
+/* 连接节点卡片 (Hub Cards) */
+.mcp-connections-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mcp-node-card {
+  background: var(--mcp-card);
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-lg);
+  padding: 14px 16px;
+  box-shadow: var(--mcp-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.2s ease;
+}
+
+.mcp-node-card:hover {
+  box-shadow: var(--mcp-shadow-md);
+}
+
+.mcp-node-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.mcp-node-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--mcp-control-bg);
+  color: var(--mcp-text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.mcp-node-avatar svg {
+  width: 20px;
+  height: 20px;
+}
+
+.mcp-node-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-node-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-node-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--mcp-text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-node-endpoint {
+  font-size: 11px;
+  color: var(--mcp-text-sub);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.mcp-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--mcp-radius-full);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.mcp-badge.online {
+  background: var(--mcp-success-bg);
+  color: var(--mcp-success);
+}
+
+.mcp-badge.testing {
+  background: var(--mcp-accent-subtle);
+  color: var(--mcp-accent);
+}
+
+.mcp-badge.error, .mcp-badge.failed {
+  background: var(--mcp-danger-bg);
+  color: var(--mcp-danger);
+}
+
+.mcp-badge.disabled, .mcp-badge.offline {
+  background: var(--mcp-control-bg);
+  color: var(--mcp-text-sub);
+}
+
+.mcp-badge.ready, .mcp-badge.paired {
+  background: var(--mcp-accent-subtle);
+  color: var(--mcp-accent);
+}
+
+/* 节点底部操作条 */
+.mcp-node-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid var(--mcp-border);
+}
+
+.mcp-node-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcp-chip {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--mcp-control-bg);
+  color: var(--mcp-text-muted);
+}
+
+.mcp-node-action-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcp-pill-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--mcp-radius-full);
+  font-size: 11px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--mcp-card-border);
+  background: var(--mcp-card);
+  color: var(--mcp-text-main);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mcp-pill-btn:hover {
+  background: var(--mcp-control-bg);
+}
+
+.mcp-pill-btn.primary {
+  background: var(--mcp-primary);
+  color: #fff;
+  border-color: var(--mcp-primary);
+}
+
+.mcp-pill-btn.primary:hover {
+  opacity: 0.9;
+}
+
+.mcp-pill-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 能力罗盘卡片 (Capabilities List) */
+.mcp-capabilities-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-capability-card {
+  background: var(--mcp-card);
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-md);
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  box-shadow: var(--mcp-shadow-sm);
+  transition: all 0.2s ease;
+}
+
+.mcp-capability-card:hover {
+  border-color: var(--mcp-accent);
+}
+
+.mcp-cap-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-cap-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcp-cap-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mcp-text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-cap-tag {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--mcp-control-bg);
+  color: var(--mcp-text-muted);
+}
+
+.mcp-cap-desc {
+  font-size: 11px;
+  color: var(--mcp-text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.mcp-cap-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 活动流水流水线 (Activity Stream) */
+.mcp-activity-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-timeline-row {
+  background: var(--mcp-card);
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-md);
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  box-shadow: var(--mcp-shadow-sm);
+  transition: all 0.18s ease;
+}
+
+.mcp-timeline-row:hover {
+  background: var(--mcp-control-bg);
+}
+
+.mcp-timeline-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-timeline-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-timeline-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mcp-text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-timeline-meta {
+  font-size: 11px;
+  color: var(--mcp-text-sub);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcp-timeline-summary {
+  font-size: 11px;
+  color: var(--mcp-text-muted);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 设置参数面板 (Settings Inset Cards) */
+.mcp-settings-group {
+  background: var(--mcp-card);
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-lg);
+  overflow: hidden;
+  box-shadow: var(--mcp-shadow-sm);
+}
+
+.mcp-setting-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--mcp-border);
+  gap: 12px;
+}
+
+.mcp-setting-item:last-child {
+  border-bottom: none;
+}
+
+.mcp-setting-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-setting-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mcp-text-main);
+}
+
+.mcp-setting-hint {
+  font-size: 11px;
+  color: var(--mcp-text-sub);
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+/* 原生质感 iOS Toggle */
+.mcp-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.mcp-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.mcp-switch-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: var(--mcp-control-hover);
+  border-radius: var(--mcp-radius-full);
+  transition: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mcp-switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mcp-switch input:checked + .mcp-switch-slider {
+  background-color: var(--mcp-accent);
+}
+
+.mcp-switch input:checked + .mcp-switch-slider:before {
+  transform: translateX(20px);
+}
+
+/* 居中模态弹窗 (Modal Dialog - 拒绝半截悬空露底) */
+.mcp-sheet-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 16px;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.mcp-sheet-overlay.visible {
+  display: flex;
+  opacity: 1;
+}
+
+.mcp-sheet-handle {
+  display: none;
+}
+
+.mcp-sheet {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  max-height: min(84vh, 680px);
+  background: var(--mcp-card);
+  border-radius: 20px;
+  border: 1px solid var(--mcp-card-border);
+  box-shadow: var(--mcp-shadow-lg), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: scale(0.94) translateY(8px);
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.24s ease;
+  z-index: 2;
+}
+
+.mcp-sheet-overlay.visible .mcp-sheet {
+  transform: scale(1) translateY(0);
+}
+
+.mcp-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--mcp-border);
+  background: var(--mcp-card);
+  flex-shrink: 0;
+}
+
+.mcp-sheet-head h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--mcp-text-main);
+  margin: 0;
+  letter-spacing: -0.2px;
+}
+
+/* 彻底重置并美化关闭按钮，杜绝浏览器默认方框 */
+#mcp-sheet-close,
+.mcp-sheet-close-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--mcp-control-bg);
+  color: var(--mcp-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+#mcp-sheet-close:hover,
+.mcp-sheet-close-btn:hover {
+  background: var(--mcp-control-hover);
+  color: var(--mcp-text-main);
+}
+
+#mcp-sheet-close:active,
+.mcp-sheet-close-btn:active {
+  transform: scale(0.92);
+}
+
+.mcp-sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mcp-sheet-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--mcp-border);
+  background: var(--mcp-card);
+  flex-shrink: 0;
+}
+
+.mcp-sheet-actions button {
+  flex: 1;
+  height: 42px;
+  border-radius: var(--mcp-radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mcp-sheet-actions .mcp-secondary-btn {
+  background: var(--mcp-control-bg);
+  color: var(--mcp-text-main);
+}
+
+.mcp-sheet-actions .mcp-primary-btn {
+  background: var(--mcp-primary);
+  color: #fff;
+}
+
+.mcp-sheet-actions .mcp-danger-btn {
+  background: var(--mcp-danger-bg);
+  color: var(--mcp-danger);
+}
+
+/* 表单控件美化 */
+.mcp-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mcp-text-main);
+}
+
+.mcp-input, .mcp-select, .mcp-textarea {
+  width: 100%;
+  border-radius: var(--mcp-radius-md);
+  border: 1px solid var(--mcp-card-border);
+  background: var(--mcp-card);
+  color: var(--mcp-text-main);
+  padding: 10px 14px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mcp-input:focus, .mcp-select:focus, .mcp-textarea:focus {
+  border-color: var(--mcp-accent);
+  box-shadow: 0 0 0 3px var(--mcp-accent-glow);
+}
+
+.mcp-textarea {
+  min-height: 84px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.mcp-form-note {
+  font-size: 11px;
+  color: var(--mcp-text-sub);
+  line-height: 1.4;
+}
+
+/* 对话中的 MCP 执行卡片 (Chat Activity Bubble) */
+.mcp-message-card {
+  width: 100%;
+  max-width: 320px;
+  background: var(--mcp-card);
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-md);
+  padding: 12px 14px;
+  box-shadow: var(--mcp-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-message-card.running {
+  border-left: 3px solid var(--mcp-accent);
+}
+
+.mcp-message-card.success {
+  border-left: 3px solid var(--mcp-success);
+}
+
+.mcp-message-card.failed {
+  border-left: 3px solid var(--mcp-danger);
+}
+
+.mcp-message-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mcp-message-source {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mcp-accent);
+  text-transform: uppercase;
+}
+
+.mcp-message-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mcp-text-main);
+}
+
+.mcp-message-summary {
+  font-size: 12px;
+  color: var(--mcp-text-muted);
+  line-height: 1.45;
+}
+
+.mcp-message-detail {
+  display: none;
+  font-size: 11px;
+  background: var(--mcp-control-bg);
+  color: var(--mcp-text-main);
+  padding: 8px 10px;
+  border-radius: var(--mcp-radius-sm);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  max-height: 160px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.mcp-message-card.expanded .mcp-message-detail {
+  display: block;
+}
+
+.mcp-message-toggle {
+  background: transparent;
+  border: none;
+  color: var(--mcp-accent);
+  font-size: 11px;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* 角色与群聊详情中的 MCP 权限面板 */
+.mcp-perm-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.mcp-perm-main-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--mcp-card);
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-md);
+}
+
+.mcp-perm-disclosure,
+.mcp-perm-subdisclosure {
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-md);
+  background: var(--mcp-card);
+  overflow: hidden;
+}
+
+.mcp-perm-disclosure > summary,
+.mcp-perm-subdisclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 14px;
+  cursor: pointer;
+  color: var(--mcp-text-main);
+  list-style: none;
+}
+
+.mcp-perm-disclosure > summary::-webkit-details-marker,
+.mcp-perm-subdisclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mcp-perm-disclosure > summary::after,
+.mcp-perm-subdisclosure > summary::after {
+  content: '›';
+  color: var(--mcp-text-sub);
+  font-size: 20px;
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+
+.mcp-perm-disclosure[open] > summary::after,
+.mcp-perm-subdisclosure[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.mcp-perm-disclosure-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mcp-perm-disclosure-summary {
+  font-size: 12px;
+  color: var(--mcp-text-sub);
+}
+
+.mcp-perm-disclosure-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 0 12px;
+}
+
+.mcp-perm-disclosure-content > .mcp-settings-group {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  box-shadow: none;
+}
+
+.mcp-perm-subdisclosure {
+  margin: 0 12px;
+}
+
+.mcp-perm-subdisclosure > summary {
+  padding: 11px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mcp-perm-subdisclosure .mcp-settings-group {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+.mcp-perm-tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.mcp-perm-node-group {
+  background: var(--mcp-card);
+  border: 1px solid var(--mcp-card-border);
+  border-radius: var(--mcp-radius-md);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-perm-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mcp-perm-node-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 22px;
+  border-top: 1px solid var(--mcp-border);
+  padding-top: 8px;
+}
+
+.mcp-perm-tool-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--mcp-text-main);
+}

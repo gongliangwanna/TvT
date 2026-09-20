@@ -1,0 +1,712 @@
+        if (!chat) {
+            summary.textContent = '请先进入一个私聊角色。';
+            modePill.textContent = '未选择角色';
+            content.innerHTML = '';
+            empty.style.display = 'block';
+            if (updateBtn) updateBtn.disabled = true;
+            if (fromJournalBtn) fromJournalBtn.disabled = true;
+            if (toJournalBtn) toJournalBtn.disabled = true;
+            refreshMemoryTableAutoUpdateControls(null, false);
+            return;
+        }
+
+        ensureMemoryTableState(chat);
+        const boundTemplates = getBoundTemplates(chat);
+        const modeLabel = chat.memoryMode === 'table'
+            ? '表格记忆模式'
+            : (chat.memoryMode === 'vector' ? '向量记忆模式' : '日记模式');
+        summary.textContent = `${chat.remarkName || chat.realName || '当前角色'} · 已绑定 ${boundTemplates.length} 个模板`;
+        modePill.textContent = modeLabel;
+        modePill.style.background = chat.memoryMode === 'table'
+            ? 'rgba(73, 129, 255, 0.12)'
+            : (chat.memoryMode === 'vector' ? 'rgba(116, 87, 255, 0.12)' : 'rgba(255, 181, 71, 0.12)');
+        modePill.style.color = chat.memoryMode === 'table'
+            ? '#335eea'
+            : (chat.memoryMode === 'vector' ? '#5a38d6' : '#b26a00');
+        if (updateBtn) updateBtn.disabled = boundTemplates.length === 0;
+        if (fromJournalBtn) fromJournalBtn.disabled = (chat.memoryJournals || []).filter(item => item.isFavorited).length === 0 || boundTemplates.length === 0;
+        if (toJournalBtn) toJournalBtn.disabled = !getMemoryContextBlock(chat, { force: true });
+        refreshMemoryTableAutoUpdateControls(chat, boundTemplates.length > 0);
+
+        document.querySelectorAll('.memory-table-tab-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === uiState.tab);
+        });
+
+        if (uiState.tab === 'templates') {
+            content.innerHTML = renderTemplateLibrary(chat);
+            empty.style.display = db.memoryTableTemplates.length === 0 ? 'block' : 'none';
+            empty.innerHTML = '<p>还没有模板</p><p>点击上方“新建模板”开始。</p>';
+        } else if (uiState.tab === 'history') {
+            content.innerHTML = renderHistoryView(chat);
+            empty.style.display = (chat.memoryTables.history || []).length === 0 ? 'block' : 'none';
+            empty.innerHTML = '<p>还没有更新历史</p><p>通过手动更新或编辑字段后，这里会记录快照。</p>';
+        } else {
+            content.innerHTML = renderTableView(chat);
+            if (boundTemplates.length === 0) {
+                empty.style.display = 'block';
+                empty.innerHTML = '<p>还没有绑定任何结构化模板</p><p>先去“模板库”创建并绑定模板吧。</p>';
+            } else if (!content.innerHTML.trim()) {
+                empty.style.display = 'block';
+                empty.innerHTML = '<p>当前没有匹配结果</p><p>试试调整搜索词，或新增字段/行内容。</p>';
+            } else {
+                empty.style.display = 'none';
+            }
+            drawAllCharts(chat);
+        }
+    }
+
+    function renderTemplateLibrary(chat) {
+        ensureMemoryTemplateStore();
+        const templates = db.memoryTableTemplates;
+        if (templates.length === 0) return '';
+
+        return templates.map(template => {
+            const bound = chat.memoryTables.boundTemplateIds.includes(template.id);
+            const tableCount = Array.isArray(template.tables) ? template.tables.length : 0;
+            const fieldCount = (template.tables || []).reduce((sum, table) => sum + ((table.columns || []).length), 0);
+            return `
+                <div class="memory-template-card" style="background:#fff; border-radius:16px; padding:14px; margin-bottom:12px; box-shadow:0 6px 20px rgba(0,0,0,0.04); border:1px solid #f1f1f1;">
+                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                        <div style="flex:1;">
+                            <div style="font-size:15px; font-weight:700; color:#333;">${escapeHtml(template.name)}</div>
+                            <div style="font-size:12px; color:#888; margin-top:4px;">${escapeHtml(template.description || '无描述')}</div>
+                            <div style="font-size:12px; color:#999; margin-top:8px;">${tableCount} 张表 · ${fieldCount} 个字段</div>
+                        </div>
+                        <label class="kkt-switch">
+                            <input type="checkbox" class="memory-template-bind-toggle" data-template-id="${template.id}" ${bound ? 'checked' : ''}>
+                            <span class="kkt-slider"></span>
+                        </label>
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+                        <button class="btn btn-small btn-primary" data-action="edit-template-visual" data-template-id="${template.id}">可视化编辑</button>
+                        <button class="btn btn-small btn-secondary" data-action="edit-template-json" data-template-id="${template.id}">JSON</button>
+                        <button class="btn btn-small btn-secondary" data-action="export-template" data-template-id="${template.id}">导出</button>
+                        <button class="btn btn-small btn-secondary" data-action="export-template-package" data-template-id="${template.id}">导出记忆包</button>
+                        <button class="btn btn-small btn-danger" data-action="delete-template" data-template-id="${template.id}">删除</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function openTemplateDesigner(template) {
+        const modal = document.getElementById('memory-template-designer-modal');
+        if (!modal) return;
+        const working = template ? deepClone(template) : createStarterTemplate();
+        working.tables = Array.isArray(working.tables) && working.tables.length > 0 ? working.tables : [createEmptyTableDraft()];
+        working.tables.forEach(table => {
+            table.columns = Array.isArray(table.columns) && table.columns.length > 0 ? table.columns : [createEmptyFieldDraft()];
+        });
+        uiState.editingTemplateId = template ? template.id : null;
+        uiState.templateDraft = working;
+        uiState.designerCollapsedFieldIds = {};
+        uiState.designerDrag = null;
+        renderTemplateDesigner();
+        modal.classList.add('visible');
+    }
+
+    function closeTemplateDesigner() {
+        const modal = document.getElementById('memory-template-designer-modal');
+        if (modal) modal.classList.remove('visible');
+        uiState.templateDraft = null;
+        uiState.designerDrag = null;
+    }
+
+    function renderTemplateDesigner() {
+        const draft = uiState.templateDraft;
+        const container = document.getElementById('memory-template-designer-body');
+        const titleEl = document.getElementById('memory-template-designer-title');
+        if (!draft || !container || !titleEl) return;
+
+        titleEl.textContent = uiState.editingTemplateId ? '编辑模板' : '新建模板';
+        container.innerHTML = `
+            <div class="form-group">
+                <label>模板名称</label>
+                <input type="text" data-designer-role="template-name" value="${escapeAttribute(draft.name || '')}" placeholder="例如：恋爱进展模板">
+            </div>
+            <div class="form-group">
+                <label>模板描述</label>
+                <textarea rows="3" data-designer-role="template-description" placeholder="说明这个模板适合什么场景">${escapeHtml(draft.description || '')}</textarea>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin:18px 0 10px;">
+                <div style="font-size:15px; font-weight:700; color:#333;">表格列表</div>
+                <button type="button" class="btn btn-small btn-primary" data-action="designer-add-table">新增表格</button>
+            </div>
+            ${(draft.tables || []).map((table, tableIndex) => renderDesignerTableCard(table, tableIndex)).join('')}
+        `;
+    }
+
+    function renderDesignerTableCard(table, tableIndex) {
+        const groups = getFieldGroups(table.columns || []);
+        return `
+            <div draggable="true" data-designer-draggable="table" data-table-index="${tableIndex}" style="background:#fff; border:1px solid #ececec; border-radius:16px; padding:14px; margin-bottom:14px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
+                    <div style="display:flex; align-items:center; gap:8px; font-size:14px; font-weight:700; color:#333;">
+                        <span style="cursor:grab; color:#999;">拖拽</span>
+                        <span>表格 ${tableIndex + 1}</span>
+                    </div>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <button type="button" class="btn btn-small btn-neutral" data-action="designer-move-table-up" data-table-index="${tableIndex}">上移</button>
+                        <button type="button" class="btn btn-small btn-neutral" data-action="designer-move-table-down" data-table-index="${tableIndex}">下移</button>
+                        <button type="button" class="btn btn-small btn-danger" data-action="designer-remove-table" data-table-index="${tableIndex}">删除表格</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>表格名称</label>
+                    <input type="text" data-designer-role="table-name" data-table-index="${tableIndex}" value="${escapeAttribute(table.name || '')}">
+                </div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <div class="form-group" style="flex:1; min-width:150px;">
+                        <label>表格模式</label>
+                        <select data-designer-role="table-mode" data-table-index="${tableIndex}">
+                            <option value="keyValue" ${table.mode !== 'rows' ? 'selected' : ''}>键值表</option>
+                            <option value="rows" ${table.mode === 'rows' ? 'selected' : ''}>列表行</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:2; min-width:220px;">
+                        <label>提取规则</label>
+                        <textarea rows="2" data-designer-role="table-extract-prompt" data-table-index="${tableIndex}" placeholder="给 API 的表级提取要求">${escapeHtml(table.extractPrompt || '')}</textarea>
+                    </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin:14px 0 8px;">
+                    <div style="font-size:13px; font-weight:700; color:#555;">字段</div>
+                    <button type="button" class="btn btn-small btn-secondary" data-action="designer-add-field" data-table-index="${tableIndex}">新增字段</button>
+                </div>
+                ${groups.map(group => `
+                    <div style="margin-top:10px; padding:10px 12px; border-radius:12px; background:${group.ungrouped ? 'rgba(0,0,0,0.025)' : 'rgba(91,140,255,0.06)'};">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+                            <div style="font-size:12px; font-weight:700; color:#666;">${escapeHtml(group.ungrouped ? '未分组字段' : group.name)}</div>
+                            <div style="font-size:11px; color:#999;">${group.fields.length} 个字段</div>
+                        </div>
+                        ${group.fields.map(({ field, index }) => renderDesignerFieldCard(field, tableIndex, index)).join('')}
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    function renderDesignerFieldCard(field, tableIndex, fieldIndex) {
+        const isCollapsed = !!uiState.designerCollapsedFieldIds[field.id];
+        const summaryTags = [
+            field.type || 'text',
+            field.group ? `分组:${field.group}` : '',
+            field.aiEditable === false ? 'AI只读' : 'AI可编辑'
+        ].filter(Boolean).join(' · ');
+        return `
+            <div draggable="true" data-designer-draggable="field" data-table-index="${tableIndex}" data-field-index="${fieldIndex}" style="border:1px dashed #e6e6e6; border-radius:14px; padding:12px; margin-top:10px; background:#fcfcfc;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; ${isCollapsed ? '' : 'margin-bottom:10px;'}">
+                    <div style="flex:1;">
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <span style="cursor:grab; color:#999; font-size:12px;">拖拽</span>
+                            <div style="font-size:13px; font-weight:700; color:#444;">${escapeHtml(field.key || `字段 ${fieldIndex + 1}`)}</div>
+                            <span style="font-size:11px; color:#8a8a8a; background:rgba(0,0,0,0.05); padding:2px 8px; border-radius:999px;">${escapeHtml(field.type || 'text')}</span>
+                        </div>
+                        <div style="font-size:12px; color:#888; margin-top:4px;">${escapeHtml(summaryTags)}</div>
+                    </div>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
+                        <button type="button" class="btn btn-small btn-neutral" data-action="designer-toggle-field-collapse" data-field-id="${field.id}">${isCollapsed ? '展开' : '折叠'}</button>
+                        <button type="button" class="btn btn-small btn-neutral" data-action="designer-move-field-up" data-table-index="${tableIndex}" data-field-index="${fieldIndex}">上移</button>
+                        <button type="button" class="btn btn-small btn-neutral" data-action="designer-move-field-down" data-table-index="${tableIndex}" data-field-index="${fieldIndex}">下移</button>
+                        <button type="button" class="btn btn-small btn-danger" data-action="designer-remove-field" data-table-index="${tableIndex}" data-field-index="${fieldIndex}">删除字段</button>
+                    </div>
+                </div>
+                <div style="display:${isCollapsed ? 'none' : 'block'};">
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px;">
+                    <div class="form-group">
+                        <label>字段名</label>
+                        <input type="text" data-designer-role="field-key" data-table-index="${tableIndex}" data-field-index="${fieldIndex}" value="${escapeAttribute(field.key || '')}">
+                    </div>
+                    <div class="form-group">
+                        <label>字段分组</label>
+                        <input type="text" data-designer-role="field-group" data-table-index="${tableIndex}" data-field-index="${fieldIndex}" value="${escapeAttribute(field.group || '')}" placeholder="例如：关系 / 事件 / 备注">
+                    </div>
+                    <div class="form-group">
+                        <label>类型</label>
+                        <select data-designer-role="field-type" data-table-index="${tableIndex}" data-field-index="${fieldIndex}">
+                            ${['text', 'longtext', 'number', 'enum', 'tags', 'progress', 'date', 'boolean'].map(type => `<option value="${type}" ${field.type === type ? 'selected' : ''}>${type}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>默认值</label>
+                        <input type="text" data-designer-role="field-default" data-table-index="${tableIndex}" data-field-index="${fieldIndex}" value="${escapeAttribute(Array.isArray(field.default) ? field.default.join(', ') : String(field.default ?? ''))}">
+                    </div>
+                    <div class="form-group">
+                        <label>AI 可编辑</label>
+                        <select data-designer-role="field-ai-editable" data-table-index="${tableIndex}" data-field-index="${fieldIndex}">
+                            <option value="true" ${field.aiEditable !== false ? 'selected' : ''}>是</option>
+                            <option value="false" ${field.aiEditable === false ? 'selected' : ''}>否</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>最小值</label>
+                        <input type="number" data-designer-role="field-min" data-table-index="${tableIndex}" data-field-index="${fieldIndex}" value="${escapeAttribute(field.min ?? '')}">
+                    </div>
+                    <div class="form-group">
+                        <label>最大值</label>
+                        <input type="number" data-designer-role="field-max" data-table-index="${tableIndex}" data-field-index="${fieldIndex}" value="${escapeAttribute(field.max ?? '')}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>选项（enum/tags 用，一行一个或逗号分隔）</label>
+                    <textarea rows="2" data-designer-role="field-options" data-table-index="${tableIndex}" data-field-index="${fieldIndex}" placeholder="陌生&#10;朋友&#10;暧昧">${escapeHtml((field.options || []).join('\n'))}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>AI 提示</label>
+                    <textarea rows="2" data-designer-role="field-ai-hint" data-table-index="${tableIndex}" data-field-index="${fieldIndex}" placeholder="告诉 AI 这个字段该怎么更新">${escapeHtml(field.aiHint || '')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>条件高亮规则（每行 运算符|值|颜色，例如 <=|20|#ffe7e7）</label>
+                    <textarea rows="2" data-designer-role="field-conditional-rules" data-table-index="${tableIndex}" data-field-index="${fieldIndex}" placeholder=">=|80|#e8fff1">${escapeHtml(serializeConditionalRules(field.conditionalRules || []))}</textarea>
+                </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderHistoryView(chat) {
+        const history = chat.memoryTables.history || [];
+        if (history.length === 0) return '';
+        return history.map(entry => {
+            const sourceLabel = entry.source === 'api'
+                ? 'API 更新'
+                : entry.source === 'auto' || entry.source === 'auto_latest'
+                    ? '自动更新'
+                    : '手动编辑';
+            const changedText = (entry.changedFields || []).map(item => `${escapeHtml(item.label)}：${escapeHtml(getShortValue(item.oldValue))} → ${escapeHtml(getShortValue(item.newValue))}`).join('<br>');
+            return `
+                <div style="background:#fff; border-radius:16px; padding:14px; margin-bottom:12px; box-shadow:0 6px 20px rgba(0,0,0,0.04); border:1px solid #f1f1f1;">
+                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                        <div>
+                            <div style="font-weight:700; color:#333;">${formatDateTime(entry.timestamp)}</div>
+                            <div style="font-size:12px; color:#999; margin-top:4px;">来源：${sourceLabel} · ${entry.changedFields ? entry.changedFields.length : 0} 项变化</div>
+                        </div>
+                        <button class="btn btn-small btn-primary" data-action="restore-history" data-history-id="${entry.id}">恢复</button>
+                    </div>
+                    <div style="font-size:13px; color:#555; line-height:1.65; margin-top:10px;">${changedText || '无变化详情'}</div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function matchesMemorySearch(parts) {
+        const keyword = uiState.search.trim().toLowerCase();
+        if (!keyword) return true;
+        return parts.join(' ').toLowerCase().includes(keyword);
+    }
+
+    function getDisplayFieldItems(chat, template, table) {
+        const items = (table.columns || []).map(field => {
+            const value = getFieldValue(chat, template.id, table.id, field);
+            return {
+                template,
+                table,
+                field,
+                value,
+                locked: isFieldLocked(chat, template.id, table.id, field.id),
+                changed: (chat.memoryTables.lastChangedFieldPaths || []).includes(buildFieldPath(template.id, table.id, field.id))
+            };
+        }).filter(item => matchesMemorySearch([
+            template.name,
+            template.description || '',
+            table.name,
+            item.field.group || '',
+            item.field.key,
+            getFieldDisplayValue(item.field, item.value)
+        ]));
+
+        if (uiState.sort === 'name') {
+            items.sort((a, b) => a.field.key.localeCompare(b.field.key, 'zh-CN'));
+        } else if (uiState.sort === 'changed') {
+            items.sort((a, b) => Number(b.changed) - Number(a.changed) || a.field.key.localeCompare(b.field.key, 'zh-CN'));
+        } else if (uiState.sort === 'locked') {
+            items.sort((a, b) => Number(b.locked) - Number(a.locked) || a.field.key.localeCompare(b.field.key, 'zh-CN'));
+        }
+
+        return items;
+    }
+
+    function renderKeyValueFieldCard(item) {
+        const color = evaluateConditionalColor(item.field, item.value);
+        return `
+            <div class="memory-field-card" style="
+                background:#fff;
+                border-radius:16px;
+                padding:14px;
+                margin-bottom:12px;
+                box-shadow:0 6px 20px rgba(0,0,0,0.04);
+                border:1px solid ${item.changed ? '#c6d6ff' : '#f1f1f1'};
+                ${color ? `background:${color};` : ''}
+            ">
+                <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                    <div style="flex:1;">
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <span style="font-size:15px; font-weight:700; color:#333;">${escapeHtml(item.field.key)}</span>
+                            <span style="font-size:11px; color:#8a8a8a; background:rgba(0,0,0,0.05); padding:2px 8px; border-radius:999px;">${escapeHtml(item.field.type)}</span>
+                            ${item.field.group ? `<span style="font-size:11px; color:#5a6ab8; background:rgba(91,140,255,0.08); padding:2px 8px; border-radius:999px;">${escapeHtml(item.field.group)}</span>` : ''}
+                            ${item.changed ? '<span style="font-size:11px; color:#335eea; background:rgba(51,94,234,0.08); padding:2px 8px; border-radius:999px;">刚更新</span>' : ''}
+                            ${item.locked ? '<span style="font-size:11px; color:#b25b00; background:rgba(255,159,67,0.12); padding:2px 8px; border-radius:999px;">已锁定</span>' : ''}
+                        </div>
+                        ${item.field.aiHint ? `<div style="font-size:12px; color:#888; margin-top:6px;">${escapeHtml(item.field.aiHint)}</div>` : ''}
+                    </div>
+                    <button class="btn btn-small ${item.locked ? 'btn-secondary' : 'btn-neutral'}" data-action="toggle-lock" data-template-id="${item.template.id}" data-table-id="${item.table.id}" data-field-id="${item.field.id}">${item.locked ? '解锁' : '锁定'}</button>
+                </div>
+                <div style="margin-top:12px;">
+                    ${renderFieldEditor(item.template.id, item.table.id, item.field, item.value, item.locked)}
+                </div>
+                ${renderFieldChartContainer(item.template.id, item.table.id, item.field)}
+            </div>
+        `;
+    }
+
+    function renderRowsTableCard(chat, template, table) {
+        const rows = getRows(chat, template.id, table);
+        const visibleRows = rows.filter(row => matchesMemorySearch([
+            template.name,
+            template.description || '',
+            table.name,
+            ...(table.columns || []).map(field => `${field.key} ${getFieldDisplayValue(field, row.cells[field.id])}`)
+        ]));
+        if (uiState.search.trim() && visibleRows.length === 0) {
+            return '';
+        }
+
+        return `
+            <div style="background:#fff; border-radius:18px; padding:14px; margin-bottom:16px; box-shadow:0 6px 20px rgba(0,0,0,0.04); border:1px solid #f1f1f1;">
+                <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:10px;">
+                    <div>
+                        <div style="font-size:15px; font-weight:700; color:#333;">${escapeHtml(template.name)} / ${escapeHtml(table.name)}</div>
+                        <div style="font-size:12px; color:#888; margin-top:4px;">多行表 · ${visibleRows.length}/${rows.length} 行</div>
+                        ${table.extractPrompt ? `<div style="font-size:12px; color:#999; margin-top:4px;">${escapeHtml(table.extractPrompt)}</div>` : ''}
+                    </div>
+                    <button type="button" class="btn btn-small btn-primary" data-action="add-row" data-template-id="${template.id}" data-table-id="${table.id}">新增行</button>
+                </div>
+                ${rows.length === 0 ? `
+                    <div style="padding:14px; border:1px dashed #e6e6e6; border-radius:14px; color:#999; font-size:13px;">还没有任何行，点击“新增行”开始录入。</div>
+                ` : visibleRows.map((row, rowIndex) => `
+                    <div style="border:1px solid #ececec; border-radius:14px; padding:12px; margin-top:10px; background:#fcfcfc;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
+                            <div style="font-size:13px; font-weight:700; color:#444;">第 ${rowIndex + 1} 行</div>
+                            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                                <button type="button" class="btn btn-small btn-neutral" data-action="move-row-up" data-template-id="${template.id}" data-table-id="${table.id}" data-row-id="${row.id}">上移</button>
+                                <button type="button" class="btn btn-small btn-neutral" data-action="move-row-down" data-template-id="${template.id}" data-table-id="${table.id}" data-row-id="${row.id}">下移</button>
+                                <button type="button" class="btn btn-small btn-danger" data-action="delete-row" data-template-id="${template.id}" data-table-id="${table.id}" data-row-id="${row.id}">删除</button>
+                            </div>
+                        </div>
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px;">
+                            ${(table.columns || []).map(field => {
+                                const locked = isFieldLocked(chat, template.id, table.id, field.id);
+                                const changed = (chat.memoryTables.lastChangedFieldPaths || []).includes(buildFieldPath(template.id, table.id, field.id, row.id));
+                                return `
+                                    <div style="border:1px solid ${changed ? '#c6d6ff' : '#ececec'}; border-radius:12px; padding:10px; background:#fff;">
+                                        <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start; margin-bottom:8px;">
+                                            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                                                <span style="font-size:13px; font-weight:700; color:#444;">${escapeHtml(field.key)}</span>
+                                                <span style="font-size:11px; color:#8a8a8a; background:rgba(0,0,0,0.05); padding:2px 8px; border-radius:999px;">${escapeHtml(field.type)}</span>
+                                                ${changed ? '<span style="font-size:11px; color:#335eea;">刚更新</span>' : ''}
+                                                ${locked ? '<span style="font-size:11px; color:#b25b00;">已锁定</span>' : ''}
+                                            </div>
+                                            <button class="btn btn-small ${locked ? 'btn-secondary' : 'btn-neutral'}" data-action="toggle-lock" data-template-id="${template.id}" data-table-id="${table.id}" data-field-id="${field.id}">${locked ? '解锁' : '锁定'}</button>
+                                        </div>
+                                        ${renderFieldEditor(template.id, table.id, field, row.cells[field.id], locked, row.id)}
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    function renderTableView(chat) {
+        const templates = getBoundTemplates(chat);
+        let html = '';
+
+        templates.forEach(template => {
+            ensureTemplateDataForChat(chat, template);
+            (template.tables || []).forEach(table => {
+                if (isRowsTable(table)) {
+                    const card = renderRowsTableCard(chat, template, table);
+                    if (card) {
+                        html += card;
+                    }
+                    return;
+                }
+
+                const items = getDisplayFieldItems(chat, template, table);
+                if (items.length === 0) return;
+                html += `
+                    <div style="margin:18px 0 10px;">
+                        <div style="font-size:15px; font-weight:700; color:#333;">${escapeHtml(template.name)} / ${escapeHtml(table.name)}</div>
+                        ${table.extractPrompt ? `<div style="font-size:12px; color:#999; margin-top:4px;">${escapeHtml(table.extractPrompt)}</div>` : ''}
+                    </div>
+                `;
+                getFieldGroups(items.map(item => item.field)).forEach(group => {
+                    const groupItems = items.filter(item => ((item.field.group || '').trim() || '未分组') === group.name);
+                    if (!group.ungrouped) {
+                        html += `<div style="font-size:12px; color:#666; font-weight:700; margin:10px 0 8px;">${escapeHtml(group.name)}</div>`;
+                    }
+                    html += groupItems.map(renderKeyValueFieldCard).join('');
+                });
+            });
+        });
+
+        return html;
+    }
+
+    function renderFieldEditor(templateId, tableId, field, value, locked, rowId = '') {
+        const disabled = locked ? 'disabled' : '';
+        const rowAttr = rowId ? `data-row-id="${rowId}"` : '';
+        const baseAttrs = `class="memory-table-input" data-template-id="${templateId}" data-table-id="${tableId}" data-field-id="${field.id}" ${rowAttr} ${disabled}`;
+        switch (normalizeFieldType(field.type)) {
+            case 'longtext':
+                return `<textarea ${baseAttrs} rows="3" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px; min-height:88px;">${escapeHtml(String(value || ''))}</textarea>`;
+            case 'number':
+            case 'progress':
+                return `<input ${baseAttrs} type="number" value="${escapeAttribute(String(value ?? ''))}" min="${field.min ?? ''}" max="${field.max ?? ''}" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px;">`;
+            case 'enum':
+                return `<select ${baseAttrs} style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px; background:#fff;">
+                    ${(field.options || []).map(option => `<option value="${escapeAttribute(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+                </select>`;
+            case 'boolean':
+                return `
+                    <label style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px solid #ececec; border-radius:12px;">
+                        <span style="font-size:14px; color:#666;">${value ? '已开启' : '已关闭'}</span>
+                        <label class="kkt-switch">
+                            <input ${baseAttrs} type="checkbox" ${value ? 'checked' : ''}>
+                            <span class="kkt-slider"></span>
+                        </label>
+                    </label>
+                `;
+            case 'tags':
+                return `<input ${baseAttrs} type="text" value="${escapeAttribute(Array.isArray(value) ? value.join(', ') : String(value || ''))}" placeholder="用逗号分隔多个标签" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px;">`;
+            case 'date':
+                return `<input ${baseAttrs} type="date" value="${escapeAttribute(String(value || ''))}" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px;">`;
+            default:
+                return `<input ${baseAttrs} type="text" value="${escapeAttribute(String(value || ''))}" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px;">`;
+        }
+    }
+
+    function renderFieldEditor(templateId, tableId, field, value, locked) {
+        const disabled = locked ? 'disabled' : '';
+        const baseAttrs = `class="memory-table-input" data-template-id="${templateId}" data-table-id="${tableId}" data-field-id="${field.id}" ${disabled}`;
+        switch (normalizeFieldType(field.type)) {
+            case 'longtext':
+                return `<textarea ${baseAttrs} rows="3" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px; min-height:88px;">${escapeHtml(String(value || ''))}</textarea>`;
+            case 'number':
+            case 'progress':
+                return `<input ${baseAttrs} type="number" value="${escapeAttribute(String(value ?? ''))}" min="${field.min ?? ''}" max="${field.max ?? ''}" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px;">`;
+            case 'enum':
+                return `<select ${baseAttrs} style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px; background:#fff;">
+                    ${(field.options || []).map(option => `<option value="${escapeAttribute(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+                </select>`;
+            case 'boolean':
+                return `
+                    <label style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px solid #ececec; border-radius:12px;">
+                        <span style="font-size:14px; color:#666;">${value ? '已开启' : '已关闭'}</span>
+                        <label class="kkt-switch">
+                            <input ${baseAttrs} type="checkbox" ${value ? 'checked' : ''}>
+                            <span class="kkt-slider"></span>
+                        </label>
+                    </label>
+                `;
+            case 'tags':
+                return `<input ${baseAttrs} type="text" value="${escapeAttribute(Array.isArray(value) ? value.join(', ') : String(value || ''))}" placeholder="用逗号分隔多个标签" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px;">`;
+            case 'date':
+                return `<input ${baseAttrs} type="date" value="${escapeAttribute(String(value || ''))}" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px;">`;
+            default:
+                return `<input ${baseAttrs} type="text" value="${escapeAttribute(String(value || ''))}" style="width:100%; border:1px solid #ececec; border-radius:12px; padding:10px; font-size:14px;">`;
+        }
+    }
+
+    function renderFieldChartContainer(templateId, tableId, field) {
+        const type = normalizeFieldType(field.type);
+        if (!['number', 'progress'].includes(type)) return '';
+        return `
+            <div style="margin-top:12px; border-top:1px dashed #efefef; padding-top:12px;">
+                <div style="font-size:12px; color:#999; margin-bottom:6px;">趋势</div>
+                <canvas class="memory-field-chart" data-template-id="${templateId}" data-table-id="${tableId}" data-field-id="${field.id}" height="54" style="width:100%; height:54px;"></canvas>
+            </div>
+        `;
+    }
+
+    function getFieldHistorySeries(chat, templateId, tableId, fieldId, currentValue) {
+        const entries = [...(chat.memoryTables.history || [])].reverse();
+        const result = [];
+        entries.forEach(entry => {
+            const value = entry.snapshot?.[templateId]?.[tableId]?.[fieldId];
+            if (typeof value === 'number') {
+                result.push(value);
+            }
+        });
+        if (typeof currentValue === 'number') {
+            result.push(currentValue);
+        }
+        return result.slice(-12);
+    }
+
+    function drawAllCharts(chat) {
+        const canvases = document.querySelectorAll('#memory-table-screen .memory-field-chart');
+        canvases.forEach(canvas => {
+            const templateId = canvas.dataset.templateId;
+            const tableId = canvas.dataset.tableId;
+            const fieldId = canvas.dataset.fieldId;
+            const template = db.memoryTableTemplates.find(item => item.id === templateId);
+            const table = template ? template.tables.find(item => item.id === tableId) : null;
+            const field = table ? table.columns.find(item => item.id === fieldId) : null;
+            if (!field) return;
+            const value = getFieldValue(chat, templateId, tableId, field);
+            const series = getFieldHistorySeries(chat, templateId, tableId, fieldId, value);
+            drawSparkline(canvas, series, field);
+        });
+    }
+
+    function drawSparkline(canvas, series, field) {
+        const ctx = canvas.getContext('2d');
+        const width = canvas.clientWidth || 300;
+        const height = canvas.height || 54;
+        canvas.width = width;
+        ctx.clearRect(0, 0, width, height);
+
+        ctx.strokeStyle = '#e6e9f2';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, height - 10);
+        ctx.lineTo(width, height - 10);
+        ctx.stroke();
+
+        if (!Array.isArray(series) || series.length < 2) {
+            ctx.fillStyle = '#aaa';
+            ctx.font = '12px sans-serif';
+            ctx.fillText('暂无足够历史数据', 10, 28);
+            return;
+        }
+
+        const min = typeof field.min === 'number' ? field.min : Math.min(...series);
+        const max = typeof field.max === 'number' ? field.max : Math.max(...series);
+        const range = Math.max(1, max - min);
+
+        ctx.strokeStyle = '#5b8cff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+
+        series.forEach((value, index) => {
+            const x = (width - 12) * (index / Math.max(1, series.length - 1)) + 6;
+            const y = height - 10 - ((value - min) / range) * (height - 24);
+            if (index === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        const lastValue = series[series.length - 1];
+        const lastX = width - 6;
+        const lastY = height - 10 - ((lastValue - min) / range) * (height - 24);
+        ctx.fillStyle = '#5b8cff';
+        ctx.beginPath();
+        ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    function formatDateTime(timestamp) {
+        const date = new Date(timestamp);
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        const hh = String(date.getHours()).padStart(2, '0');
+        const mm = String(date.getMinutes()).padStart(2, '0');
+        return `${y}-${m}-${d} ${hh}:${mm}`;
+    }
+
+    function getShortValue(value) {
+        if (Array.isArray(value)) return value.join(', ');
+        if (typeof value === 'object' && value !== null) return JSON.stringify(value);
+        const text = String(value ?? '');
+        return text.length > 24 ? `${text.slice(0, 24)}...` : text;
+    }
+
+    function escapeHtml(text) {
+        return String(text ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function escapeAttribute(text) {
+        return escapeHtml(text).replace(/"/g, '&quot;');
+    }
+
+    function isEmptyMemoryValue(field, value) {
+        const normalized = normalizeFieldValue(field, value);
+        switch (normalizeFieldType(field.type)) {
+            case 'number':
+            case 'progress':
+                return normalized === 0 || normalized === '' || normalized === null;
+            case 'boolean':
+                return normalized === false;
+            case 'tags':
+                return !normalized || normalized.length === 0;
+            default:
+                return !String(normalized || '').trim();
+        }
+    }
+
+    function getFieldGroups(fields) {
+        const groups = [];
+        const order = new Map();
+        (fields || []).forEach((field, index) => {
+            const groupName = (field.group || '').trim() || '未分组';
+            if (!order.has(groupName)) {
+                order.set(groupName, groups.length);
+                groups.push({
+                    name: groupName,
+                    fields: [],
+                    ungrouped: !(field.group || '').trim()
+                });
+            }
+            groups[order.get(groupName)].fields.push({ field, index });
+        });
+        return groups;
+    }
+
+    function getMemoryContextBlock(chat, options = {}) {
+        ensureMemoryTableState(chat);
+        if (chat.memoryMode !== 'table' && !options.force) return '';
+        const templateIds = Array.isArray(options.templateIds) && options.templateIds.length > 0 ? options.templateIds : null;
+        const templates = getBoundTemplates(chat).filter(template => !templateIds || templateIds.includes(template.id));
+        if (templates.length === 0) return '';
+
+        let prompt = '【结构化长期记忆】\n以下是你与用户当前确认过的长期记忆表。这里比普通聊天记录更可靠，回答时应优先参考；若表格中未写明，请不要擅自脑补。\n\n';
+        templates.forEach(template => {
+            ensureTemplateDataForChat(chat, template);
+            prompt += `《${template.name}》\n`;
+            if (template.description) {
+                prompt += `说明：${template.description}\n`;
+            }
+            template.tables.forEach(table => {
+                prompt += `- ${table.name}\n`;
+                if (isRowsTable(table)) {
+                    const rows = getRows(chat, template.id, table);
+                    if (rows.length === 0) {
+                        prompt += '  - 暂无行数据\n';
+                    } else {
+                        rows.forEach((row, rowIndex) => {
+                            prompt += `  - 第 ${rowIndex + 1} 行\n`;
+                            table.columns.forEach(field => {
+                                const value = getFieldDisplayValue(field, row.cells[field.id]);
+                                prompt += `    - ${field.key}: ${value || '空'}\n`;
+                            });
+                        });
+                    }
+                } else {
+                    getFieldGroups(table.columns).forEach(group => {
+                        if (!group.ungrouped) {
+                            prompt += `  - 分组：${group.name}\n`;
+                        }
+                        group.fields.forEach(({ field }) => {
+                            const value = getFieldDisplayValue(field, getFieldValue(chat, template.id, table.id, field));
+                            prompt += `${group.ungrouped ? '  ' : '    '}- ${field.key}: ${value || '空'}\n`;
+                        });
+                    });
+                }

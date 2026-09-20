@@ -1,0 +1,27 @@
+酒馆互通补丁 —— 使用说明
+
+这个 tavern 文件夹就是整个补丁，不属于 yuan 原版。
+
+【yuan 作者更新后怎么办】
+1. 把 yuan 的新文件整个覆盖到仓库里。千万别删 tavern 文件夹。
+2. 双击 tavern 文件夹里的“打补丁.bat”，看到“补丁完成。”就行。
+   有红字说明 yuan 改了结构，补丁需要调整。
+3. 上传到 GitHub，在酒馆的扩展管理里点“更新”。
+4. 打开小手机后按 Ctrl+Shift+R 强制刷新。
+
+【打补丁会做什么】
+- yuan 自带的 manifest.json 改名为 pwa-manifest.json（给酒馆扩展腾位置）
+- 把 st-manifest.json 复制成根目录的 manifest.json（酒馆靠它认出这是扩展）
+- 在 index.html 里加几行，加载 tavern_sync.js 和 tavern_hooks.js
+
+【注意】
+- 不要在 yuan 目录里运行 npm run build，它会重新生成 index.html，把补丁加的几行冲掉。
+  真运行了的话，再双击一次“打补丁.bat”就能恢复。
+- 用酒馆的“安装扩展”装进去以后，在酒馆魔杖菜单里点“小手机”就能打开。
+
+【文件说明】
+- tavern_sync.js    酒馆互通的主要功能（从 st 移植）
+- tavern_hooks.js   把功能接进 yuan 的“钩子”
+- st-manifest.json  酒馆扩展说明书
+- st-launcher.js    在酒馆魔杖菜单里加“小手机”按钮
+- apply-patch.ps1 / 打补丁.bat   一键打补丁
