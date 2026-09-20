@@ -2260,7 +2260,7 @@ async function showAutoPushModal(binding) {
     modal.innerHTML = `
         <h3 style="margin:0 0 4px; font-size:16px; font-weight:600;">推送/清理小手机消息</h3>
         <div style="font-size:12px; color:#888; margin-bottom:10px; line-height:1.6;">
-            小手机消息共 ${total} 条，酒馆里已有 ${pushedCount} 条。${unpushedCount ? `未推送：第 ${firstUnpushed} ~ ${total} 条（${unpushedCount} 条）` : '没有未推送的消息'}
+            小手机消息共 ${total} 条，酒馆里已有 ${pushedCount} 条<br>${unpushedCount ? `未推送：第 ${firstUnpushed} ~ ${total} 条（${unpushedCount} 条）` : '没有未推送的消息'}
         </div>
         <div style="display:flex; gap:6px; margin-bottom:12px;">
             ${tabBtn('raw', '原始消息', true)}
