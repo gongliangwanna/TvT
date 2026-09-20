@@ -706,6 +706,132 @@
         };
     }
 
+    // ========== 11. 角色列表不把酒馆剧情当成“最新消息” ==========
+    // yuan 画角色列表时，从聊天记录最后一条往前找第一条能显示的当作预览。酒馆剧情也在聊天记录里，
+    // 会被当成“最新消息”显示出来（同步一次还会把这个角色顶到列表最前面）。
+    // 做法：画列表的时候临时把酒馆剧情从聊天记录里拿掉，画完立刻放回去——只影响这一次画面，不动数据。
+    function hookChatList() {
+        if (typeof window.renderChatList !== 'function') {
+            return fail('找不到 yuan 画角色列表的函数 renderChatList，酒馆剧情会被当成列表里的最新消息');
+        }
+        const originalRenderChatList = window.renderChatList;
+        window.renderChatList = function () {
+            const swapped = [];
+            try {
+                if (typeof db !== 'undefined' && Array.isArray(db.characters)) {
+                    for (const c of db.characters) {
+                        if (!c || !Array.isArray(c.history)) continue;
+                        if (!c.history.some(m => m && m.fromTavern)) continue;
+                        swapped.push([c, c.history]);
+                        c.history = c.history.filter(m => !(m && m.fromTavern));
+                    }
+                }
+            } catch (e) {
+                swapped.forEach(([c, h]) => { c.history = h; });
+                swapped.length = 0;
+                fail('画角色列表时跳过酒馆剧情出错：' + e.message);
+            }
+            try {
+                return originalRenderChatList.apply(this, arguments);
+            } finally {
+                // 一定要放回去：画列表是一口气同步做完的，中间不会有别的地方读到被换掉的聊天记录
+                swapped.forEach(([c, h]) => { c.history = h; });
+            }
+        };
+    }
+
+    // ========== 12. 在小手机里改了酒馆剧情 → 写回酒馆 ==========
+    // yuan 的“调试/编辑源码”可以直接改任意一条消息，包括酒馆剧情卡片。
+    // 在它保存的函数外面套一层：改之前记下原文，保存后如果内容真的变了，就写回酒馆对应的那一楼。
+    // 能不能安全写回由 TavernSync.writeBackFloorEdit 判断（已精简、酒馆那边也改过、被清洗规则改过等情况都不写）。
+    function hookMessageEdit() {
+        if (typeof window.saveMessageEdit !== 'function') {
+            return fail('找不到 yuan 的保存编辑函数 saveMessageEdit，在调试里改了酒馆剧情不会写回酒馆');
+        }
+        const originalSaveEdit = window.saveMessageEdit;
+        window.saveMessageEdit = async function () {
+            let target = null, oldContent = null, charId = null;
+            try {
+                const id = (typeof editingMessageId !== 'undefined') ? editingMessageId : null;
+                if (id && typeof currentChatType !== 'undefined' && currentChatType === 'private') {
+                    const char = db.characters.find(c => c.id === currentChatId);
+                    const msg = char && Array.isArray(char.history) ? char.history.find(m => m && m.id === id) : null;
+                    if (msg && msg.fromTavern) { target = msg; oldContent = msg.content; charId = char.id; }
+                }
+            } catch (e) { target = null; }
+
+            const result = await originalSaveEdit.apply(this, arguments);
+
+            try {
+                if (target && target.content !== oldContent) {
+                    const binding = window.TavernSync && window.TavernSync.findBindingForChar(charId);
+                    if (!binding) {
+                        showToast('这个角色没有绑定酒馆，改动只留在小手机里');
+                    } else {
+                        const r = await window.TavernSync.writeBackFloorEdit(binding, target, oldContent);
+                        showToast(r.ok
+                            ? (r.what === 'summary' ? `已改好酒馆第 ${r.floor} 楼的摘要` : `已写回酒馆第 ${r.floor} 楼`)
+                            : r.reason);
+                        if (!r.ok) window.TavernSync.reportIssue(`酒馆第 ${target.tavern ? target.tavern.floor : '?'} 楼的改动没能写回酒馆：${r.reason}`);
+                    }
+                }
+            } catch (e) { fail('把改动写回酒馆出错：' + e.message); }
+            return result;
+        };
+    }
+
+    // ========== 13. 通话总结生成好以后，补进酒馆里已经推过去的那条记录 ==========
+    // yuan 通话结束时先往聊天记录里写一条「[视频通话记录：日期；时长；]」，总结是过几秒才生成、回填进同一条消息。
+    // 推送是“推过就不再推”，所以总结要单独补一次。包住 yuan 的 generateCallSummary：
+    // 它返回总结之后，yuan 还要把总结写进那条消息，所以我们隔一会儿再看，内容真的变了才去更新酒馆。
+    function callMsgSnapshot(chat) {
+        const map = new Map();
+        if (chat && Array.isArray(chat.history)) {
+            chat.history.forEach(m => { if (m && m.callRecordId) map.set(m.id, m.content); });
+        }
+        return map;
+    }
+
+    async function syncCallSummaryToTavern(chat, before) {
+        if (!chat || !window.TavernSync) return;
+        const binding = window.TavernSync.findBindingForChar(chat.id);
+        if (!binding) return;
+        for (const m of (chat.history || [])) {
+            if (!m || !m.callRecordId || !before.has(m.id)) continue;
+            const oldContent = before.get(m.id);
+            if (m.content === oldContent) continue;
+            try {
+                const r = await window.TavernSync.updatePushedMessage(binding, m, oldContent);
+                if (r.updated) showToast('通话总结已补进酒馆');
+            } catch (e) {
+                window.TavernSync.reportIssue('把通话总结补进酒馆失败：' + e.message, 'push');
+            }
+        }
+    }
+
+    function hookCallSummary() {
+        if (typeof window.generateCallSummary !== 'function') {
+            return fail('找不到 yuan 的通话总结函数 generateCallSummary，通话总结生成后不会补进酒馆里那条记录');
+        }
+        const originalCallSummary = window.generateCallSummary;
+        window.generateCallSummary = async function (chat) {
+            const before = callMsgSnapshot(chat);
+            const summary = await originalCallSummary.apply(this, arguments);
+            if (summary && chat && chat.id) {
+                // yuan 拿到总结后才写进那条消息，多看几次，等它写完
+                let tries = 0;
+                const check = () => {
+                    tries++;
+                    const changed = (chat.history || []).some(m => m && m.callRecordId && before.has(m.id) && m.content !== before.get(m.id));
+                    if (changed) { syncCallSummaryToTavern(chat, before).catch(() => {}); return; }
+                    if (tries < 8) setTimeout(check, 700);
+                };
+                setTimeout(check, 700);
+            }
+            return summary;
+        };
+    }
+
     // ========== 9. 让“酒馆互联”的设置能保存 ==========
     // yuan 只保存 globalSettingKeys 名单里的设置项，把 tavernSync 加进名单。
     // 名单在 yuan 后面的脚本里才定义，所以等页面脚本全部加载完（DOMContentLoaded）再加；
@@ -721,6 +847,10 @@
     addMenuItem();
     addChatPushButton();
     document.addEventListener('DOMContentLoaded', () => {
+        // 保险：万一补丁被加载两次（或启动事件触发了两次），不要把钩子套两层，
+        // 否则一次操作会被执行两遍（例如改一条酒馆剧情会往酒馆写两次）
+        if (window.__tavernHooksApplied) return;
+        window.__tavernHooksApplied = true;
         registerSettingKey();
         hookShowPanel();
         hookSystemPrompt();
@@ -732,5 +862,8 @@
         hookHistoryFilter();
         startTavernGrouping();
         hookMsgVersion();
+        hookChatList();
+        hookMessageEdit();
+        hookCallSummary();
     });
 })();
