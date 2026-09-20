@@ -521,6 +521,75 @@ const TavernSync = {
         return out;
     },
 
+    // 查酒馆里到底装了哪些小手机消息（yuan 版新增）。以酒馆的记录为准，比“上次推送到哪一条”可靠：
+    //   - 在酒馆互联页面手动推送过的，也算已推送
+    //   - 在酒馆里把那一楼删掉的，会重新算成未推送
+    // “未推送”的口径：最后一条已推送的消息之后的所有消息（中间夹着的旧未推送消息不再单独算）
+    async getPushState(binding) {
+        const char = db.characters.find(c => c.id === binding.uwuCharId);
+        if (!char) throw new Error('找不到角色');
+        const { allUwuMsgs } = this._pushHelpers(char);
+        const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+        const pushed = new Set();
+        (Array.isArray(stMsgs) ? stMsgs : []).forEach(m => {
+            const ids = m && m.extra && m.extra.uwu_msg_ids;
+            if (Array.isArray(ids)) ids.forEach(id => pushed.add(id));
+        });
+        let lastPushedIdx = -1;
+        allUwuMsgs.forEach((m, i) => { if (pushed.has(m.id)) lastPushedIdx = i; });
+        return { char, list: allUwuMsgs, pushed, lastPushedIdx, unpushed: allUwuMsgs.slice(lastPushedIdx + 1) };
+    },
+
+    // 把酒馆里的小手机消息删掉（yuan 版新增）：只删酒馆楼层里 <phone_chat> 的内容，
+    // 不动小手机自己的聊天记录，也不动酒馆原有的剧情正文。ids 不给或为空表示删全部。
+    async removePushedFromTavern(binding, ids) {
+        const char = db.characters.find(c => c.id === binding.uwuCharId);
+        if (!char) throw new Error('找不到角色');
+        const removeSet = ids && ids.length ? new Set(ids) : null;
+        const { allUwuMsgs, toLine } = this._pushHelpers(char);
+        const byId = new Map(allUwuMsgs.map(m => [m.id, m]));
+        const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+        const all = Array.isArray(stMsgs) ? [...stMsgs] : [];
+        const ops = [];
+        let removedCount = 0;
+        for (let i = 0; i < all.length; i++) {
+            const stMsg = all[i];
+            const floorIds = stMsg && stMsg.extra && stMsg.extra.from_uwu && Array.isArray(stMsg.extra.uwu_msg_ids) ? stMsg.extra.uwu_msg_ids : null;
+            if (!floorIds) continue;
+            const surviving = removeSet ? floorIds.filter(id => !removeSet.has(id)) : [];
+            if (surviving.length === floorIds.length) continue;
+            removedCount += floorIds.length - surviving.length;
+            const originalIds = [...floorIds];
+            if (!surviving.length) {
+                if (stMsg.extra.uwu_created) {
+                    // 整楼都是小手机内容 → 整楼删掉
+                    ops.push({ action: 'remove', originalUwuMsgIds: originalIds });
+                    all.splice(i, 1); i--; continue;
+                }
+                // 合并在酒馆原有楼层里的 → 只去掉 <phone_chat> 部分
+                stMsg.mes = (stMsg.mes || '').replace(/<phone_chat>[\s\S]*?<\/phone_chat>/g, '').trim();
+                ops.push({ action: 'update', originalUwuMsgIds: originalIds, mes: stMsg.mes, clearUwuFlags: true });
+                delete stMsg.extra.from_uwu; delete stMsg.extra.uwu_msg_ids; delete stMsg.extra.uwu_push_time;
+                continue;
+            }
+            const lines = surviving.map(id => byId.get(id)).filter(Boolean).map(toLine).filter(l => l && l.trim());
+            const phoneChat = `<phone_chat>\n${lines.join('\n')}\n</phone_chat>`;
+            if (stMsg.extra.uwu_created) stMsg.mes = phoneChat;
+            else if ((stMsg.mes || '').includes('<phone_chat>')) stMsg.mes = stMsg.mes.replace(/<phone_chat>[\s\S]*?<\/phone_chat>/g, phoneChat);
+            stMsg.extra.uwu_msg_ids = surviving;
+            ops.push({ action: 'update', originalUwuMsgIds: originalIds, mes: stMsg.mes, newUwuMsgIds: surviving });
+        }
+        if (!ops.length) return { removed: 0 };
+        await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: all });
+        try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ deletions: ops }); } catch {}
+        // 删掉的消息如果正是“上次推送到哪一条”，把追踪点清掉，免得下次推送从错的位置接着算
+        if (!removeSet || removeSet.has(binding.lastPushedMsgId)) {
+            binding.lastPushedMsgId = null;
+            await this.saveConfig(this.getConfig());
+        }
+        return { removed: removedCount };
+    },
+
     // 推送到酒馆（增量推送 + 删除同步）
     // trackProgress: 是否更新 lastPushedMsgId。手动推送传 false，让自动/聊天页推送不受影响，方便反悔
     // 推送用的公共部分（yuan 版把它从 pushToTavern 里抽出来，替换重新生成的回复时也要用）：
@@ -565,7 +634,8 @@ const TavernSync = {
         return { allUwuMsgs, toLine };
     },
 
-    async pushToTavern(binding, pushCount, trackProgress = true) {
+    // opts.messages：明确指定要推送哪些消息（聊天页的推送窗口让用户自己填范围时用），优先于 pushCount
+    async pushToTavern(binding, pushCount, trackProgress = true, opts = {}) {
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (!char) throw new Error('找不到角色');
         const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
@@ -624,7 +694,10 @@ const TavernSync = {
         // 手动推送（pushCount 明确传入）时，直接取最后 N 条，忽略增量追踪
         // pushCount === 0 表示仅同步删除，不推送新消息
         let newMsgs;
-        if (pushCount === 0) {
+        if (Array.isArray(opts.messages)) {
+            const wanted = new Set(opts.messages.map(m => m.id));
+            newMsgs = allUwuMsgs.filter(m => wanted.has(m.id));
+        } else if (pushCount === 0) {
             newMsgs = [];
         } else if (pushCount) {
             newMsgs = allUwuMsgs.slice(-pushCount);
@@ -642,7 +715,7 @@ const TavernSync = {
         }
         // “重新生成”出来的回复（skipTavernPush）不自动推送，酒馆里保留原来的版本；想换可以去酒馆手动改。
         // 手动“推送最近 N 条”（pushCount）时照样包含，由用户自己决定。
-        if (!pushCount) newMsgs = newMsgs.filter(m => !m.skipTavernPush);
+        if (!pushCount && !opts.messages) newMsgs = newMsgs.filter(m => !m.skipTavernPush);
 
         let newMsg = null;
         let pushLines = [];
@@ -703,7 +776,11 @@ const TavernSync = {
         // 更新推送追踪（只有真正推送了新消息才更新基准点）
         // 删除同步不能改变 lastPushedMsgId，否则下次推送会跳过中间的 user 消息
         // trackProgress=false 时（手动推送）也不改基准点，留出反悔余地
-        if (trackProgress && newMsgs.length > 0 && allUwuMsgs.length > 0) {
+        if (trackProgress && opts.messages && newMsgs.length > 0) {
+            // 指定了范围：追踪点记到这批消息的最后一条
+            binding.lastPushedMsgId = newMsgs[newMsgs.length - 1].id;
+            await this.saveConfig(this.getConfig());
+        } else if (trackProgress && newMsgs.length > 0 && allUwuMsgs.length > 0) {
             binding.lastPushedMsgId = allUwuMsgs[allUwuMsgs.length - 1].id;
             await this.saveConfig(this.getConfig());
         }
@@ -781,7 +858,11 @@ const TavernSync = {
 
         const allUwuMsgs = char.history.filter(m => !m.fromTavern && m.content?.trim() && !m.isThinking && !m.isContextDisabled);
         let unpushed;
-        if (mode === 'lastN') {
+        if (mode === 'list' && Array.isArray(options.messages)) {
+            // 用户在推送窗口里自己填了范围
+            const wanted = new Set(options.messages.map(m => m.id));
+            unpushed = allUwuMsgs.filter(m => wanted.has(m.id));
+        } else if (mode === 'lastN') {
             const n = Math.max(1, Math.min(options.count || 1, allUwuMsgs.length));
             unpushed = allUwuMsgs.slice(-n);
         } else if (binding.lastPushedMsgId) {
@@ -790,7 +871,7 @@ const TavernSync = {
         } else {
             unpushed = allUwuMsgs;
         }
-        if (mode !== 'lastN') unpushed = unpushed.filter(m => !m.skipTavernPush);   // 重新生成出来的回复不推送
+        if (mode !== 'lastN' && mode !== 'list') unpushed = unpushed.filter(m => !m.skipTavernPush);   // 重新生成出来的回复不推送
         if (unpushed.length === 0) throw new Error('没有可总结的消息');
 
         const apiCfg = (db.summaryApiSettings && db.summaryApiSettings.url && db.summaryApiSettings.key && db.summaryApiSettings.model)
@@ -1291,11 +1372,6 @@ function setupTavernSyncScreen() {
                     </div>
                     <div style="font-size:11px; color:#888; margin-top:4px;">新开楼层：每次推送创建新消息；合并末尾：追加到最后一楼末尾（配合正则隐藏）。注：若最后一楼已是小手机消息，无论模式都会自动合并</div>
                 </div>
-                <div style="font-size:11px; color:#888; text-align:center; margin-top:14px; line-height:1.6;">
-                    补丁文件版本<br>
-                    tavern_sync.js：${TavernSync.SYNC_VERSION} ／ tavern_hooks.js：${TavernSync.HOOKS_VERSION || '没有加载'}<br>
-                    两个版本不一样，说明手机上还在用缓存里的旧文件
-                </div>
             </div>
         </div>`;
 
@@ -1596,65 +1672,70 @@ function setupTavernSyncScreen() {
 
 // ========== 聊天页推送弹窗（半自动 · 带追踪）==========
 // 入口：聊天页右侧扩展面板的「推送酒馆」按钮
-// 两种模式都会推进 lastPushedMsgId
-//   - 原始：增量推送所有未推送消息
-//   - 小总结：调用总结 API 把未推送消息浓缩成一段
+// “已推送/未推送”以酒馆里的记录为准（见 TavernSync.getPushState），所以
+//   - 在酒馆互联页面推送过的也算已推送；
+//   - 在酒馆里把那一楼删掉的，会重新算成未推送。
+// 三个页签：
+//   原始消息：默认推未推送的那一段，可以自己填条数范围
+//   小总结：把一段消息浓缩成一段总结后推送，默认也是未推送的那一段
+//   清理酒馆：把推送到酒馆的小手机消息删掉（只删酒馆里的，不动小手机自己的聊天）
 async function showAutoPushModal(binding) {
-    const char = db.characters.find(c => c.id === binding.uwuCharId);
-    if (!char) { showToast('找不到角色'); return; }
+    let state;
+    try {
+        state = await TavernSync.getPushState(binding);
+    } catch (e) { showToast(`读取酒馆失败：${e.message}`); return; }
+    const { list, pushed, lastPushedIdx } = state;
+    const total = list.length;
+    if (!total) { showToast('还没有可推送的消息'); return; }
 
-    const allMsgs = char.history.filter(m => !m.fromTavern && m.content?.trim() && !m.isThinking && !m.isContextDisabled);
-    let unpushed = allMsgs;
-    if (binding.lastPushedMsgId) {
-        const idx = allMsgs.findIndex(m => m.id === binding.lastPushedMsgId);
-        if (idx >= 0) unpushed = allMsgs.slice(idx + 1);
-    }
-    unpushed = unpushed.filter(m => !m.skipTavernPush);   // 重新生成出来的回复不推送（和 pushToTavern 一致）
-    const unpushedCount = unpushed.length;
-
-    // 没有新消息 → 仍尝试同步删除
-    if (unpushedCount === 0) {
-        try {
-            const r = await TavernSync.pushToTavern(binding, 0);
-            if (r.deleted) {
-                try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ reload: true }); } catch {}
-                showToast('已同步删除酒馆中的旧消息');
-            } else {
-                showToast('没有新消息需要推送');
-            }
-        } catch (e) { console.warn(e); showToast('没有新消息需要推送'); }
-        return;
-    }
+    const pushedCount = list.filter(m => pushed.has(m.id)).length;
+    const firstUnpushed = lastPushedIdx + 2;        // 给用户看的编号从 1 开始
+    const unpushedCount = total - (lastPushedIdx + 1);
+    const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:400px; max-height:85vh; display:flex; flex-direction:column;';
 
-    const previewLines = unpushed.slice(-10).map(m => m.content.length > 80 ? m.content.substring(0, 80) + '...' : m.content);
-    const previewText = `&lt;phone_chat&gt;\n${previewLines.join('\n')}${unpushedCount > 10 ? '\n... 共 ' + unpushedCount + ' 条未推送' : ''}\n&lt;/phone_chat&gt;`;
-
-    const tabBtn = (id, label, active) => `<button data-mode="${id}" class="auto-push-tab" style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:${active ? 'rgba(33,150,243,0.18)' : 'transparent'}; color:${active ? '#2196F3' : 'inherit'}; font-size:13px; cursor:pointer;">${label}</button>`;
+    const numStyle = 'width:66px; padding:6px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;';
+    const tabBtn = (id, label, active) => `<button data-mode="${id}" class="auto-push-tab" style="flex:1; padding:8px 4px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:${active ? 'rgba(33,150,243,0.18)' : 'transparent'}; color:${active ? '#2196F3' : 'inherit'}; font-size:13px; cursor:pointer;">${label}</button>`;
+    const rangeRow = (idPrefix, from, to) => `
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; font-size:14px;">
+            第 <input type="number" id="${idPrefix}-from" min="1" max="${total}" value="${from}" style="${numStyle}">
+            到 <input type="number" id="${idPrefix}-to" min="1" max="${total}" value="${to}" style="${numStyle}"> 条
+        </div>`;
 
     modal.innerHTML = `
         <h3 style="margin:0 0 4px; font-size:16px; font-weight:600;">推送到酒馆</h3>
-        <div style="font-size:11px; color:#888; margin-bottom:12px;">半自动 · 推送后自动推进追踪基准点</div>
+        <div style="font-size:11px; color:#888; margin-bottom:10px; line-height:1.6;">
+            小手机消息共 ${total} 条，酒馆里已有 ${pushedCount} 条。${unpushedCount ? `未推送：第 ${firstUnpushed} ~ ${total} 条（${unpushedCount} 条）` : '没有未推送的消息'}
+        </div>
         <div style="display:flex; gap:6px; margin-bottom:12px;">
             ${tabBtn('raw', '原始消息', true)}
             ${tabBtn('summary', '小总结', false)}
+            ${tabBtn('clean', '清理酒馆', false)}
         </div>
 
         <div id="auto-mode-raw" style="display:flex; flex-direction:column;">
-            <div style="font-size:13px; margin-bottom:6px;">将推送 <b style="color:#2196F3;">${unpushedCount}</b> 条未推送消息</div>
-            <div style="font-size:11px; color:#888; margin-bottom:6px;">用 &lt;phone_chat&gt; 标签包裹</div>
-            <div style="font-size:12px; color:#ccc; background:rgba(255,255,255,0.04); border-radius:8px; padding:10px; margin-bottom:12px; max-height:200px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #2196F3;">${previewText}</div>
+            <div style="font-size:12px; color:#888; margin-bottom:6px;">推送这些消息（默认是未推送的那一段，可以自己改）</div>
+            ${rangeRow('auto-raw', unpushedCount ? firstUnpushed : total, total)}
+            <div id="auto-raw-preview" style="font-size:12px; color:#ccc; background:rgba(255,255,255,0.04); border-radius:8px; padding:10px; margin-bottom:12px; max-height:180px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #2196F3;"></div>
         </div>
 
         <div id="auto-mode-summary" style="display:none; flex-direction:column;">
-            <div style="font-size:13px; margin-bottom:6px;">把<b>未推送的 ${unpushedCount} 条</b>消息浓缩成一段总结后推送（消耗 1 次总结 API）</div>
-            <div style="font-size:11px; color:#888; margin-bottom:10px;">推送后会更新进度基准点，已总结的消息不会再次推送原文</div>
+            <div style="font-size:12px; color:#888; margin-bottom:6px;">把这些消息浓缩成一段总结后推送（消耗 1 次总结 API）</div>
+            ${rangeRow('auto-sum', unpushedCount ? firstUnpushed : total, total)}
             <button id="auto-sum-gen" style="${TS.btnB} width:100%; margin-bottom:10px;">生成小总结</button>
-            <textarea id="auto-sum-text" placeholder="生成后可在此编辑..." style="width:100%; box-sizing:border-box; min-height:140px; max-height:240px; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.04); color:inherit; font-size:13px; line-height:1.6; resize:vertical; margin-bottom:12px;"></textarea>
+            <textarea id="auto-sum-text" placeholder="生成后可在此编辑..." style="width:100%; box-sizing:border-box; min-height:130px; max-height:220px; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.04); color:inherit; font-size:13px; line-height:1.6; resize:vertical; margin-bottom:12px;"></textarea>
+        </div>
+
+        <div id="auto-mode-clean" style="display:none; flex-direction:column;">
+            <div style="font-size:12px; color:#888; margin-bottom:6px; line-height:1.6;">
+                把这些小手机消息从酒馆里删掉（默认全部）。只删酒馆楼层里的小手机内容，不动小手机自己的聊天记录，也不动酒馆原有的剧情。
+            </div>
+            ${rangeRow('auto-clean', 1, total)}
+            <div id="auto-clean-preview" style="font-size:12px; color:#ccc; background:rgba(255,255,255,0.04); border-radius:8px; padding:10px; margin-bottom:12px; max-height:180px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #f66;"></div>
         </div>
 
         <div style="display:flex; gap:10px;">
@@ -1667,6 +1748,40 @@ async function showAutoPushModal(binding) {
     let mode = 'raw';
     let summaryState = null;
 
+    // 读取某个页签里填的范围，返回这段消息（编号从 1 开始）
+    function readRange(idPrefix) {
+        const fromEl = modal.querySelector(`#${idPrefix}-from`);
+        const toEl = modal.querySelector(`#${idPrefix}-to`);
+        let from = parseInt(fromEl.value, 10);
+        let to = parseInt(toEl.value, 10);
+        if (!Number.isInteger(from) || from < 1) from = 1;
+        if (!Number.isInteger(to) || to > total) to = total;
+        if (from > to) from = to;
+        fromEl.value = from; toEl.value = to;
+        return { from, to, msgs: list.slice(from - 1, to) };
+    }
+
+    function renderPreview(idPrefix, boxId, markPushed) {
+        const { msgs } = readRange(idPrefix);
+        const box = modal.querySelector(boxId);
+        if (!msgs.length) { box.textContent = '这个范围里没有消息'; return; }
+        const shown = msgs.slice(-12);
+        const lines = shown.map(m => {
+            const text = m.content.length > 80 ? m.content.slice(0, 80) + '...' : m.content;
+            const done = markPushed && pushed.has(m.id) ? '（酒馆里已有）' : '';
+            return esc(text) + done;
+        });
+        box.innerHTML = (msgs.length > shown.length ? `<span style="color:#666;">... 共 ${msgs.length} 条，只显示最后 ${shown.length} 条</span>\n` : '')
+            + lines.join('\n');
+    }
+    const refreshPreviews = () => {
+        renderPreview('auto-raw', '#auto-raw-preview', true);
+        renderPreview('auto-clean', '#auto-clean-preview', false);
+    };
+    modal.querySelectorAll('input[type=number]').forEach(inp => inp.addEventListener('input', refreshPreviews));
+    refreshPreviews();
+
+    const confirmBtn = modal.querySelector('#auto-confirm');
     modal.querySelectorAll('.auto-push-tab').forEach(btn => {
         btn.addEventListener('click', () => {
             mode = btn.dataset.mode;
@@ -1677,15 +1792,20 @@ async function showAutoPushModal(binding) {
             });
             modal.querySelector('#auto-mode-raw').style.display = mode === 'raw' ? 'flex' : 'none';
             modal.querySelector('#auto-mode-summary').style.display = mode === 'summary' ? 'flex' : 'none';
+            modal.querySelector('#auto-mode-clean').style.display = mode === 'clean' ? 'flex' : 'none';
+            confirmBtn.textContent = mode === 'clean' ? '确认删除' : '确认推送';
+            confirmBtn.style.background = mode === 'clean' ? 'rgba(244,67,54,0.8)' : '';
         });
     });
 
     const genBtn = modal.querySelector('#auto-sum-gen');
     const sumText = modal.querySelector('#auto-sum-text');
     genBtn.addEventListener('click', async () => {
+        const { msgs } = readRange('auto-sum');
+        if (!msgs.length) { showToast('这个范围里没有消息'); return; }
         genBtn.disabled = true; genBtn.textContent = '生成中...';
         try {
-            const r = await TavernSync.summarizeUnpushedSlice(binding);
+            const r = await TavernSync.summarizeUnpushedSlice(binding, { mode: 'list', messages: msgs });
             summaryState = { text: r.text, lastMsgId: r.lastMsgId, coveredMsgIds: r.coveredMsgIds };
             sumText.value = r.text;
             genBtn.textContent = `重新生成（已覆盖 ${r.coveredCount} 条）`;
@@ -1695,42 +1815,56 @@ async function showAutoPushModal(binding) {
         } finally { genBtn.disabled = false; }
     });
 
-    modal.querySelector('#auto-cancel').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    const close = () => overlay.remove();
+    modal.querySelector('#auto-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
-    modal.querySelector('#auto-confirm').addEventListener('click', async () => {
-        const confirmBtn = modal.querySelector('#auto-confirm');
-        confirmBtn.textContent = '推送中...'; confirmBtn.disabled = true;
+    confirmBtn.addEventListener('click', async () => {
+        const orig = confirmBtn.textContent;
+        confirmBtn.textContent = '处理中...'; confirmBtn.disabled = true;
         try {
             if (mode === 'summary') {
                 const finalText = (sumText.value || '').trim();
-                if (!finalText) { showToast('请先生成或填入总结文本'); confirmBtn.textContent = '确认推送'; confirmBtn.disabled = false; return; }
-                if (!summaryState || !summaryState.lastMsgId) { showToast('请先点"生成小总结"'); confirmBtn.textContent = '确认推送'; confirmBtn.disabled = false; return; }
-                const r = await TavernSync.pushSummaryToTavern(binding, finalText, summaryState.lastMsgId, summaryState.coveredMsgIds);
-                if (r.pushed > 0) {
-                    try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ message: r.message }); } catch {}
+                if (!finalText) { showToast('请先生成或填入总结文本'); throw new Error('__cancel');
                 }
-                showToast(`已推送小总结 · 覆盖 ${summaryState.coveredMsgIds?.length || 0} 条`);
-                overlay.remove();
+                const { msgs } = readRange('auto-sum');
+                const coveredIds = (summaryState && summaryState.coveredMsgIds && summaryState.coveredMsgIds.length)
+                    ? summaryState.coveredMsgIds : msgs.map(m => m.id);
+                const lastId = coveredIds[coveredIds.length - 1];
+                const r = await TavernSync.pushSummaryToTavern(binding, finalText, lastId, coveredIds);
+                if (r.pushed > 0) { try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ message: r.message }); } catch {} }
+                showToast(`已推送小总结 · 覆盖 ${coveredIds.length} 条`);
+                close();
+            } else if (mode === 'clean') {
+                const { from, to, msgs } = readRange('auto-clean');
+                const ids = msgs.filter(m => pushed.has(m.id)).map(m => m.id);
+                if (!ids.length) { showToast('这个范围里没有推送到酒馆的消息'); throw new Error('__cancel'); }
+                if (!confirm(`把第 ${from} ~ ${to} 条里已经推送到酒馆的 ${ids.length} 条消息从酒馆删掉？小手机里的聊天不受影响。`)) throw new Error('__cancel');
+                const r = await TavernSync.removePushedFromTavern(binding, ids);
+                try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ reload: true }); } catch {}
+                showToast(`已从酒馆删掉 ${r.removed} 条小手机消息`);
+                close();
             } else {
-                const r = await TavernSync.pushToTavern(binding); // 增量 + 追踪
+                const { msgs } = readRange('auto-raw');
+                if (!msgs.length) { showToast('这个范围里没有消息'); throw new Error('__cancel'); }
+                const r = await TavernSync.pushToTavern(binding, undefined, true, { messages: msgs });
                 if (r.pushed > 0) {
                     try {
                         const payload = r.message ? { message: r.message } : { reload: true };
                         window.webkit?.messageHandlers?.tavernPushDone?.postMessage(payload);
                     } catch {}
-                    showToast(`已推送 ${r.pushed} 条新消息到酒馆`);
+                    showToast(`已推送 ${r.pushed} 条消息到酒馆`);
                 } else if (r.deleted) {
                     try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ reload: true }); } catch {}
                     showToast('已同步删除酒馆中的旧消息');
                 } else {
-                    showToast('没有新消息需要推送');
+                    showToast('没有消息被推送');
                 }
-                overlay.remove();
+                close();
             }
         } catch (e) {
-            showToast(`${e.message}`);
-            confirmBtn.textContent = '确认推送'; confirmBtn.disabled = false;
+            if (e.message !== '__cancel') showToast(`${e.message}`);
+            confirmBtn.textContent = orig; confirmBtn.disabled = false;
         }
     });
 }
@@ -2451,7 +2585,7 @@ async function showBindingEditor(onSave) {
 // 两个操作同时进行时，后存的会把先存的改动覆盖掉。自动推送和删除同步可能同时触发，所以让它们一个接一个来。
 // 从酒馆同步（pullFromTavern）也排进来：打开聊天和切回页面可能同时触发两次同步，同时进行会重复导入同一批楼层。
 TavernSync._writeQueue = Promise.resolve();
-['pushToTavern', 'pushSummaryToTavern', 'pushCallRecordToTavern', 'pullFromTavern', 'replaceRegeneratedInTavern', 'resetImportRange'].forEach(name => {
+['pushToTavern', 'pushSummaryToTavern', 'pushCallRecordToTavern', 'pullFromTavern', 'replaceRegeneratedInTavern', 'resetImportRange', 'removePushedFromTavern'].forEach(name => {
     const original = TavernSync[name];
     TavernSync[name] = function (...args) {
         const run = () => original.apply(TavernSync, args);
