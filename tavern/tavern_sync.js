@@ -1253,8 +1253,8 @@ ${transcript}`;
         if (p === 4) return "[" + roleName + "]插入深度 @D" + depth;
         if (p === 5) return "示例消息前";
         if (p === 6) return "示例消息后";
-        // 维护者的酒馆里除上面几种只剩“锚点”，所以其余代号一律按锚点显示（代号一并写出来，万一以后酒馆又加了新位置好排查）
-        return "锚点（代号 " + p + "）";
+        if (p === 7 || p === 8) return "锚点";   // 维护者的酒馆里这几种之外只剩锚点
+        return "不认识的位置（代号 " + p + "）";   // 酒馆以后加了新位置会显示成这样，把代号告诉维护补丁的人即可
     },
 
     // 酒馆条目的关键词（绿灯）。酒馆里可能存成数组，也可能是逗号分隔的字符串
@@ -1732,9 +1732,12 @@ function setupTavernSyncScreen() {
             btn.textContent = orig; btn.disabled = false;
         });
 
+        // 和聊天页“+”里的推送窗口完全一样（原来那个“推送最近 N 条、不管推没推过”的窗口已删掉，容易重复推）
         bindClick('[data-push]', async (btn) => {
             const cfg = TavernSync.getConfig(); const b = cfg.bindings[parseInt(btn.dataset.push)];
-            showPushOptionsModal(b, btn);
+            const orig = btn.textContent; btn.textContent = '读取中...'; btn.disabled = true;
+            try { await showAutoPushModal(b); } catch (e) { showToast(`${e.message}`); }
+            btn.textContent = orig; btn.disabled = false;
         });
 
         bindClick('[data-import-char]', async (btn) => {
@@ -1966,224 +1969,76 @@ async function showAutoPushModal(binding) {
     });
 }
 
-// ========== 推送选项弹窗（手动 · 不追踪）==========
-// 入口：酒馆同步配置页绑定卡片的「推送到酒馆」按钮
-// 不更新 lastPushedMsgId，给用户留反悔余地
-//   - 原始：推送最近 N 条原始消息
-//   - 小总结：用户手动输入一段总结文本，覆盖最近 N 条
-async function showPushOptionsModal(binding, triggerBtn) {
+// ========== 清空并重选范围弹窗 ==========
+// 删掉这个角色在小手机里的全部酒馆楼层，然后让用户填从酒馆第几楼到第几楼重新导入（或者只同步以后的新楼层）
+async function showResetRangeModal(binding, onDone) {
     const char = db.characters.find(c => c.id === binding.uwuCharId);
     if (!char) { showToast('找不到角色'); return; }
-
-    const allMsgs = char.history.filter(m => !m.fromTavern && m.content?.trim() && !m.isThinking && !m.isContextDisabled);
-    if (!allMsgs.length) {
-        // 没有新消息，但仍然尝试同步删除
-        try {
-            const r = await TavernSync.pushToTavern(binding, 0);
-            if (r.deleted) {
-                try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ reload: true }); } catch {}
-                showToast('已同步删除酒馆中的旧消息');
-            } else {
-                showToast('没有可推送的消息');
-            }
-        } catch (e) { console.warn(e); showToast('没有可推送的消息'); }
-        return;
-    }
-
-    const totalCount = allMsgs.length;
-    const defaultCount = Math.min(totalCount, TavernSync.getConfig().maxInjectMessages || 50);
-
-    // 找出已推送/未推送的分界点（用于预览渲染时高亮）
-    let pushedBoundaryIdx = -1; // allMsgs 中 lastPushedMsgId 的索引；之后（不含）都是未推送
-    if (binding.lastPushedMsgId) {
-        pushedBoundaryIdx = allMsgs.findIndex(m => m.id === binding.lastPushedMsgId);
-    }
-    const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const info = await TavernSync.getTavernFloorInfo(binding);
+    const have = (char.history || []).filter(m => m && m.fromTavern).length;
+    const lastFloor = Math.max(0, info.total - 1);
+    const defStart = Math.max(0, info.total - (TavernSync.getConfig().initialImportCount || 20));
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
     const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:400px; max-height:85vh; display:flex; flex-direction:column;';
-
-    // 预览：显示最近 count 条消息（与实际推送一致）；已推送行用灰色弱化，未推送用正常色，
-    // 在分界处插入一条 "↑ 已推送 / ↓ 待推送" 的虚线，提示用户哪些会被重推
-    function buildPreview(count) {
-        const startIdx = Math.max(0, allMsgs.length - count);
-        const msgs = allMsgs.slice(startIdx);
-        const renderLine = (m) => {
-            const text = m.content.length > 80 ? m.content.substring(0, 80) + '...' : m.content;
-            return escapeHtml(text);
-        };
-        const out = [`&lt;phone_chat&gt;`];
-        // 仅渲染最后 12 行，避免过长；若总数 > 12，前面用 ... 省略
-        const renderStart = Math.max(0, msgs.length - 12);
-        if (renderStart > 0) out.push(`<span style="color:#666;">... 省略前 ${renderStart} 条</span>`);
-        for (let i = renderStart; i < msgs.length; i++) {
-            const absIdx = startIdx + i;
-            const isPushed = pushedBoundaryIdx >= 0 && absIdx <= pushedBoundaryIdx;
-            // 在分界处（未推送的第一条之前）插入虚线
-            if (i > renderStart) {
-                const prevAbsIdx = startIdx + i - 1;
-                const prevPushed = pushedBoundaryIdx >= 0 && prevAbsIdx <= pushedBoundaryIdx;
-                if (prevPushed && !isPushed) {
-                    out.push(`<span style="color:#888; font-size:11px; display:inline-block; padding:2px 0; border-top:1px dashed rgba(255,255,255,0.25); width:100%;">↑ 已推送 · ↓ 此次会重新推送</span>`);
-                }
-            }
-            const line = renderLine(msgs[i]);
-            if (isPushed) {
-                out.push(`<span style="color:#777;">${line}</span>`);
-            } else {
-                out.push(`<span style="color:#cfe6ff;">${line}</span>`);
-            }
-        }
-        out.push(`&lt;/phone_chat&gt;`);
-        return out.join('\n');
-    }
-
-    const tabBtn = (id, label, active) => `<button data-mode="${id}" class="push-mode-tab" style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:${active ? 'rgba(33,150,243,0.18)' : 'transparent'}; color:${active ? '#2196F3' : 'inherit'}; font-size:13px; cursor:pointer;">${label}</button>`;
-
+    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:380px;';
+    const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;';
+    const cancelStyle = 'flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;';
     modal.innerHTML = `
-        <h3 style="margin:0 0 4px; font-size:16px; font-weight:600;">推送到酒馆</h3>
-        <div style="font-size:11px; color:#888; margin-bottom:12px;">手动 · 不更新追踪基准（保留反悔余地）</div>
-        <div style="display:flex; gap:6px; margin-bottom:12px;">
-            ${tabBtn('raw', '原始消息', true)}
-            ${tabBtn('summary', '小总结', false)}
+        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">清空并重选范围</h3>
+        <div style="font-size:13px; line-height:1.7; margin-bottom:12px;">
+            小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>
+            酒馆里这个聊天一共 <b>${info.total}</b> 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
         </div>
-
-        <div id="mode-raw" style="display:flex; flex-direction:column;">
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-                <span style="font-size:14px; white-space:nowrap;">推送最近</span>
-                <input type="number" id="push-count" value="${defaultCount}" min="1" max="${totalCount}"
-                    style="width:70px; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;">
-                <span style="font-size:14px; white-space:nowrap;">条 <span style="font-size:11px; color:#888;">（共 ${totalCount}）</span></span>
-            </div>
-            <div style="font-size:11px; color:#888; margin-bottom:6px;">用 &lt;phone_chat&gt; 标签包裹</div>
-            <div id="push-preview" style="font-size:12px; background:rgba(255,255,255,0.04); border-radius:8px; padding:10px; margin-bottom:12px; max-height:200px; overflow-y:auto; white-space:pre-wrap; line-height:1.6; border-left:3px solid #2196F3;">${buildPreview(defaultCount)}</div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
+            从第 <input type="number" id="rr-start" min="0" max="${lastFloor}" value="${defStart}" style="${numStyle}">
+            到第 <input type="number" id="rr-end" min="0" max="${lastFloor}" value="${lastFloor}" style="${numStyle}"> 楼
         </div>
-
-        <div id="mode-summary" style="display:none; flex-direction:column;">
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
-                <span style="font-size:14px; white-space:nowrap;">总结最近</span>
-                <input type="number" id="sum-count" value="${defaultCount}" min="1" max="${totalCount}"
-                    style="width:70px; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;">
-                <span style="font-size:14px; white-space:nowrap;">条 <span style="font-size:11px; color:#888;">（共 ${totalCount}）</span></span>
-            </div>
-            <div style="font-size:11px; color:#888; margin-bottom:10px;">用 API 把最近 N 条消息浓缩成一段总结后推送（不更新追踪基准，可重复推送）</div>
-            <button id="summary-gen" style="${TS.btnB} width:100%; margin-bottom:10px;">生成小总结</button>
-            <textarea id="summary-text" placeholder="生成后可在此编辑..." style="width:100%; box-sizing:border-box; min-height:140px; max-height:240px; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.04); color:inherit; font-size:13px; line-height:1.6; resize:vertical; margin-bottom:12px;"></textarea>
+        <div style="font-size:11px; color:#888; line-height:1.6; margin-bottom:16px;">
+            小手机推送过去的楼层、番外楼不会导入。清空后，酒馆里以后新玩的楼层照常同步。<br>
+            已经写进日记、记忆表格、向量记忆的内容不受影响。
         </div>
-
-        <div style="display:flex; gap:10px;">
-            <button id="push-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;">取消</button>
-            <button id="push-confirm" style="flex:1; ${TS.btnP}">确认推送</button>
-        </div>`;
-
+        <button id="rr-range" style="width:100%; ${TS.btnP} margin-bottom:8px;">清空，并导入这个范围</button>
+        <button id="rr-none" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(244,67,54,0.4); background:transparent; color:#f66; font-size:14px; cursor:pointer; margin-bottom:8px;">只清空（以后只同步新楼层）</button>
+        <button id="rr-cancel" style="width:100%; ${cancelStyle}">取消</button>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    modal.querySelector('#rr-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
-    let mode = 'raw';
-
-    // 切换模式
-    modal.querySelectorAll('.push-mode-tab').forEach(btn => {
-        btn.addEventListener('click', () => {
-            mode = btn.dataset.mode;
-            modal.querySelectorAll('.push-mode-tab').forEach(b => {
-                const active = b.dataset.mode === mode;
-                b.style.background = active ? 'rgba(33,150,243,0.18)' : 'transparent';
-                b.style.color = active ? '#2196F3' : 'inherit';
-            });
-            modal.querySelector('#mode-raw').style.display = mode === 'raw' ? 'flex' : 'none';
-            modal.querySelector('#mode-summary').style.display = mode === 'summary' ? 'flex' : 'none';
-        });
-    });
-
-    // raw 模式：动态更新预览
-    const countInput = modal.querySelector('#push-count');
-    const previewEl = modal.querySelector('#push-preview');
-    countInput.addEventListener('input', () => {
-        let n = parseInt(countInput.value) || 1;
-        if (n > totalCount) n = totalCount;
-        if (n < 1) n = 1;
-        previewEl.innerHTML = buildPreview(n);
-    });
-
-    // summary 模式：限制 count 输入范围 + API 生成
-    const sumCountInput = modal.querySelector('#sum-count');
-    const sumText = modal.querySelector('#summary-text');
-    const genBtn = modal.querySelector('#summary-gen');
-    let summaryState = null; // { text, coveredMsgIds } — 生成后填，count 改变时清空
-    sumCountInput.addEventListener('input', () => {
-        let n = parseInt(sumCountInput.value) || 1;
-        if (n > totalCount) n = totalCount;
-        if (n < 1) n = 1;
-        sumCountInput.value = n;
-        // count 变了就让用户重新生成，避免 coveredMsgIds 跟实际 N 不符
-        if (summaryState) {
-            summaryState = null;
-            genBtn.textContent = '生成小总结';
-        }
-    });
-    genBtn.addEventListener('click', async () => {
-        let n = parseInt(sumCountInput.value) || defaultCount;
-        if (n > totalCount) n = totalCount;
-        if (n < 1) n = 1;
-        genBtn.disabled = true; genBtn.textContent = '生成中...';
+    const run = async (range, btn) => {
+        const buttons = modal.querySelectorAll('button');
+        buttons.forEach(b => { b.disabled = true; });
+        const orig = btn.textContent; btn.textContent = '处理中...';
         try {
-            const r = await TavernSync.summarizeUnpushedSlice(binding, { mode: 'lastN', count: n });
-            summaryState = { text: r.text, coveredMsgIds: r.coveredMsgIds };
-            sumText.value = r.text;
-            genBtn.textContent = `重新生成（已覆盖 ${r.coveredCount} 条）`;
-        } catch (e) {
-            showToast(`${e.message}`);
-            genBtn.textContent = '生成小总结';
-        } finally { genBtn.disabled = false; }
-    });
-
-    modal.querySelector('#push-cancel').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-
-    modal.querySelector('#push-confirm').addEventListener('click', async () => {
-        const confirmBtn = modal.querySelector('#push-confirm');
-        confirmBtn.textContent = '推送中...'; confirmBtn.disabled = true;
-        try {
-            if (mode === 'summary') {
-                const finalText = (sumText.value || '').trim();
-                if (!finalText) { showToast('请先生成或填入总结文本'); confirmBtn.textContent = '确认推送'; confirmBtn.disabled = false; return; }
-                // 优先用生成时锁定的 coveredMsgIds；用户没生成（直接手写）时按当前 N 取最近 N 条
-                let coveredMsgIds, coveredCount;
-                if (summaryState && Array.isArray(summaryState.coveredMsgIds) && summaryState.coveredMsgIds.length) {
-                    coveredMsgIds = summaryState.coveredMsgIds;
-                    coveredCount = coveredMsgIds.length;
-                } else {
-                    let n = parseInt(sumCountInput.value) || defaultCount;
-                    if (n > totalCount) n = totalCount;
-                    if (n < 1) n = 1;
-                    coveredMsgIds = allMsgs.slice(-n).map(m => m.id);
-                    coveredCount = n;
-                }
-                // 第三参传 null → 不更新 lastPushedMsgId（手动模式不追踪）
-                const r = await TavernSync.pushSummaryToTavern(binding, finalText, null, coveredMsgIds);
-                if (r.pushed > 0) {
-                    try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ message: r.message }); } catch {}
-                }
-                showToast(`已推送小总结 · 覆盖 ${coveredCount} 条（未更新追踪）`);
-                overlay.remove();
-            } else {
-                const pushCount = parseInt(countInput.value) || defaultCount;
-                // 手动原始推送不追踪基准点，保留反悔余地
-                const r = await TavernSync.pushToTavern(binding, pushCount, false);
-                if (r.pushed > 0 || r.deleted) {
-                    try {
-                        var payload = r.message ? { message: r.message } : { reload: true };
-                        window.webkit?.messageHandlers?.tavernPushDone?.postMessage(payload);
-                    } catch {}
-                }
-                showToast(`已推送 ${r.pushed} 条消息到酒馆（未更新追踪）${r.deleted ? '；已同步删除' : ''}`);
-                overlay.remove();
+            const r = await TavernSync.resetImportRange(binding, range);
+            let msg = `已删掉 ${r.removed} 楼`;
+            if (range) {
+                const p = await TavernSync.pullFromTavern(binding);
+                msg += `，重新导入 ${p.imported} 楼`;
             }
+            showToast(msg);
+            close();
+            if (onDone) onDone();
         } catch (e) {
             showToast(`${e.message}`);
-            confirmBtn.textContent = '确认推送'; confirmBtn.disabled = false;
+            buttons.forEach(b => { b.disabled = false; });
+            btn.textContent = orig;
         }
+    };
+    modal.querySelector('#rr-range').addEventListener('click', (e) => {
+        const start = parseInt(modal.querySelector('#rr-start').value, 10);
+        const end = parseInt(modal.querySelector('#rr-end').value, 10);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > lastFloor || start > end) {
+            showToast(`请填 0 ~ ${lastFloor} 之间的楼层，而且开始不能大于结束`);
+            return;
+        }
+        run({ start, end }, e.currentTarget);
+    });
+    modal.querySelector('#rr-none').addEventListener('click', (e) => {
+        if (!confirm(`删掉小手机里全部 ${have} 楼酒馆剧情，以后只同步新楼层？`)) return;
+        run(null, e.currentTarget);
     });
 }
 
@@ -2389,11 +2244,17 @@ async function showWorldBookModal(binding) {
 
     // ===== 分组下拉：小手机现有的分组 + 新建 =====
     const categorySelect = modal.querySelector('#wb-category');
+    // 分组下拉 = 小手机世界书里现有的分组（+ 这次新建的）。
+    // 注意：只认“现在真的还有条目在用”的分组。以前记住的分组如果在世界书页面被删了，就不该再出现在这里。
+    let pendingNewCategory = '';
     function renderCategories(selected) {
-        const cats = [...new Set((db.worldBooks || []).map(w => (w.category || '').trim()).filter(Boolean))].sort();
-        const last = selected || TavernSync.getConfig().lastWorldBookCategory || cats[0] || '未分类';
-        if (!cats.includes(last)) cats.unshift(last);
-        categorySelect.innerHTML = cats.map(c => `<option value="${esc(c)}" ${c === last ? 'selected' : ''}>${esc(c)}</option>`).join('')
+        const exist = [...new Set((db.worldBooks || []).map(w => (w.category || '').trim()).filter(Boolean))].sort();
+        const cats = [...exist];
+        if (pendingNewCategory && !cats.includes(pendingNewCategory)) cats.unshift(pendingNewCategory);
+        if (!cats.length) cats.push('未分类');
+        const remembered = TavernSync.getConfig().lastWorldBookCategory;
+        const want = selected || (cats.includes(remembered) ? remembered : cats[0]);
+        categorySelect.innerHTML = cats.map(c => `<option value="${esc(c)}" ${c === want ? 'selected' : ''}>${esc(c)}</option>`).join('')
             + '<option value="__new__">＋ 新建分组…</option>';
     }
     renderCategories();
@@ -2403,8 +2264,11 @@ async function showWorldBookModal(binding) {
             return;
         }
         const name = (prompt('新分组的名字') || '').trim();
+        if (name) {
+            pendingNewCategory = name;
+            const cfg = TavernSync.getConfig(); cfg.lastWorldBookCategory = name; await TavernSync.saveConfig(cfg);
+        }
         renderCategories(name || undefined);
-        if (name) { const cfg = TavernSync.getConfig(); cfg.lastWorldBookCategory = name; await TavernSync.saveConfig(cfg); }
     });
 
     // ===== 条目列表 =====
