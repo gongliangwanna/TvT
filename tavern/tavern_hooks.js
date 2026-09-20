@@ -286,6 +286,40 @@
     }
 
 
+    // yuan 里发消息不会自动叫 AI 回复（要另外点“获取回复”），所以最后几条常常都是用户自己发的。
+    // 在发送函数外面套一层：发完等 3 秒再推一次未推送的消息（连发几条会合并成一次）。
+    // AI 正在回复时不推——免得把还没发完的半截回复推过去，等回复结束那次自动推送会一起推。
+    let sendPushTimer = null;
+    function schedulePushAfterSend(chatId, tries) {
+        clearTimeout(sendPushTimer);
+        sendPushTimer = setTimeout(() => {
+            const generating = (typeof isGenerating !== 'undefined') && isGenerating;
+            if (generating) {
+                if (tries < 20) schedulePushAfterSend(chatId, tries + 1);   // AI 还在回，最多再等 1 分钟
+                return;
+            }
+            if (window.TavernSync) window.TavernSync.autoPushIfNeeded(chatId).catch(() => {});
+        }, 3000);
+    }
+
+    function hookSendMessage() {
+        if (typeof window.sendMessage !== 'function') {
+            return fail('找不到 yuan 的发送消息函数 sendMessage，你自己发的消息要等 AI 回复后才会推到酒馆');
+        }
+        const originalSend = window.sendMessage;
+        window.sendMessage = async function () {
+            const result = await originalSend.apply(this, arguments);
+            try {
+                const chatId = (typeof currentChatType !== 'undefined' && currentChatType === 'private'
+                    && typeof currentChatId !== 'undefined') ? currentChatId : null;
+                if (chatId && window.TavernSync && window.TavernSync.findBindingForChar(chatId)) {
+                    schedulePushAfterSend(chatId, 0);
+                }
+            } catch (e) { fail('发消息后自动推送出错：' + e.message); }
+            return result;
+        };
+    }
+
     // ========== 6. 打开聊天时自动拉取、删消息时同步删酒馆 ==========
     // yuan 打开聊天、删消息的写法有很多处（单删、多选删、按范围删、重新生成、清空……），
     // 一处处挂钩子容易在 yuan 更新后断掉。所以改成每 1.5 秒看一眼当前打开的聊天：
@@ -692,6 +726,7 @@
         hookSystemPrompt();
         hookRegenerate();
         hookAiReply();
+        hookSendMessage();
         startChatWatcher();
         hookBubbleRender();
         hookHistoryFilter();

@@ -268,8 +268,21 @@ const TavernSync = {
         // 认楼层：发送时间 + 是不是用户；AI 楼再加上“开始生成时间”（精确到毫秒），
         // 因为发送时间只精确到分钟，同一分钟里的两楼光靠它分不开。旧版导入的楼层没记 genStarted，就不比这一项。
         const sameFloor = (m, t) => this._sameFloor(m, t);
-        const imported = char.history.filter(h => h && h.fromTavern && h.tavern);
         const prevMemory = char.tavernMemory || {};
+
+        // 0. 酒馆里被删掉的楼层，小手机里也删掉（只删酒馆卡片，不动小手机自己的消息）。
+        //    三道保险：只在绑定的还是同一个酒馆聊天时做；从酒馆读回来是空的（比如出错）就完全不动；
+        //    认楼层用的是和导入完全一样的那套标准。在酒馆里给某楼重新抽卡（swipe）也会走这里：
+        //    旧的算没了、新的当成新楼层导入，卡片内容跟着换。
+        let removedGone = 0;
+        if (prevMemory.stChatFile === binding.stChatFile && candidates.length) {
+            const before = char.history.length;
+            char.history = char.history.filter(m => !(m && m.fromTavern && m.tavern)
+                || candidates.some(c => sameFloor(c.m, m.tavern)));
+            removedGone = before - char.history.length;
+        }
+
+        const imported = char.history.filter(h => h && h.fromTavern && h.tavern);
 
         // 1. 找出要导入的楼层：从“起点楼层”（第一次同步时导入的最早一楼）往后，所有小手机里还没有的楼层。
         //    所以在小手机里删掉的酒馆楼层，下次同步会重新出现。
@@ -353,6 +366,8 @@ const TavernSync = {
             const found = candidates.find(c => sameFloor(c.m, h.tavern));
             if (!found) continue;
             if (typeof h.tavern.time !== 'number' && found.time != null) h.tavern.time = found.time;
+            // 酒馆里删了楼之后，后面的楼层号会往前挪，卡片上的“第几楼”跟着更新
+            if (h.tavern.floor !== found.floor) h.tavern.floor = found.floor;
             if (h.tavern.genStarted === undefined) h.tavern.genStarted = String(found.m.gen_started || '');
             const summary = readBaibaiSummary(found.m);
             const oldText = h.tavern.summary && h.tavern.summary.text;
@@ -392,11 +407,11 @@ const TavernSync = {
 
         await saveData();
         // 正在看这个角色的聊天 → 重新画一遍，新卡片立刻出现
-        if ((importedCount > 0 || reordered) && typeof currentChatId !== 'undefined' && currentChatId === char.id
+        if ((importedCount > 0 || reordered || removedGone > 0) && typeof currentChatId !== 'undefined' && currentChatId === char.id
             && typeof renderMessages === 'function') {
             try { renderMessages(false, true); } catch (e) { /* 画不出来不影响数据 */ }
         }
-        return { imported: importedCount, summariesFilled, reordered, worldUpdated, autoTrimmed };
+        return { imported: importedCount, summariesFilled, reordered, worldUpdated, autoTrimmed, removedGone };
     },
 
     // 按真实时间把酒馆楼层插到小手机聊天记录里的正确位置：
@@ -1282,11 +1297,11 @@ ${transcript}`;
             if (!binding) return;
 
             if (document.hidden) {
-                // 用户正在离开 OVO（切换到酒馆）→ 立即同步删除，静默写入不刷新 ST
+                // 用户正在离开小手机（切换到酒馆）→ 把还没推的消息推过去，顺便同步删除
                 if (this.isAuto(binding, 'autoPush')) {
-                    this.pushToTavern(binding, 0).then(r => {
-                        if (r.deleted) console.log('[TavernSync] Leave-sync: delete synced to ST silently');
-                    }).catch(e => this.reportIssue('离开小手机时同步删除失败：' + e.message));
+                    this.pushToTavern(binding).then(r => {
+                        if (r.pushed > 0 || r.deleted) console.log('[TavernSync] Leave-sync: pushed to ST');
+                    }).catch(e => this.reportIssue('离开小手机时推送到酒馆失败：' + e.message));
                 }
             } else {
                 // 用户回到 OVO → 自动拉取最新记忆
@@ -1923,6 +1938,7 @@ function setupTavernSyncScreen() {
             const orig = btn.textContent; btn.textContent = '同步中...'; btn.disabled = true;
             try { const r = await TavernSync.pullFromTavern(b); showToast([
                 r.imported ? `导入 ${r.imported} 楼新剧情` : '',
+                r.removedGone ? `酒馆里删掉的 ${r.removedGone} 楼也删掉了` : '',
                 r.summariesFilled ? `补上 ${r.summariesFilled} 段摘要` : '',
                 r.reordered ? '已按时间重新排好位置' : '',
                 r.autoTrimmed ? `精简 ${r.autoTrimmed} 楼旧剧情` : '',
