@@ -1581,7 +1581,12 @@ function setupTavernSyncScreen() {
             const stName = b.stCharAvatar?.replace('.png', '') || '未知';
             const mem = char?.tavernMemory;
             const floorCount = char && Array.isArray(char.history) ? char.history.filter(h => h && h.fromTavern).length : 0;
-            const syncInfo = mem && mem.lastSync ? `小手机里有 ${floorCount} 楼酒馆剧情 · 上次同步 ${new Date(mem.lastSync).toLocaleString('zh-CN', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}` : '未同步';
+            // 时间写成“9月20日 10:30”，比 9/20 好认
+            const fmtSync = (ts) => {
+                const d = new Date(ts);
+                return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            };
+            const syncInfo = mem && mem.lastSync ? `小手机里有 ${floorCount} 楼酒馆剧情 · 上次同步 ${fmtSync(mem.lastSync)}` : '未同步';
             const maxMem = parseInt(char && char.maxMemory, 10) || 20;   // 这个角色在聊天设置里的“可见上文条数”
             return `<div style="${TS.card} padding:14px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -2360,6 +2365,12 @@ async function showWorldBookModal(binding) {
 
     // ===== 条目列表 =====
     let currentSourceIdx = 0;
+    const boxes = () => [...modal.querySelectorAll('#wb-entries input[type=checkbox]')];
+    const selectAllBtn = modal.querySelector('#wb-select-all');
+    function updateSelectAllLabel() {
+        const all = boxes();
+        selectAllBtn.textContent = (all.length && all.every(cb => cb.checked)) ? '取消全选' : '全选';
+    }
     function statusOf(src, e) {
         const copied = TavernSync.findCopiedWorldBook(binding, src.name, e.uid);
         if (!copied) return { text: '', color: '', changed: false, copied: null };
@@ -2388,12 +2399,6 @@ async function showWorldBookModal(binding) {
     renderEntries(0);
     modal.querySelectorAll('.wb-tab').forEach(tab => tab.addEventListener('click', () => renderEntries(parseInt(tab.dataset.tab))));
 
-    const boxes = () => [...modal.querySelectorAll('#wb-entries input[type=checkbox]')];
-    const selectAllBtn = modal.querySelector('#wb-select-all');
-    function updateSelectAllLabel() {
-        const all = boxes();
-        selectAllBtn.textContent = (all.length && all.every(cb => cb.checked)) ? '取消全选' : '全选';
-    }
     modal.querySelector('#wb-entries').addEventListener('change', updateSelectAllLabel);
     selectAllBtn.addEventListener('click', () => {
         const all = boxes();
