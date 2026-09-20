@@ -250,6 +250,7 @@
             char.history.push(...regen.removedFloors);
             window.TavernSync.placeTavernFloors(char);
         }
+        stripTavernFromVersions(char);   // 别让酒馆楼层被存进“旧版本”里
         if (typeof saveData === 'function') await saveData();
         if (typeof renderMessages === 'function' && currentChatId === char.id) {
             try { renderMessages(false, true); } catch (e) { /* 画不出来不影响数据 */ }
@@ -347,7 +348,8 @@
 
         const toggle = document.createElement('div');
         toggle.className = 'node-summary-toggle';
-        toggle.textContent = `酒馆剧情 · 第${t.floor}楼${t.name ? ' · ' + t.name : ''}${t.summary ? ' · 有摘要' : ''}`;
+        toggle.textContent = `酒馆剧情 · 第${t.floor}楼${t.name ? ' · ' + t.name : ''}`
+            + (t.trimmed ? ' · 已精简' : (t.summary ? ' · 有摘要' : ''));
 
         const body = document.createElement('div');
         body.className = 'node-summary-content';
@@ -355,11 +357,46 @@
         body.style.whiteSpace = 'pre-wrap';
         body.style.textAlign = 'left';
         body.textContent = message.content || '';
-        if (t.summary && t.summary.text) {
+        // 已精简的楼层：正文就是摘要，不再重复显示一遍摘要
+        if (t.summary && t.summary.text && !t.trimmed) {
             const sum = document.createElement('div');
             sum.style.cssText = 'margin-top:10px; padding-top:8px; border-top:1px dashed rgba(128,128,128,0.4); opacity:0.85;';
             sum.textContent = `柏宝书摘要${t.summary.time ? `（${t.summary.time}）` : ''}：${t.summary.text}`;
             body.appendChild(sum);
+        }
+
+        // 精简 / 取回原文（精简是可逆的，原文在酒馆里一直都在）
+        const actionText = t.trimmed ? '从酒馆取回原文' : (t.summary && t.summary.text ? '精简这一楼（只留摘要）' : '');
+        if (actionText) {
+            const bar = document.createElement('div');
+            bar.style.cssText = 'margin-top:10px; padding-top:8px; border-top:1px dashed rgba(128,128,128,0.4); text-align:right;';
+            const btn = document.createElement('button');
+            btn.textContent = actionText;
+            btn.style.cssText = 'padding:5px 10px; border-radius:8px; border:none; background:rgba(33,150,243,0.15); color:#2196F3; font-size:12px; cursor:pointer;';
+            if (t.trimmed) {
+                const note = document.createElement('span');
+                note.style.cssText = 'float:left; font-size:11px; color:#888; line-height:24px;';
+                note.textContent = '原文已精简，只剩摘要';
+                bar.appendChild(note);
+            }
+            btn.addEventListener('click', async (ev) => {
+                ev.stopPropagation();
+                const binding = (typeof currentChatId !== 'undefined') ? TavernSync.findBindingForChar(currentChatId) : null;
+                if (!binding) { showToast('这个角色没有绑定酒馆'); return; }
+                btn.disabled = true; btn.textContent = '处理中...';
+                try {
+                    if (t.trimmed) {
+                        const r = await TavernSync.restoreRawFloors(binding, { ids: [message.id] });
+                        showToast(r.restored ? '已取回原文' : '酒馆里找不到这一楼，取不回来');
+                    } else {
+                        const r = await TavernSync.trimFloors(binding, { ids: [message.id] });
+                        showToast(r.trimmed ? `已精简，省下约 ${r.saved} 字` : '这一楼还没有摘要，不能精简');
+                    }
+                } catch (e) { showToast(e.message); }
+                btn.disabled = false; btn.textContent = actionText;
+            });
+            bar.appendChild(btn);
+            body.appendChild(bar);
         }
 
         toggle.addEventListener('click', () => {
@@ -572,6 +609,69 @@
         };
     }
 
+    // ========== 10. 消息版本（“重说”保存的旧回复）里的酒馆剧情 ==========
+    // yuan 保存旧版本时，会把“最后一条用户消息之后的所有内容”整段存下来，酒馆剧情卡片也被算进去，
+    // 但只存文字和时间，不存“这是酒馆楼层”的标记。于是切回旧版本时：真卡片被删掉、换成没标记的纯文字副本，
+    // 下次同步又会把那几楼重新导入 → 同一段剧情出现两次。
+    // 补丁的处理：
+    //   - 存版本时（重新生成之后）把酒馆楼层从版本记录里剔掉，别再存进去；
+    //   - 切回旧版本后，删掉恢复进来的假副本，把真正的酒馆卡片放回原位并按时间排好。
+    function tavernContentsOf(char) {
+        return new Set((char.history || []).filter(m => m && m.fromTavern).map(m => m.content));
+    }
+
+    // 版本记录里混进去的酒馆楼层：清掉。返回清掉了几条
+    function stripTavernFromVersions(char) {
+        const contents = tavernContentsOf(char);
+        if (!contents.size) return 0;
+        let removed = 0;
+        (char.history || []).forEach(m => {
+            if (!m || !Array.isArray(m._regenVersions)) return;
+            m._regenVersions.forEach(v => {
+                if (!v || !Array.isArray(v.replies)) return;
+                const before = v.replies.length;
+                v.replies = v.replies.filter(r => !(r && r.role === 'system' && contents.has(r.content)));
+                removed += before - v.replies.length;
+            });
+            m._regenVersions = m._regenVersions.filter(v => v && Array.isArray(v.replies) && v.replies.length);
+            if (!m._regenVersions.length) delete m._regenVersions;
+        });
+        return removed;
+    }
+
+    function hookMsgVersion() {
+        const mv = (typeof MsgVersion !== 'undefined') ? MsgVersion : null;
+        if (!mv || typeof mv.restoreVersion !== 'function') {
+            return fail('找不到 yuan 的消息版本功能 MsgVersion.restoreVersion，切换旧版本后酒馆剧情可能会重复');
+        }
+        const originalRestore = mv.restoreVersion.bind(mv);
+        mv.restoreVersion = async function (userMsgId, versionIndex) {
+            let char = null, before = [];
+            try {
+                char = (typeof currentChatType !== 'undefined' && currentChatType === 'private')
+                    ? db.characters.find(c => c.id === currentChatId) : null;
+                before = char && Array.isArray(char.history) ? char.history.filter(m => m && m.fromTavern) : [];
+            } catch (e) { char = null; }
+            const result = await originalRestore(userMsgId, versionIndex);
+            if (char && before.length && window.TavernSync) {
+                try {
+                    const contents = new Set(before.map(m => m.content));
+                    // 1. 删掉恢复进来的假副本（没有酒馆标记，但内容和某条酒馆楼层一模一样）
+                    char.history = char.history.filter(m => !(m && !m.fromTavern && m.role === 'system' && contents.has(m.content)));
+                    // 2. 把真正的酒馆卡片放回来（恢复旧版本时它们被一起删掉了），再按时间排好
+                    const present = new Set(char.history.map(m => m && m.id));
+                    const missing = before.filter(m => !present.has(m.id));
+                    if (missing.length) char.history.push(...missing);
+                    window.TavernSync.placeTavernFloors(char);
+                    stripTavernFromVersions(char);
+                    if (typeof saveData === 'function') await saveData();
+                    if (typeof renderMessages === 'function' && currentChatId === char.id) renderMessages(false, true);
+                } catch (e) { fail('切换消息版本后整理酒馆剧情出错：' + e.message); }
+            }
+            return result;
+        };
+    }
+
     // ========== 9. 让“酒馆互联”的设置能保存 ==========
     // yuan 只保存 globalSettingKeys 名单里的设置项，把 tavernSync 加进名单。
     // 名单在 yuan 后面的脚本里才定义，所以等页面脚本全部加载完（DOMContentLoaded）再加；
@@ -596,5 +696,6 @@
         hookBubbleRender();
         hookHistoryFilter();
         startTavernGrouping();
+        hookMsgVersion();
     });
 })();
