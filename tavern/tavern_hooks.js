@@ -9,7 +9,7 @@
 (function () {
     const TAG = '[酒馆外挂]';
     // 文件版本：显示在“酒馆互联”页面最下面（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-20 b';
+    const HOOKS_VERSION = '2026-09-20 c';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
@@ -486,9 +486,9 @@
     }
 
     // 找不到酒馆剧情卡片时的现场勘查：把聊天区里的真实情况报到“酒馆互联”页面，方便排查（只报一次）
-    let diagnosed = false;
+    let diagnosedKey = null;
     function diagnoseGrouping(area) {
-        if (diagnosed) return;
+
         try {
             if (typeof currentChatType === 'undefined' || currentChatType !== 'private' || !currentChatId) return;
             const chatScreen = document.getElementById('chat-room-screen');
@@ -496,14 +496,16 @@
             const char = db.characters.find(c => c.id === currentChatId);
             const floorMsgs = char && Array.isArray(char.history) ? char.history.filter(m => m && m.fromTavern) : [];
             if (!floorMsgs.length) return;
-            diagnosed = true;
+            const key = currentChatId + ':' + area.children.length;
+            if (diagnosedKey === key) return;
+            diagnosedKey = key;
             const ids = new Set(floorMsgs.map(m => m.id));
             const found = document.querySelector('[data-id]') ? Array.from(document.querySelectorAll('[data-id]')).find(el => ids.has(el.dataset.id)) : null;
             const kids = Array.from(area.children).slice(0, 6).map(el => el.tagName.toLowerCase() + '.' + (el.className || '(无类名)')).join(' ｜ ');
             const where = found
                 ? `酒馆消息被画成了：${found.tagName.toLowerCase()}.${found.className || '(无类名)'}，它的上一层是 ${found.parentElement ? found.parentElement.tagName.toLowerCase() + '.' + (found.parentElement.className || '(无类名)') + (found.parentElement === area ? '（就是聊天区）' : '（不是聊天区）') : '没有'}`
                 : '聊天区里找不到任何一条酒馆消息的元素';
-            fail(`整组折叠找不到酒馆剧情卡片。聊天里有 ${floorMsgs.length} 条酒馆消息。${where}。聊天区前几个元素：${kids}`);
+            window.TavernSync.reportIssue(`当前显示的这一页里没有酒馆剧情卡片（聊天里共 ${floorMsgs.length} 条酒馆消息，可能要往上翻、点“加载更多”才会画出来）。${where}。聊天区前几个元素：${kids}`);
         } catch (e) { /* 勘查失败就算了 */ }
     }
 
