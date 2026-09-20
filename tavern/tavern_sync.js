@@ -1193,7 +1193,7 @@ ${transcript}`;
                 const wi = await this.getSTWorldInfo(worldName);
                 const entries = Object.values(wi.entries || {}).map(e => ({
                     uid: e.uid, comment: e.comment || '未命名', content: e.content || '', key: e.key || '',
-                    order: e.order ?? e.uid ?? 0, position: e.position, disabled: !!e.disable, constant: !!e.constant,
+                    order: e.order ?? e.uid ?? 0, position: e.position, depth: e.depth, role: e.role, disabled: !!e.disable, constant: !!e.constant,
                 }));
                 entries.sort((a, b) => a.order - b.order);
                 result.charWorld = { name: worldName, entries };
@@ -1201,7 +1201,7 @@ ${transcript}`;
         } else if (d.character_book?.entries) {
             const entries = Object.values(d.character_book.entries).map(e => ({
                 uid: e.uid, comment: e.comment || '未命名', content: e.content || '', key: e.key || '',
-                order: e.order ?? e.uid ?? 0, position: e.position, disabled: !!e.disable, constant: !!e.constant,
+                order: e.order ?? e.uid ?? 0, position: e.position, depth: e.depth, role: e.role, disabled: !!e.disable, constant: !!e.constant,
             }));
             entries.sort((a, b) => a.order - b.order);
             result.charWorld = { name: '角色内嵌世界书', entries };
@@ -1216,7 +1216,7 @@ ${transcript}`;
                     const wi = await this.getSTWorldInfo(chatWbName);
                     const entries = Object.values(wi.entries || {}).map(e => ({
                         uid: e.uid, comment: e.comment || '未命名', content: e.content || '', key: e.key || '',
-                        order: e.order ?? e.uid ?? 0, position: e.position, disabled: !!e.disable, constant: !!e.constant,
+                        order: e.order ?? e.uid ?? 0, position: e.position, depth: e.depth, role: e.role, disabled: !!e.disable, constant: !!e.constant,
                     }));
                     entries.sort((a, b) => a.order - b.order);
                     result.chatWorld = { name: chatWbName, entries };
@@ -1231,12 +1231,56 @@ ${transcript}`;
     // 复制时在小手机的世界书条目上记一条 tavernSource = { avatar, world, uid, hash }，
     // 之后就能认出“这条是从酒馆哪一条复制来的”，以及酒馆里有没有改过（比对 hash）。
 
-    // 内容指纹：条目名 + 正文。改任意一个都会变
+    // 内容指纹：条目名 + 正文 + 关键词 + 蓝灯 + 开关 + 顺序。任意一项变了都算“酒馆里已改”
     wbHash(entry) {
-        const text = `${entry.comment || ''}\u0001${entry.content || ''}`;
+        const keys = this.entryKeywords(entry).join(',');
+        const text = [entry.comment || '', entry.content || '', keys, entry.constant ? 1 : 0, entry.disabled ? 1 : 0, entry.order ?? ''].join('\u0001');
         let h = 5381;
         for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
         return String(h);
+    },
+
+    // 酒馆里的插入位置说明。小手机的世界书只有“前/后”，所以除了“角色设定前”，其余都会变成“后”
+    tavernPositionLabel(entry) {
+        const p = entry && entry.position;
+        const depth = Number.isInteger(entry && entry.depth) ? " " + entry.depth : "";
+        // 深度插入还分用什么身份插：0=系统 1=用户 2=AI（酒馆里没写就按系统算）
+        const roleName = { 0: "系统", 1: "用户", 2: "AI" }[entry && entry.role] || "系统";
+        if (p === 0) return "角色定义前";
+        if (p === 1) return "角色定义后";
+        if (p === 2) return "作者注释前";
+        if (p === 3) return "作者注释后";
+        if (p === 4) return "[" + roleName + "]插入深度 @D" + depth;
+        if (p === 5) return "示例消息前";
+        if (p === 6) return "示例消息后";
+        // 维护者的酒馆里除上面几种只剩“锚点”，所以其余代号一律按锚点显示（代号一并写出来，万一以后酒馆又加了新位置好排查）
+        return "锚点（代号 " + p + "）";
+    },
+
+    // 酒馆条目的关键词（绿灯）。酒馆里可能存成数组，也可能是逗号分隔的字符串
+    entryKeywords(entry) {
+        const k = entry && entry.key;
+        if (Array.isArray(k)) return k.map(x => String(x).trim()).filter(Boolean);
+        if (typeof k === 'string' && k.trim()) return k.split(/[,，]+/).map(x => x.trim()).filter(Boolean);
+        return [];
+    },
+
+    // 把酒馆条目的内容套到小手机的世界书条目上（复制和更新都走这里），让两边保持一致：
+    //   酒馆的蓝灯（常驻）→ 小手机的“常驻”；绿灯的关键词原样搬过来
+    //   酒馆里关掉的条目 → 小手机里也设成关闭
+    //   酒馆里的顺序 → 小手机的权重，从 100 开始依次排（权重小的排前面）。
+    //     更新时只有酒馆里的顺序真的变了才改权重，这样你自己在小手机里调过的顺序不会被冲掉。
+    applyTavernEntry(target, entry, index, isNew) {
+        const keywords = this.entryKeywords(entry);
+        target.name = entry.comment || target.name || '未命名';
+        target.content = entry.content || '';
+        target.alwaysOn = !!entry.constant;
+        target.keywords = target.alwaysOn ? [] : keywords;
+        target.disabled = !!entry.disabled;
+        target.position = (entry.position === 0) ? 'before' : 'after';
+        const orderChanged = target.tavernSource && target.tavernSource.order !== entry.order;
+        if (isNew || orderChanged) target.weight = 100 + (Number.isInteger(index) ? index : 0);
+        return target;
     },
 
     // 找到“从酒馆这一条复制过来”的小手机世界书条目
@@ -1261,9 +1305,9 @@ ${transcript}`;
             if (!entry) continue;                       // 酒馆里删掉了 → 小手机这条保留，不动
             const hash = this.wbHash(entry);
             if (hash === w.tavernSource.hash) continue;
-            w.name = entry.comment || w.name;
-            w.content = entry.content;
+            this.applyTavernEntry(w, entry, src.entries.indexOf(entry), false);
             w.tavernSource.hash = hash;
+            w.tavernSource.order = entry.order;
             updated++;
         }
         return { updated };
@@ -2389,7 +2433,7 @@ async function showWorldBookModal(binding) {
                 <input type="checkbox" data-idx="${i}" style="flex-shrink:0; margin:0;">
                 <div style="flex:1; min-width:0;">
                     <div style="font-size:13px; font-weight:500; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(e.comment || '未命名')}${e.disabled ? '（酒馆里已关闭）' : ''}${st.text ? `<span style="font-size:11px; color:${st.color}; margin-left:6px;">${st.text}</span>` : ''}</div>
-                    <div style="font-size:11px; color:#888; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${preview ? esc(preview.slice(0, 80)) : '（空条目）'}</div>
+                    <div style="font-size:11px; color:#888; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"><span style="color:#89a;">位置：${esc(TavernSync.tavernPositionLabel(e))}</span> · ${preview ? esc(preview.slice(0, 80)) : '（空条目）'}</div>
                 </div>
             </label>`;
         }).join('');
@@ -2428,16 +2472,13 @@ async function showWorldBookModal(binding) {
         let added = 0, skipped = 0;
         for (const e of selected) {
             if (TavernSync.findCopiedWorldBook(binding, src.name, e.uid)) { skipped++; continue; }
-            const newWb = {
+            const newWb = TavernSync.applyTavernEntry({
                 id: `wb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                name: e.comment || '未命名',
-                content: e.content,
                 category,
-                position: (e.position === 0) ? 'before' : 'after',
+                tags: [],
                 isGlobal: false,
-                disabled: false,
-                tavernSource: { avatar: binding.stCharAvatar, world: src.name, uid: e.uid, hash: TavernSync.wbHash(e) },
-            };
+                tavernSource: { avatar: binding.stCharAvatar, world: src.name, uid: e.uid, hash: TavernSync.wbHash(e), order: e.order },
+            }, e, src.entries.indexOf(e), true);
             db.worldBooks.push(newWb);
             if (!char.worldBookIds) char.worldBookIds = [];
             if (!char.worldBookIds.includes(newWb.id)) char.worldBookIds.push(newWb.id);
@@ -2445,7 +2486,10 @@ async function showWorldBookModal(binding) {
         }
         await saveData();
         renderEntries(currentSourceIdx);
-        showToast(added ? `已复制 ${added} 条到分组「${category}」${skipped ? `，${skipped} 条之前复制过（可用“更新”）` : ''}` : '勾选的条目之前都复制过了，可以用“更新小手机里的内容”');
+        // @深度 是酒馆特有的位置（插在聊天记录中间第 N 层），小手机没有这个概念，只能放到“后”
+        const atDepth = selected.filter(e => e.position === 4).length;
+        const depthNote = atDepth ? `。其中 ${atDepth} 条在酒馆里是 @深度 插入，已放到 注入位置：后` : '';
+        showToast(added ? `已复制 ${added} 条到分组「${category}」${skipped ? `，${skipped} 条之前复制过（可用“更新”）` : ''}${depthNote}` : '勾选的条目之前都复制过了，可以用“更新小手机里的内容”');
     });
 
     // ===== 更新 =====
@@ -2458,9 +2502,9 @@ async function showWorldBookModal(binding) {
             const copied = TavernSync.findCopiedWorldBook(binding, src.name, e.uid);
             if (!copied) { missing++; continue; }
             if (copied.tavernSource.hash === TavernSync.wbHash(e)) continue;
-            copied.name = e.comment || copied.name;
-            copied.content = e.content;
+            TavernSync.applyTavernEntry(copied, e, src.entries.indexOf(e), false);
             copied.tavernSource.hash = TavernSync.wbHash(e);
+            copied.tavernSource.order = e.order;
             updated++;
         }
         await saveData();
