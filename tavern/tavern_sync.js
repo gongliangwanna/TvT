@@ -1875,9 +1875,9 @@ function setupTavernSyncScreen() {
 
     // 线下剧情包裹提示词（用 JS 赋值，避免 HTML 转义把 {{ }} 或尖括号弄乱）
     const wrapFields = [
-        ['#ts-wrap-note', 'wrapNote', TavernSync.DEFAULT_WRAP_NOTE],
-        ['#ts-wrap-raw', 'wrapRaw', TavernSync.DEFAULT_WRAP_RAW],
-        ['#ts-wrap-summary', 'wrapSummary', TavernSync.DEFAULT_WRAP_SUMMARY],
+        ['#ts-wrap-note', 'wrapNote', DEFAULT_WRAP_NOTE],
+        ['#ts-wrap-raw', 'wrapRaw', DEFAULT_WRAP_RAW],
+        ['#ts-wrap-summary', 'wrapSummary', DEFAULT_WRAP_SUMMARY],
     ];
     wrapFields.forEach(([sel, key]) => {
         const el = mainEl.querySelector(sel);

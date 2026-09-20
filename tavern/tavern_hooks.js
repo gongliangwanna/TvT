@@ -563,7 +563,9 @@
                         // 从组尾收起：滚回这一组的位置，不然会停在很下面
                         if (fromBottom) {
                             const head = Array.from(document.querySelectorAll('.tavern-group-bar')).find(el => el.dataset.group === key);
-                            if (head) head.scrollIntoView({ block: 'center' });
+                            // 个别浏览器没有 scrollIntoView，滚不动也不该让收起失败
+                            try { if (head && typeof head.scrollIntoView === 'function') head.scrollIntoView({ block: 'center' }); }
+                            catch (e) { /* 滚动失败不影响收起 */ }
                         }
                     };
                     const head = makeGroupBar(
