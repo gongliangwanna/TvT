@@ -9,7 +9,7 @@
 (function () {
     const TAG = '[酒馆外挂]';
     // 文件版本：显示在“酒馆互联”页面最下面（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-20 f';
+    const HOOKS_VERSION = '2026-09-20 g';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
@@ -399,7 +399,7 @@
         if (document.getElementById('tavern-collapse-style')) return;
         const style = document.createElement('style');
         style.id = 'tavern-collapse-style';
-        style.textContent = '.' + HIDDEN_CLASS + ' { display: none !important; }';
+        style.textContent = 'html body .' + HIDDEN_CLASS + '.' + HIDDEN_CLASS + '.' + HIDDEN_CLASS + ' { display: none !important; }';
         (document.head || document.documentElement).appendChild(style);
     })();
     const expandedGroups = new Set();   // 展开着的组（用组里第一楼的消息编号记），重新画聊天后保持
@@ -452,7 +452,7 @@
         try {
             // 先清掉上一轮的组头组尾（可能在别的容器里，所以整页找）
             document.querySelectorAll('.tavern-group-bar').forEach(el => el.remove());
-            document.querySelectorAll('.' + HIDDEN_CLASS).forEach(el => { el.classList.remove(HIDDEN_CLASS); el.style.display = ''; });
+            document.querySelectorAll('.' + HIDDEN_CLASS).forEach(el => { el.classList.remove(HIDDEN_CLASS); el.style.removeProperty('display'); });
             const areas = findFloorAreas();
             for (const area of areas) {
                 const isFloor = (el) => el.matches(FLOOR_SELECTOR);
@@ -477,7 +477,12 @@
                     const count = g.floors.length;
                     const floorNos = g.floors.map(el => el.dataset.tavernFloor).filter(x => x !== undefined && x !== '');
                     const range = floorNos.length ? `（第${floorNos[0]}${floorNos.length > 1 ? '~' + floorNos[floorNos.length - 1] : ''}楼）` : '';
-                    g.members.forEach(el => { el.classList.toggle(HIDDEN_CLASS, !open); el.style.display = open ? '' : 'none'; });
+                    g.members.forEach(el => {
+                        el.classList.toggle(HIDDEN_CLASS, !open);
+                        // 写在元素自己身上并标成最高优先级：优先于任何样式表，包括用户自定义 CSS 里的强制显示
+                        if (open) el.style.removeProperty('display');
+                        else el.style.setProperty('display', 'none', 'important');
+                    });
                     if (!open) verifyHidden(g.floors[0]);
                     const toggleGroup = (fromBottom) => {
                         if (expandedGroups.has(key)) expandedGroups.delete(key); else expandedGroups.add(key);

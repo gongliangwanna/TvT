@@ -76,7 +76,7 @@ function readFloorTime(m) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-20 f',
+    SYNC_VERSION: '2026-09-20 g',
     DEFAULT_TIME_REGEX,
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
