@@ -2030,28 +2030,19 @@ function setupTavernSyncScreen() {
                     <button data-reset="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(244,67,54,0.12); color:#f66; font-size:13px; font-weight:500; cursor:pointer;">清空并重选范围</button></div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-auto="autoPull" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPull') ? 'checked' : ''}>
-                    <span>自动同步<span style="font-size:11px; color:#888;">（打开这个角色的聊天、或从酒馆切回小手机时，自动导入新楼层）</span></span>
+                    <span>自动同步</span>
                 </label>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-auto="autoPush" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPush') ? 'checked' : ''}>
-                    <span>自动推送<span style="font-size:11px; color:#888;">（AI 回复后把新消息推到酒馆；在小手机删消息时同步删酒馆里的）</span></span>
+                    <span>自动推送</span>
                 </label>
-                <div style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13px; flex-wrap:wrap;">
-                    <span>通话推送</span>
-                    <select data-callmode="${i}" style="flex:1; min-width:120px; padding:5px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;">
-                        <option value="summary" ${callMode === 'summary' ? 'selected' : ''}>只推总结</option>
-                        <option value="context" ${callMode === 'context' ? 'selected' : ''}>只推记录</option>
-                        <option value="both" ${callMode === 'both' ? 'selected' : ''}>都推送</option>
-                    </select>
-                    <span style="font-size:11px; color:#888; width:100%;">总结 = yuan 自动写的那段通话总结；记录 = 通话过程中的每一句话。哪种都会带上“打了多久”</span>
-                </div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-wbauto="${i}" ${b.autoUpdateWorldBooks ? 'checked' : ''}>
-                    <span>自动更新复制过的世界书<span style="font-size:11px; color:#888;">（从酒馆同步时，把酒馆里改过的条目更新到小手机的世界书）</span></span>
+                    <span>自动更新复制过的世界书</span>
                 </label>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-trimauto="${i}" ${b.autoTrim ? 'checked' : ''}>
-                    <span>自动精简旧楼层<span style="font-size:11px; color:#888;">（每次同步时，把保留范围以外、已经有摘要的楼层只留摘要；原文随时能从酒馆取回）</span></span>
+                    <span>自动精简旧楼层</span>
                 </label>
                 <div style="display:${b.autoTrim ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
                     保留最近
@@ -2061,13 +2052,21 @@ function setupTavernSyncScreen() {
                 </div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-limit="${i}" ${b.limitTavernContext ? 'checked' : ''}>
-                    <span>单独限制酒馆上文<span style="font-size:11px; color:#888;">（关闭时按聊天设置里的可见上文条数，酒馆和小手机消息一起算）</span></span>
+                    <span>单独限制酒馆上文</span>
                 </label>
                 <div style="display:${b.limitTavernContext ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
                     发给 AI 的酒馆剧情最多
                     <input type="number" data-limit-num="${i}" min="0" max="${maxMem}" value="${Math.min(maxMem, parseInt(b.tavernContextCount, 10) || 0)}"
                         style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
                     <span style="font-size:11px; color:#888; width:100%;">这个角色的可见上文是 ${maxMem} 条：取最新的这么多楼酒馆剧情，剩下的名额给小手机消息</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px;">
+                    <span>通话推送</span>
+                    <select data-callmode="${i}" style="flex:1; min-width:120px; padding:5px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;">
+                        <option value="summary" ${callMode === 'summary' ? 'selected' : ''}>只推总结</option>
+                        <option value="context" ${callMode === 'context' ? 'selected' : ''}>只推记录</option>
+                        <option value="both" ${callMode === 'both' ? 'selected' : ''}>都推送</option>
+                    </select>
                 </div>
             </div>`;
         }).join('');
