@@ -1687,7 +1687,7 @@ function askText(title, placeholder) {
             <input id="ask-input" type="text" placeholder="${esc(placeholder || '')}" style="width:100%; box-sizing:border-box; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; margin-bottom:14px;">
             <div style="display:flex; gap:10px;">
                 <button id="ask-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;">取消</button>
-                <button id="ask-ok" style="flex:1; padding:10px; border-radius:10px; border:none; background:var(--primary-color, #cee4f1); color:var(--white-color, #2a3032); font-size:14px; font-weight:500; cursor:pointer;">确定</button>
+                <button id="ask-ok" style="flex:1; ${TS.btnP}">确定</button>
             </div>`;
         overlay.appendChild(box);
         document.body.appendChild(overlay);
@@ -1706,7 +1706,8 @@ const TS = {
     card: 'background:var(--received-bg, rgba(255,255,255,0.08)); border-radius:14px; padding:16px; margin-bottom:12px;',
     label: 'font-size:13px; color:#999; display:block; margin-bottom:4px;',
     input: 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:14px; box-sizing:border-box;',
-    btnP: 'padding:10px; border-radius:10px; border:none; background:var(--primary-color, #cee4f1); color:var(--white-color, #2a3032); font-size:14px; font-weight:500; cursor:pointer;',
+    // 主按钮固定用蓝色，不跟主题的主色走（维护者的主题主色是淡粉，看着不像“确认”按钮）
+    btnP: 'padding:10px; border-radius:10px; border:none; background:#2196F3; color:#fff; font-size:14px; font-weight:500; cursor:pointer;',
     btnG: 'padding:8px; border-radius:8px; border:none; background:rgba(76,175,80,0.15); color:#4CAF50; font-size:13px; font-weight:500; cursor:pointer;',
     btnB: 'padding:8px; border-radius:8px; border:none; background:rgba(33,150,243,0.15); color:#2196F3; font-size:13px; font-weight:500; cursor:pointer;',
     btnO: 'padding:8px; border-radius:8px; border:none; background:rgba(255,152,0,0.15); color:#FF9800; font-size:13px; font-weight:500; cursor:pointer;',
@@ -1743,7 +1744,7 @@ function setupTavernSyncScreen() {
                 <div style="${TS.card}">
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <span style="${TS.title}">角色绑定</span>
-                        <button id="ts-add-btn" style="padding:6px 14px; border-radius:8px; border:none; background:var(--primary-color, #cee4f1); color:var(--white-color, #2a3032); font-size:13px; cursor:pointer;">+ 添加</button>
+                        <button id="ts-add-btn" style="padding:6px 14px; border-radius:8px; border:none; background:#2196F3; color:#fff; font-size:13px; cursor:pointer;">+ 添加</button>
                     </div>
                     <div id="ts-bindings-list"></div>
                 </div>
@@ -2249,7 +2250,7 @@ async function showAutoPushModal(binding) {
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:400px; max-height:85vh; display:flex; flex-direction:column;';
 
     const numStyle = 'width:66px; padding:6px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;';
-    const tabBtn = (id, label, active) => `<button data-mode="${id}" class="auto-push-tab" style="flex:1; padding:8px 4px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:${active ? 'rgba(33,150,243,0.18)' : 'transparent'}; color:${active ? '#2196F3' : 'inherit'}; font-size:13px; cursor:pointer;">${label}</button>`;
+    const tabBtn = (id, label, active) => `<button data-mode="${id}" class="auto-push-tab" style="flex:1; padding:8px 4px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:${active ? 'rgba(33,150,243,0.18)' : 'transparent'}; color:${active ? '#2196F3' : '#999'}; font-size:13px; cursor:pointer;">${label}</button>`;
     const rangeRow = (idPrefix, from, to) => `
         <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; font-size:14px;">
             第 <input type="number" id="${idPrefix}-from" min="1" max="${total}" value="${from}" style="${numStyle}">
@@ -2338,13 +2339,13 @@ async function showAutoPushModal(binding) {
             modal.querySelectorAll('.auto-push-tab').forEach(b => {
                 const active = b.dataset.mode === mode;
                 b.style.background = active ? 'rgba(33,150,243,0.18)' : 'transparent';
-                b.style.color = active ? '#2196F3' : 'inherit';
+                b.style.color = active ? '#2196F3' : '#999';
             });
             modal.querySelector('#auto-mode-raw').style.display = mode === 'raw' ? 'flex' : 'none';
             modal.querySelector('#auto-mode-summary').style.display = mode === 'summary' ? 'flex' : 'none';
             modal.querySelector('#auto-mode-clean').style.display = mode === 'clean' ? 'flex' : 'none';
             confirmBtn.textContent = mode === 'clean' ? '确认删除' : '确认推送';
-            confirmBtn.style.background = mode === 'clean' ? 'rgba(244,67,54,0.8)' : '';
+            confirmBtn.style.background = mode === 'clean' ? 'rgba(244,67,54,0.8)' : '#2196F3';
         });
     });
 
