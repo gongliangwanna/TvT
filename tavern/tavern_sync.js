@@ -131,7 +131,7 @@ function tagFloorNth(list) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-21 m',
+    SYNC_VERSION: '2026-09-22 a',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -2755,7 +2755,9 @@ function setupTavernSyncScreen() {
     const saveNum = (id, key, fallback) => mainEl.querySelector(id).addEventListener('change', async (e) => {
         const n = parseInt(e.target.value, 10);
         const cfg = TavernSync.getConfig();
-        cfg[key] = Number.isInteger(n) && n >= 0 ? n : fallback;
+        // 清空了就当没改，退回原来的数（原来也没有才用默认值）
+        const old = parseInt(cfg[key], 10);
+        cfg[key] = Number.isInteger(n) && n >= 0 ? n : (Number.isInteger(old) && old >= 0 ? old : fallback);
         e.target.value = cfg[key];
         await TavernSync.saveConfig(cfg);
     });
@@ -3140,7 +3142,7 @@ function setupTavernSyncScreen() {
             const b = cfg.bindings[parseInt(inp.dataset.firstpush)];
             if (!b) return;
             let n = parseInt(inp.value, 10);
-            if (!Number.isInteger(n) || n < 0) n = 0;
+            if (!Number.isInteger(n) || n < 0) n = TavernSync.firstPushCountFor(b);   // 清空了就当没改
             inp.value = n;
             b.firstPushCount = n;
             await TavernSync.saveConfig(cfg);
@@ -3150,7 +3152,7 @@ function setupTavernSyncScreen() {
             const b = cfg.bindings[parseInt(inp.dataset.firstNum)];
             if (!b) return;
             let n = parseInt(inp.value, 10);
-            if (!Number.isInteger(n) || n < 0) n = 0;
+            if (!Number.isInteger(n) || n < 0) n = TavernSync.initialImportFor(b);   // 清空了就当没改
             inp.value = n;
             b.initialImportCount = n;
             await TavernSync.saveConfig(cfg);
@@ -3193,7 +3195,7 @@ function setupTavernSyncScreen() {
             if (!b) return;
             const least = cfg.rawFloorCount || 0;
             let n = parseInt(inp.value, 10);
-            if (!Number.isInteger(n) || n < 0) n = 0;
+            if (!Number.isInteger(n) || n < 0) n = TavernSync.keepRawFloorCount(b);   // 清空了就当没改
             if (n < least) { n = least; showToast(`不能少于「最近几楼发原文」的 ${least} 楼，已改成 ${least}`); }
             inp.value = n;
             b.keepRawFloors = n;
@@ -3220,7 +3222,7 @@ function setupTavernSyncScreen() {
             const ch = db.characters.find(c => c.id === b.uwuCharId);
             const max = parseInt(ch && ch.maxMemory, 10) || 20;
             let n = parseInt(inp.value, 10);
-            if (!Number.isInteger(n) || n < 0) n = 0;
+            if (!Number.isInteger(n) || n < 0) n = Math.min(max, parseInt(b.tavernContextCount, 10) || 0);   // 清空了就当没改
             if (n > max) { n = max; showToast(`不能超过可见上文条数 ${max}，已改成 ${max}`); }
             inp.value = n;
             b.tavernContextCount = n;
@@ -3457,8 +3459,9 @@ async function showAutoPushModal(binding, onDone) {
     let mode = 'raw';
     let summaryState = null;
 
-    // 读取某个页签里填的范围，返回这段消息（编号从 1 开始）
-    function readRange(idPrefix) {
+    // 读取某个页签里填的范围，返回这段消息（编号从 1 开始）。
+    // keepInput = true 时只算、不把改正后的数字写回框里：打字时用，否则删空一个框会马上跳回原来的数
+    function readRange(idPrefix, keepInput) {
         const fromEl = modal.querySelector(`#${idPrefix}-from`);
         const toEl = modal.querySelector(`#${idPrefix}-to`);
         let from = parseInt(fromEl.value, 10);
@@ -3466,12 +3469,12 @@ async function showAutoPushModal(binding, onDone) {
         if (!Number.isInteger(from) || from < 1) from = 1;
         if (!Number.isInteger(to) || to > total) to = total;
         if (from > to) from = to;
-        fromEl.value = from; toEl.value = to;
+        if (!keepInput) { fromEl.value = fromEl.dataset.good = from; toEl.value = toEl.dataset.good = to; }
         return { from, to, msgs: list.slice(from - 1, to) };
     }
 
     function renderPreview(idPrefix, boxId, markPushed) {
-        const { msgs } = readRange(idPrefix);
+        const { msgs } = readRange(idPrefix, true);
         const box = modal.querySelector(boxId);
         if (!msgs.length) { box.textContent = '这个范围里没有消息'; return; }
         const shown = msgs.slice(-12);
@@ -3487,7 +3490,19 @@ async function showAutoPushModal(binding, onDone) {
         renderPreview('auto-raw', '#auto-raw-preview', true);
         renderPreview('auto-clean', '#auto-clean-preview', false);
     };
-    modal.querySelectorAll('input[type=number]').forEach(inp => inp.addEventListener('input', refreshPreviews));
+    // 打字时只刷新预览；离开框时：清空了就退回改之前的数，超出范围的拉回 1 ~ 总条数
+    // （开始大于结束留到按确认时再改，免得先改一个框时把另一个框的数动了）
+    modal.querySelectorAll('input[type=number]').forEach(inp => {
+        inp.dataset.good = inp.value;
+        inp.addEventListener('input', refreshPreviews);
+        inp.addEventListener('change', () => {
+            let n = parseInt(inp.value, 10);
+            if (!Number.isInteger(n)) n = parseInt(inp.dataset.good, 10);
+            n = Math.min(total, Math.max(1, n));
+            inp.value = n; inp.dataset.good = n;
+            refreshPreviews();
+        });
+    });
     refreshPreviews();
 
     const confirmBtn = modal.querySelector('#auto-confirm');
