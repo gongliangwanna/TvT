@@ -3041,7 +3041,7 @@ function setupTavernSyncScreen() {
                         ${newer ? `<div style="font-size:11px; color:#2196F3; margin-top:4px; word-break:break-all;">${newer.curGone
                             ? `现在绑定的酒馆聊天文件「${esc(b.stChatFile || '')}」已不存在，可能已被删除或重命名。这个酒馆角色最近玩的是酒馆聊天文件「${esc(newer.file)}」。`
                             : `这个酒馆角色还有另一个酒馆聊天文件「${esc(newer.file)}」，它的最后一条消息比现在绑定的酒馆聊天文件更晚，你可能在酒馆里换到那个酒馆聊天文件玩了。`}要把绑定改成酒馆聊天文件「${esc(newer.file)}」吗？改了之后，从酒馆同步剧情、往酒馆推送小手机消息都改用它；以前同步进小手机的酒馆剧情会留着，如果不想要，改绑后点「管理同步范围」，在里面点红色的「删掉以前的酒馆聊天文件留下的……楼」。</div>
-                        <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:4px;">
+                        <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:4px; margin-bottom:8px;">
                             <button data-newer-go="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(33,150,243,0.5); background:rgba(33,150,243,0.15); color:#2196F3; font-size:11px; line-height:1.5; cursor:pointer;">改绑</button>
                             <button data-newer-no="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:11px; line-height:1.5; cursor:pointer;">不改</button></div>` : ''}
                         <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}</div>
@@ -4043,7 +4043,7 @@ async function showWorldBookModal(binding) {
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">导入酒馆世界书</h3>
         <div style="font-size:12px; color:#888; margin-bottom:8px; line-height:1.6;">复制过来就是小手机自己的世界书条目，可以随便改。酒馆里改了内容的，这里会标出来，可以选择更新。酒馆里以后改了内容，打开绑定卡片上的「自动更新复制过的世界书」，或者回到这里点「更新小手机里的内容」。</div>
-        ${tabsHTML ? `<div style="display:flex; justify-content:center; gap:8px; margin-bottom:10px; flex-wrap:wrap;">${tabsHTML}</div>` : ''}
+        ${tabsHTML ? `<div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">${tabsHTML}</div>` : ''}
         <div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
             <button id="wb-select-all" style="${smallBtn}">全选</button>
             <button id="wb-select-enabled" style="${smallBtn}">只选酒馆里开着的</button>
@@ -4297,7 +4297,7 @@ function showPromptPreview(binding) {
                     <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
                         <span style="width:8px; height:8px; border-radius:50%; background:${s.color}; flex-shrink:0;"></span>
                         <span style="font-size:13px; font-weight:600; color:${s.color};">${esc(s.title)}</span>
-                        <span style="font-size:11px; color:#888; margin-left:auto;">~${s.tokens.toLocaleString()} tokens</span>
+                        <span style="font-size:11px; color:#888; margin-left:auto;">约 ${s.tokens.toLocaleString()} tokens</span>
                     </div>
                     ${s.meta ? `<div style="font-size:12px; color:#888; margin-bottom:6px; line-height:1.6;">${esc(s.meta)}</div>` : ''}
                     ${s.content ? `<div style="${box} border-left:3px solid ${s.color};">${esc(s.content)}</div>` : ''}
