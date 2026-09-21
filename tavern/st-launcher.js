@@ -36,8 +36,12 @@ function addPhoneMenuButton() {
 
 // ===== 小手机改了聊天 → 酒馆重新读一遍 =====
 // 小手机和酒馆是同一个网址，用浏览器自带的 BroadcastChannel 互相通知（只在同一个浏览器里有效）。
-let pendingReload = null;   // { avatar, file }：等着重新读的聊天
+// 小手机保存时酒馆正忙（生成回复/编辑某一楼）的话，酒馆忙完会先存一遍它手里的旧版本，可能把小手机写的盖掉。
+// 所以忙完、重新读完之后，回话告诉小手机是哪几次保存、当时在忙什么、什么时候忙完的，小手机据此核对并补推。
+let channel = null;
+let pendingReload = null;   // { avatar, file, saves: [{ saveId, time }], busySince, busyReason }：等着重新读的聊天
 let reloadTimer = null;
+const SETTLE_MS = 1500;     // 忙完后再等一会儿：让酒馆把生成完的回复存好，再去读，免得读到半截
 
 function currentChat() {
     const ctx = globalThis.SillyTavern && typeof globalThis.SillyTavern.getContext === 'function'
@@ -47,36 +51,81 @@ function currentChat() {
     return ch ? { ctx, avatar: ch.avatar, file: ch.chat } : null;
 }
 
-// 酒馆正在生成回复、或者你正在酒馆里编辑某一楼时，先不重新读（会打断它），过一会儿再试
-function busy() {
+// 酒馆正在生成回复、或者你正在酒馆里编辑某一楼时，先不重新读（会打断它），过一会儿再试。
+// 返回在忙什么：'generating' / 'editing'，不忙返回 null
+function busyReason() {
     const stop = document.getElementById('mes_stop');
-    const generating = !!stop && getComputedStyle(stop).display !== 'none';
-    const editing = !!document.getElementById('curEditTextarea');
-    return generating || editing;
+    if (stop && getComputedStyle(stop).display !== 'none') return 'generating';
+    if (document.getElementById('curEditTextarea')) return 'editing';
+    return null;
+}
+
+// 告诉小手机：这几次保存的时候酒馆在忙，忙完后酒馆存了自己手里的版本，可能盖掉了小手机写的内容
+function replyMaybeOverwrote(p, ctx) {
+    if (!channel) return;
+    try {
+        channel.postMessage({
+            type: 'tavern-maybe-overwrote',
+            avatar: p.avatar,                              // 哪个酒馆角色
+            file: p.file,                                  // 哪个聊天
+            saveIds: p.saves.map(x => x.saveId),           // 小手机哪几次保存（小手机据此找到那几次推了什么）
+            phoneSaveTimes: p.saves.map(x => x.time),      // 那几次保存是什么时候
+            busyReason: p.busyReason,                      // 当时酒馆在忙什么：generating 生成回复 / editing 编辑楼层
+            busySince: p.busySince,                        // 酒馆这边什么时候发现在忙
+            busyEnded: p.busyEnded,                        // 什么时候忙完
+            reloadedAt: Date.now(),                        // 什么时候重新读完
+            reloaded: !!p.reloaded,                        // 有没有真的重新读（酒馆版本太旧没有这个功能时是 false）
+            floorCount: ctx && Array.isArray(ctx.chat) ? ctx.chat.length : null,   // 重新读完后这个聊天一共几楼
+        });
+    } catch (e) { console.warn('[小手机] 回话失败:', e); }
 }
 
 function tryReload() {
     reloadTimer = null;
-    if (!pendingReload) return;
+    const p = pendingReload;
+    if (!p) return;
     const cur = currentChat();
     // 酒馆现在开的不是这个聊天：它会在打开时自己从文件读，不用管
-    if (!cur || cur.avatar !== pendingReload.avatar || cur.file !== pendingReload.file) { pendingReload = null; return; }
-    if (busy()) { reloadTimer = setTimeout(tryReload, 2000); return; }
+    if (!cur || cur.avatar !== p.avatar || cur.file !== p.file) { pendingReload = null; return; }
+    const reason = busyReason();
+    if (reason) {
+        if (!p.busySince) { p.busySince = Date.now(); p.busyReason = reason; }
+        reloadTimer = setTimeout(tryReload, 2000);
+        return;
+    }
+    // 刚忙完：再等一会儿，让酒馆把它的保存做完
+    if (p.busySince && !p.busyEnded) {
+        p.busyEnded = Date.now();
+        reloadTimer = setTimeout(tryReload, SETTLE_MS);
+        return;
+    }
     pendingReload = null;
+    const done = () => { if (p.busySince) replyMaybeOverwrote(p, currentChat() && currentChat().ctx); };
     if (typeof cur.ctx.reloadCurrentChat === 'function') {
-        Promise.resolve(cur.ctx.reloadCurrentChat()).catch(e => console.warn('[小手机] 重新读取聊天失败:', e));
-    } else if (globalThis.toastr) {
-        globalThis.toastr.info('小手机改了这个聊天，请刷新酒馆页面，否则酒馆下次保存会把小手机的改动盖掉');
+        p.reloaded = true;
+        Promise.resolve(cur.ctx.reloadCurrentChat())
+            .catch(e => { p.reloaded = false; console.warn('[小手机] 重新读取聊天失败:', e); })
+            .finally(done);
+    } else {
+        if (globalThis.toastr) globalThis.toastr.info('小手机改了这个聊天，请刷新酒馆页面，否则酒馆下次保存会把小手机的改动盖掉');
+        done();
     }
 }
 
 try {
     if (typeof BroadcastChannel === 'function') {
-        const channel = new BroadcastChannel('uwu-tavern-sync');
+        channel = new BroadcastChannel('uwu-tavern-sync');
         channel.addEventListener('message', (e) => {
             const d = e.data;
             if (!d || d.type !== 'chat-saved' || !d.avatar || !d.file) return;
-            pendingReload = { avatar: d.avatar, file: d.file };
+            const same = pendingReload && pendingReload.avatar === d.avatar && pendingReload.file === d.file;
+            if (!same) pendingReload = { avatar: d.avatar, file: d.file, saves: [] };
+            if (d.saveId) pendingReload.saves.push({ saveId: d.saveId, time: d.time });
+            // 已经在等酒馆忙完了：不用重新计时，忙完一起处理
+            if (pendingReload.busySince) return;
+            // 这一刻酒馆就在忙：记下来（小手机这次写的内容很可能会被忙完后的保存盖掉）
+            const reason = busyReason();
+            if (reason) { pendingReload.busySince = Date.now(); pendingReload.busyReason = reason; }
             clearTimeout(reloadTimer);
             // 稍等一下，小手机连着保存好几次时只读一遍
             reloadTimer = setTimeout(tryReload, 300);
