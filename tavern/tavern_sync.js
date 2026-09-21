@@ -12,7 +12,9 @@ const DEFAULT_TIME_REGEX = String.raw`【\s*(?<year>\d{4})\s*年\s*(?<month>\d{1
 
 // 酒馆楼层发给 AI 时的包裹提示词（可在酒馆互联页面自定义）
 // 可用变量：{{楼层}} 酒馆楼层号（从 0 数）、{{发言人}}、{{内容}}、{{时间}}（柏宝书记录的故事内时间，没有则为“时间不详”）
-const DEFAULT_WRAP_NOTE = '聊天记录中以“[线下剧情”开头的内容，是你和{{用户}}在线下（酒馆）实际经历过的剧情，不是手机消息。请把它们当作已经发生的事自然衔接，你的回复仍然按手机聊天的格式输出，不要模仿其中的叙事文风。';
+const DEFAULT_WRAP_NOTE = '聊天记录中以“[线下剧情”开头的内容，是你和{{用户}}在线下实际经历过的剧情，不是手机消息。请把它们当作已经发生的事自然衔接，你的回复仍然按手机聊天的格式输出，不要模仿其中的叙事文风。';
+// 旧版默认说明（带“（酒馆）”）。没改过默认值的老数据会自动换成新版
+const OLD_DEFAULT_WRAP_NOTE = '聊天记录中以“[线下剧情”开头的内容，是你和{{用户}}在线下（酒馆）实际经历过的剧情，不是手机消息。请把它们当作已经发生的事自然衔接，你的回复仍然按手机聊天的格式输出，不要模仿其中的叙事文风。';
 const DEFAULT_WRAP_RAW = '[线下剧情·酒馆第{{楼层}}楼·{{发言人}}：\n{{内容}}\n]';
 const DEFAULT_WRAP_SUMMARY = '[线下剧情摘要·酒馆第{{楼层}}楼（{{时间}}）：{{内容}}]';
 
@@ -146,7 +148,7 @@ const TavernSync = {
         const numOr = (v, d) => (Number.isInteger(v) && v >= 0) ? v : d;
         db.tavernSync.initialImportCount = numOr(db.tavernSync.initialImportCount, 20);
         db.tavernSync.rawFloorCount = numOr(db.tavernSync.rawFloorCount, 3);
-        if (typeof db.tavernSync.wrapNote !== 'string') db.tavernSync.wrapNote = DEFAULT_WRAP_NOTE;
+        if (typeof db.tavernSync.wrapNote !== 'string' || db.tavernSync.wrapNote === OLD_DEFAULT_WRAP_NOTE) db.tavernSync.wrapNote = DEFAULT_WRAP_NOTE;
         if (typeof db.tavernSync.wrapRaw !== 'string' || !db.tavernSync.wrapRaw.trim()) db.tavernSync.wrapRaw = DEFAULT_WRAP_RAW;
         if (typeof db.tavernSync.wrapSummary !== 'string' || !db.tavernSync.wrapSummary.trim()) db.tavernSync.wrapSummary = DEFAULT_WRAP_SUMMARY;
         return db.tavernSync;
@@ -1958,18 +1960,20 @@ function setupTavernSyncScreen() {
                 </div>
                 <div style="${TS.card} margin-top:12px;">
                     <div style="display:flex; align-items:center; justify-content:space-between;">
-                        <span style="${TS.title}">线下剧情包裹提示词</span>
-                        <button id="ts-wrap-reset" style="${smallBtn}">恢复默认</button>
+                        <span id="ts-wrap-toggle" style="${TS.title} cursor:pointer; flex:1;">酒馆剧情包裹提示词自定义 <span id="ts-wrap-arrow" style="font-size:12px; color:#888; font-weight:normal;">点击展开</span></span>
+                        <button id="ts-wrap-reset" style="${smallBtn} display:none;">恢复默认</button>
                     </div>
-                    <div style="font-size:12px; color:#888; margin:6px 0 10px; line-height:1.55;">
-                        酒馆楼层发给 AI 时套用的格式。可用变量：<span style="color:#ffb380;">{{楼层}} {{发言人}} {{内容}} {{时间}}</span>（时间来自柏宝书）。改完点输入框外面即保存。
+                    <div id="ts-wrap-body" style="display:none;">
+                        <div style="font-size:12px; color:#888; margin:6px 0 10px; line-height:1.55;">
+                            酒馆剧情发给 AI 时套用的格式。可用变量：<span style="color:#ffb380;">{{楼层}} {{发言人}} {{内容}} {{时间}}</span>（时间来自柏宝书）。改完点输入框外面即保存。
+                        </div>
+                        <div style="font-size:13px; margin-bottom:4px;">说明（放在系统提示词里，可用 {{用户}}；留空则不加）</div>
+                        ${tplArea('ts-wrap-note', 4)}
+                        <div style="font-size:13px; margin:10px 0 4px;">原文包裹（最近几楼）</div>
+                        ${tplArea('ts-wrap-raw', 3)}
+                        <div style="font-size:13px; margin:10px 0 4px;">摘要包裹（更早的楼层）</div>
+                        ${tplArea('ts-wrap-summary', 3)}
                     </div>
-                    <div style="font-size:13px; margin-bottom:4px;">说明（放在系统提示词里，可用 {{用户}}；留空则不加）</div>
-                    ${tplArea('ts-wrap-note', 4)}
-                    <div style="font-size:13px; margin:10px 0 4px;">原文包裹（最近几楼）</div>
-                    ${tplArea('ts-wrap-raw', 3)}
-                    <div style="font-size:13px; margin:10px 0 4px;">摘要包裹（更早的楼层）</div>
-                    ${tplArea('ts-wrap-summary', 3)}
                 </div>
                 <div style="${TS.card} margin-top:12px;">
                     <span style="${TS.title}">从小手机推送到酒馆</span>
@@ -2111,7 +2115,7 @@ function setupTavernSyncScreen() {
     mainEl.querySelector('#ts-add-btn').addEventListener('click', () => showBindingEditor(() => renderBindings()));
     mainEl.querySelector('#ts-add-rule-btn').addEventListener('click', () => showRuleEditor(null, () => renderRules()));
 
-    // 线下剧情包裹提示词（用 JS 赋值，避免 HTML 转义把 {{ }} 或尖括号弄乱）
+    // 酒馆剧情包裹提示词（用 JS 赋值，避免 HTML 转义把 {{ }} 或尖括号弄乱）
     const wrapFields = [
         ['#ts-wrap-note', 'wrapNote', DEFAULT_WRAP_NOTE],
         ['#ts-wrap-raw', 'wrapRaw', DEFAULT_WRAP_RAW],
@@ -2132,6 +2136,14 @@ function setupTavernSyncScreen() {
             await TavernSync.saveConfig(cfg);
             showToast('已保存');
         });
+    });
+    // 包裹提示词默认收起，点标题展开/收起
+    mainEl.querySelector('#ts-wrap-toggle').addEventListener('click', () => {
+        const body = mainEl.querySelector('#ts-wrap-body');
+        const open = body.style.display === 'none';
+        body.style.display = open ? 'block' : 'none';
+        mainEl.querySelector('#ts-wrap-reset').style.display = open ? '' : 'none';
+        mainEl.querySelector('#ts-wrap-arrow').textContent = open ? '点击收起' : '点击展开';
     });
     mainEl.querySelector('#ts-wrap-reset').addEventListener('click', async () => {
         if (!confirm('把三段包裹提示词恢复成默认内容？')) return;
