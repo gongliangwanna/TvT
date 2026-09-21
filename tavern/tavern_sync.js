@@ -1909,7 +1909,8 @@ function askText(title, placeholder) {
 
 // ========== UI 样式常量 ==========
 const TS = {
-    card: 'background:var(--received-bg, rgba(255,255,255,0.08)); border-radius:14px; padding:16px; margin-bottom:12px;',
+    // 卡片加一圈灰框：浅色背景下卡片底色和页面几乎一样，不加框看不出一个个模块的边界
+    card: 'background:var(--received-bg, rgba(255,255,255,0.08)); border:1px solid rgba(128,128,128,0.3); border-radius:14px; padding:16px; margin-bottom:12px;',
     label: 'font-size:13px; color:#999; display:block; margin-bottom:4px;',
     input: 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; box-sizing:border-box;',
     // 主按钮用 yuan 通篇在用的那个淡蓝 #cee4f1 + 深色字。写死不跟 var(--primary-color) 走，
