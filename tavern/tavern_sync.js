@@ -3030,20 +3030,22 @@ function setupTavernSyncScreen() {
                 + (otherMsgs.length ? `<br>另有 ${otherMsgs.length} 楼来自以前绑定的酒馆聊天文件（${sizeOf(charsOf(otherMsgs))}）。` : '');
             const maxMem = parseInt(char && char.maxMemory, 10) || 20;   // 这个角色在聊天设置里的“可见上文条数”
             return `<div style="${TS.subCard}">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <div style="flex:1; min-width:0;"><div style="font-size:14px; font-weight:600;">${esc(charName)} ↔ ${esc(stName)}</div>
+                <div style="margin-bottom:6px;">
+                    <div><div style="display:flex; align-items:center; gap:8px;">
+                            <span style="flex:1; min-width:0; font-size:14px; font-weight:600; word-break:break-all;">${esc(charName)} ↔ ${esc(stName)}</span>
+                            <button data-del="${i}" style="${TS.btnD} flex-shrink:0; padding:0 4px; line-height:1;">✕</button></div>
                         <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
                             <span style="flex:1; min-width:0; font-size:11px; color:#888; word-break:break-all;">酒馆聊天文件：${esc(b.stChatFile || '未选')}</span>
-                            <button data-chat="${i}" style="${TS.btnS} flex-shrink:0;">更换</button></div>
+                            <button data-chat="${i}" style="${TS.btnS} flex-shrink:0; padding:2px 8px; font-size:11px; line-height:1.5;">更换</button></div>
                         <div style="font-size:11px; color:#888; margin-top:2px;">酒馆里开了新的酒馆聊天文件时，记得更换。</div>
                         ${newer ? `<div style="font-size:11px; color:#2196F3; margin-top:4px; word-break:break-all;">${newer.curGone
                             ? `现在绑定的酒馆聊天文件「${esc(b.stChatFile || '')}」已不存在，可能已被删除或重命名。这个酒馆角色最近玩的是酒馆聊天文件「${esc(newer.file)}」。`
-                            : `这个酒馆角色还有另一个酒馆聊天文件「${esc(newer.file)}」，它的最后一条消息比现在绑定的酒馆聊天文件更晚，你可能在酒馆里换到那个酒馆聊天文件玩了。`}要把绑定改成酒馆聊天文件「${esc(newer.file)}」吗？改了之后，从酒馆同步剧情、往酒馆推送小手机消息都改用它；以前同步进小手机的酒馆剧情会留着，如果不想要，改绑后点「管理同步范围」，在里面点红色的「删掉以前的酒馆聊天文件留下的……楼」。
+                            : `这个酒馆角色还有另一个酒馆聊天文件「${esc(newer.file)}」，它的最后一条消息比现在绑定的酒馆聊天文件更晚，你可能在酒馆里换到那个酒馆聊天文件玩了。`}要把绑定改成酒馆聊天文件「${esc(newer.file)}」吗？改了之后，从酒馆同步剧情、往酒馆推送小手机消息都改用它；以前同步进小手机的酒馆剧情会留着，如果不想要，改绑后点「管理同步范围」，在里面点红色的「删掉以前的酒馆聊天文件留下的……楼」。</div>
+                        <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:4px;">
                             <button data-newer-go="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(33,150,243,0.5); background:rgba(33,150,243,0.15); color:#2196F3; font-size:11px; line-height:1.5; cursor:pointer;">改绑</button>
                             <button data-newer-no="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:11px; line-height:1.5; cursor:pointer;">不改</button></div>` : ''}
                         <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}</div>
-                        ${isDup ? `<div style="font-size:11px; color:#f66; margin-top:2px;">这个角色上面已经绑定过，这一条不起作用，可以删掉。</div>` : ''}</div>
-                    <button data-del="${i}" style="${TS.btnD}">✕</button></div>
+                        ${isDup ? `<div style="font-size:11px; color:#f66; margin-top:2px;">这个角色上面已经绑定过，这一条不起作用，可以删掉。</div>` : ''}</div></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
                     <button data-pull="${i}" style="flex:1; ${TS.btnB}">同步酒馆剧情</button>
                     <button data-reset="${i}" style="flex:1; ${TS.btnB}">管理同步范围</button></div>
@@ -3395,7 +3397,7 @@ async function showAutoPushModal(binding, onDone) {
         </div>
         ${missing.length ? `
         <div id="auto-missing" style="font-size:12px; color:#888; line-height:1.6; margin-bottom:10px; padding:10px; border-radius:8px; border:1px solid rgba(255,152,0,0.45); background:rgba(255,152,0,0.08);">
-            有 <b style="color:#FF9800;">${missing.length}</b> 条以前推到过酒馆、现在酒馆里找不到了（第 ${missing.map(m => list.indexOf(m) + 1).slice(0, 5).join('、')}${missing.length > 5 ? ' 等' : ''} 条）。
+            有 ${missing.length} 条以前推到过酒馆、现在酒馆里找不到了（第 ${missing.map(m => list.indexOf(m) + 1).slice(0, 5).join('、')}${missing.length > 5 ? ' 等' : ''} 条）。
             可能是酒馆页面没刷新、保存时把它们盖掉了，也可能是你在酒馆里删的。
             <div style="margin:6px 0;">${missing.slice(0, 3).map(m => {
                 const t = String(m.content || '').replace(/\s+/g, ' ').trim();
@@ -3409,7 +3411,7 @@ async function showAutoPushModal(binding, onDone) {
         </div>` : ''}
         ${bulkGone.length ? `
         <div id="auto-bulk" style="font-size:12px; color:#888; line-height:1.6; margin-bottom:10px; padding:10px; border-radius:8px; border:1px solid rgba(244,67,54,0.45); background:rgba(244,67,54,0.06);">
-            小手机里一次少了 <b style="color:#f66;">${bulkGone.length}</b> 条以前推到酒馆的消息。为了防止误删，没有自动从酒馆里删掉。
+            小手机里一次少了 ${bulkGone.length} 条以前推到酒馆的消息。为了防止误删，没有自动从酒馆里删掉。
             <div style="display:flex; gap:8px; margin-top:8px;">
                 <button id="auto-bulk-delete" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(244,67,54,0.15); color:#f66; font-size:13px; font-weight:500; cursor:pointer;">从酒馆删掉</button>
                 <button id="auto-bulk-keep" style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:13px; cursor:pointer;">留在酒馆</button>
@@ -3659,8 +3661,8 @@ function showTrimModal(binding, onDone) {
             精简就是只留柏宝书摘要、把原文丢掉。原文在酒馆里一直都在，点下面的「取回原文」随时拿回来。
         </div>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
-            小手机里有 <b>${floors.length}</b> 楼酒馆剧情（第 ${firstFloor} ~ ${lastFloor} 楼）。
-            其中 <b>${trimmed.length}</b> 个回合已精简、<b>${can.length}</b> 个回合可以精简（能省${sizeOf(saveable)}）${noSummary.length ? `、<b>${noSummary.length}</b> 个回合还没有摘要（不会精简）` : ''}。
+            小手机里有 ${floors.length} 楼酒馆剧情（第 ${firstFloor} ~ ${lastFloor} 楼）。
+            其中 ${trimmed.length} 个回合已精简、${can.length} 个回合可以精简（能省${sizeOf(saveable)}）${noSummary.length ? `、${noSummary.length} 个回合还没有摘要（不会精简）` : ''}。
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
             从第 <input type="number" id="tm-start" min="0" value="${firstFloor}" style="${numStyle}">
@@ -3748,8 +3750,8 @@ async function showResetRangeModal(binding, onDone) {
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">管理同步范围</h3>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
-            ${synced ? `小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>` : '这个角色还没同步过，选一段要同步的剧情。<br>'}
-            这个酒馆聊天文件一共 <b>${info.total}</b> 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
+            ${synced ? `小手机里现在有 ${have} 楼酒馆剧情，会全部删掉。<br>` : '这个角色还没同步过，选一段要同步的剧情。<br>'}
+            这个酒馆聊天文件一共 ${info.total} 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
         </div>
         <div style="display:flex; align-items:center; gap:8px; font-size:14px;">
             同步最近 <input type="number" id="rr-recent" min="0" max="${info.total}" value="${Math.min(firstCount, info.total)}" style="${numStyle}"> 楼
@@ -3766,7 +3768,7 @@ async function showResetRangeModal(binding, onDone) {
         </div>
         <button id="rr-range" style="width:100%; ${TS.btnP} margin-bottom:8px;">${synced ? '清空，并同步这个范围' : '开始同步'}</button>
         <button id="rr-none" style="width:100%; ${TS.btnR} margin-bottom:8px;">${synced ? '只清空（以后只同步新楼层）' : '不要旧剧情（只同步以后的新楼层）'}</button>
-        ${others ? `<div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:8px;">另外还有 <b>${others}</b> 楼是以前绑定的酒馆聊天文件留下的，上面的操作不会动它们。</div>
+        ${others ? `<div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:8px;">另外还有 ${others} 楼是以前绑定的酒馆聊天文件留下的，上面的操作不会动它们。</div>
         <button id="rr-others" style="width:100%; ${TS.btnR} margin-bottom:8px;">删掉以前的酒馆聊天文件留下的 ${others} 楼</button>` : ''}
         <button id="rr-cancel" style="width:100%; ${cancelStyle}">取消</button>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
@@ -4034,15 +4036,15 @@ async function showWorldBookModal(binding) {
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:420px; max-height:85vh; display:flex; flex-direction:column;';
 
     const tabsHTML = sources.length > 1
-        ? sources.map((src, i) => `<button class="wb-tab" data-tab="${i}" style="${TS.tab(i === 0)}">${esc(src.type)}（${src.entries.length}）</button>`).join('')
+        ? sources.map((src, i) => `<button class="wb-tab" data-tab="${i}" style="${TS.btnS} ${i === 0 ? 'background:rgba(33,150,243,0.18); color:#2196F3; border-color:rgba(33,150,243,0.5);' : 'color:#999;'}">${esc(src.type)}（${src.entries.length}）</button>`).join('')
         : '';
     const smallBtn = TS.btnS;
 
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">导入酒馆世界书</h3>
         <div style="font-size:12px; color:#888; margin-bottom:8px; line-height:1.6;">复制过来就是小手机自己的世界书条目，可以随便改。酒馆里改了内容的，这里会标出来，可以选择更新。酒馆里以后改了内容，打开绑定卡片上的「自动更新复制过的世界书」，或者回到这里点「更新小手机里的内容」。</div>
-        ${tabsHTML ? `<div style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap;">${tabsHTML}</div>` : ''}
-        <div style="display:flex; gap:8px; margin-bottom:8px;">
+        ${tabsHTML ? `<div style="display:flex; justify-content:center; gap:8px; margin-bottom:10px; flex-wrap:wrap;">${tabsHTML}</div>` : ''}
+        <div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
             <button id="wb-select-all" style="${smallBtn}">全选</button>
             <button id="wb-select-enabled" style="${smallBtn}">只选酒馆里开着的</button>
             <button id="wb-select-changed" style="${smallBtn}">只选有改动的</button>
@@ -4288,7 +4290,7 @@ function showPromptPreview(binding) {
 
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">提示词预览 — ${esc(char.remarkName || char.name)}</h3>
-        <div style="font-size:12px; color:#888; margin-bottom:12px; line-height:1.6;">下面是 AI 下次会收到的酒馆相关内容，预估 <span style="color:#4CAF50; font-weight:600;">~${totalTokens.toLocaleString()}</span> tokens。</div>
+        <div style="font-size:12px; color:#888; margin-bottom:12px; line-height:1.6;">下面是 AI 下次会收到的酒馆相关内容。<br>预估约 ${totalTokens.toLocaleString()} tokens。</div>
         <div style="flex:1; overflow-y:auto; margin-bottom:12px;">
             ${sections.map(s => `
                 <div style="margin-bottom:14px;">
