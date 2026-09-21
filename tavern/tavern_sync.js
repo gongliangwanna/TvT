@@ -119,6 +119,19 @@ const TavernSync = {
             if (this.issues.length > 20) this.issues.shift();
         }
         this.saveIssues();
+        this._notifyIssues();
+    },
+
+    // 页面开着时，同步/推送完成后重画绑定卡片（楼数、字数、“第一次…”那几行）。连着好几次只画一回
+    _notifyData() {
+        if (typeof this._onDataChanged !== 'function') return;
+        clearTimeout(this._dataTimer);
+        this._dataTimer = setTimeout(() => { try { this._onDataChanged(); } catch (e) { /* 画不出来就算了 */ } }, 50);
+    },
+
+    // 页面开着时，问题记录一变就重画（由酒馆互联页面挂上 _onIssuesChanged）
+    _notifyIssues() {
+        if (typeof this._onIssuesChanged === 'function') { try { this._onIssuesChanged(); } catch (e) { /* 页面画不出来就算了 */ } }
     },
 
     // 某一类操作成功了 → 把这一类的失败记录删掉（自动重试成功、或者你手动点成功了都会走这里）
@@ -131,6 +144,7 @@ const TavernSync = {
         this.issues.length = 0;
         this.issues.push(...kept);
         this.saveIssues();
+        this._notifyIssues();
         return before - kept.length;
     },
 
@@ -464,6 +478,7 @@ const TavernSync = {
                 try { renderChatList(); } catch (e) { /* 画不出来不影响数据 */ }
             }
         }
+        this._notifyData();
         return { imported: importedCount, summariesFilled, reordered, worldUpdated, autoTrimmed, removedGone };
     },
 
@@ -1284,6 +1299,7 @@ const TavernSync = {
         }
 
         this.resolveIssues('push');   // 这次推送成功了，之前“推送失败”的记录就不用留着了
+        this._notifyData();
         return { pushed: newMsgs.length, deleted: hadDeletions, message: newMsg, deletionOps };
     },
 
@@ -1955,10 +1971,8 @@ function setupTavernSyncScreen() {
                             <div style="font-size:11px; color:#888;">关闭后，发原文的酒馆楼层中只包含 AI 楼层，若不抢话不转述可能导致剧情不连贯</div>
                         </div>
                     </label>
-                </div>
-                <div style="${TS.card} margin-top:12px;">
-                    <div id="ts-wrap-toggle" style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
-                        <span style="${TS.title} white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">酒馆剧情包裹提示词自定义</span>
+                    <div id="ts-wrap-toggle" style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
+                        <span style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">酒馆剧情包裹提示词自定义</span>
                         <span id="ts-wrap-arrow" style="font-size:12px; color:#888; white-space:nowrap; flex-shrink:0;">点击展开</span>
                     </div>
                     <div id="ts-wrap-body" style="display:none;">
@@ -2033,6 +2047,13 @@ function setupTavernSyncScreen() {
         issuesArea.querySelector('#ts-issues-clear').addEventListener('click', () => { TavernSync.clearIssues(); renderIssues(); });
     }
     renderIssues();
+    TavernSync._onIssuesChanged = renderIssues;
+    TavernSync._onDataChanged = () => {
+        // 你正在卡片上填数字时不重画，免得输入框被换掉、光标丢了
+        if (document.activeElement && bindingsList.contains(document.activeElement)) return;
+        if (bindingsArea.style.display === 'none') return;
+        renderBindings();
+    };
 
     const saveNum = (id, key, fallback) => mainEl.querySelector(id).addEventListener('change', async (e) => {
         const n = parseInt(e.target.value, 10);
@@ -2042,6 +2063,11 @@ function setupTavernSyncScreen() {
         await TavernSync.saveConfig(cfg);
     });
     saveNum('#ts-raw-count', 'rawFloorCount', 3);
+    // 绑定卡片上“保留最近 N 楼的原文”那一行会写“现在是 X 楼”、最小值也跟着它，改了要立刻重画卡片，
+    // 否则得退出重进才更新，看着像没改成功
+    mainEl.querySelector('#ts-raw-count').addEventListener('change', () => {
+        try { renderBindings(); } catch (e) { /* 画不出来不影响保存 */ }
+    });
 
     // ===== 推送内容：通话、状态栏、在线状态都按角色分开设 =====
     const pushCharSelect = mainEl.querySelector('#ts-push-char');
@@ -2056,8 +2082,11 @@ function setupTavernSyncScreen() {
             return;
         }
         pushCharSelect.disabled = false;
-        const keep = parseInt(pushCharSelect.value, 10);
-        const idx = (Number.isInteger(keep) && bindings[keep]) ? keep : 0;
+        // 记住选的是哪个角色（按角色认）：删掉前面的绑定后位置会变，按位置认会改到别的角色头上
+        const keepChar = pushCharSelect.dataset.charId;
+        let idx = bindings.findIndex(b => b.uwuCharId === keepChar);
+        if (idx < 0) idx = 0;
+        pushCharSelect.dataset.charId = bindings[idx].uwuCharId;
         pushCharSelect.innerHTML = bindings.map((b, i) => {
             const ch = db.characters.find(c => c.id === b.uwuCharId);
             const name = ch ? (ch.remarkName || ch.name) : '未知角色';
@@ -2106,7 +2135,11 @@ function setupTavernSyncScreen() {
         perCharBox.querySelector('#ts-cc-status').addEventListener('change', (e) => save(b2 => { b2.pushIncludeStatusBar = e.target.checked; }));
         perCharBox.querySelector('#ts-cc-online').addEventListener('change', (e) => save(b2 => { b2.pushIncludeOnlineStatus = e.target.checked; }));
     }
-    pushCharSelect.addEventListener('change', renderPushPerChar);
+    pushCharSelect.addEventListener('change', () => {
+        const b = (TavernSync.getConfig().bindings || [])[parseInt(pushCharSelect.value, 10)];
+        pushCharSelect.dataset.charId = b ? b.uwuCharId : '';
+        renderPushPerChar();
+    });
     renderPushPerChar();
     mainEl.querySelector('#ts-inject-user-floors').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.injectUserFloors = e.target.checked; await TavernSync.saveConfig(cfg); });
     mainEl.querySelector('#ts-push-mode').addEventListener('change', async (e) => {
@@ -2237,6 +2270,7 @@ function setupTavernSyncScreen() {
 
     // ===== 绑定列表 =====
     function renderBindings() {
+        try { renderPushPerChar(); } catch (e) { /* 还没画到那一块时跳过 */ }
         const cfg = TavernSync.getConfig();
         if (!cfg.bindings?.length) { bindingsList.innerHTML = '<div style="text-align:center; color:#999; font-size:13px; padding:20px;">暂无绑定，点击上方「+ 添加」关联角色</div>'; return; }
         bindingsList.innerHTML = cfg.bindings.map((b, i) => {
@@ -2448,7 +2482,7 @@ function setupTavernSyncScreen() {
         bindClick('[data-push]', async (btn) => {
             const cfg = TavernSync.getConfig(); const b = cfg.bindings[parseInt(btn.dataset.push)];
             const orig = btn.textContent; btn.textContent = '读取中...'; btn.disabled = true;
-            try { await showAutoPushModal(b); } catch (e) { showToast(`${e.message}`); }
+            try { await showAutoPushModal(b, () => renderBindings()); } catch (e) { showToast(`${e.message}`); }
             btn.textContent = orig; btn.disabled = false;
         });
 
@@ -2508,7 +2542,7 @@ function setupTavernSyncScreen() {
 //   原始消息：默认推未推送的那一段，可以自己填条数范围
 //   小总结：把一段消息浓缩成一段总结后推送，默认也是未推送的那一段
 //   清理酒馆：把推送到酒馆的小手机消息删掉（只删酒馆里的，不动小手机自己的聊天）
-async function showAutoPushModal(binding) {
+async function showAutoPushModal(binding, onDone) {
     let state;
     try {
         state = await TavernSync.getPushState(binding);
@@ -2645,7 +2679,7 @@ async function showAutoPushModal(binding) {
         } finally { genBtn.disabled = false; }
     });
 
-    const close = () => overlay.remove();
+    const close = () => { overlay.remove(); if (onDone) { try { onDone(); } catch (e) { /* 刷新失败不影响推送 */ } } };
     modal.querySelector('#auto-cancel').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
