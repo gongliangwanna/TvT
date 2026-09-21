@@ -8,8 +8,8 @@
 // yuan 更新后如果某个钩子挂不上，“酒馆互联”页面顶部会出现“挂载失败”的提示（控制台也有），照着提示修这个文件即可。
 (function () {
     const TAG = '[酒馆外挂]';
-    // 文件版本：显示在“酒馆互联”页面最下面（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-20 g';
+    // 文件版本：界面上已不显示，排查时可以临时显示出来（见 tavern_sync.js 的 SYNC_VERSION）
+    const HOOKS_VERSION = '2026-09-21 h';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
@@ -192,6 +192,17 @@
         const present = new Set(char.history.map(m => m && m.id));
         const removed = snap.history.filter(m => m && !present.has(m.id));
         if (!removed.length) return null;
+        // 确认这真的是一次“重新生成”：yuan 只会删掉最后一条用户消息之后的内容，
+        // 那条用户消息本身还在，被删的也全都在它后面。
+        // （点了重新生成又取消、之后自己删了前面的消息再点“获取回复”，不能当成重新生成：
+        //   否则会把你删掉的酒馆卡片放回来，还会去酒馆里替换你删掉的回复）
+        let lastUserIdx = -1;
+        for (let i = snap.history.length - 1; i >= 0; i--) {
+            const m = snap.history[i];
+            if (m && m.role === 'user' && !m.fromTavern) { lastUserIdx = i; break; }
+        }
+        if (lastUserIdx < 0 || !present.has(snap.history[lastUserIdx].id)) return null;
+        if (snap.history.some((m, i) => i <= lastUserIdx && m && !present.has(m.id))) return null;
         let anchorTime = null;   // 最后一条用户消息的时间：新回复要紧跟在它后面
         for (let i = char.history.length - 1; i >= 0; i--) {
             const m = char.history[i];
@@ -224,6 +235,12 @@
             newReplies.forEach((m, i) => { m.timestamp = regen.anchorTime + i + 1; });
         }
         const oldIds = regen.removedReplies.map(m => m.id);
+        if (binding && oldIds.length && !newReplies.length) {
+            // 这次没生成出新回复（出错、断网）：旧回复在小手机里已经被 yuan 删掉了，而且 yuan 恢复旧版本时
+            // 会给消息换新编号，这几条不会再回来。不再保护它们，下次把删除推送到酒馆时一起删掉，两边保持一致
+            const oldSet = new Set(oldIds);
+            binding.keptIds = (binding.keptIds || []).filter(id => !oldSet.has(id));
+        }
         if (binding && oldIds.length && newReplies.length) {
             const oldSet = new Set(oldIds);
             const dropKept = () => { binding.keptIds = (binding.keptIds || []).filter(id => !oldSet.has(id)); };
@@ -289,17 +306,19 @@
     // yuan 里发消息不会自动叫 AI 回复（要另外点“获取回复”），所以最后几条常常都是用户自己发的。
     // 在发送函数外面套一层：发完等 3 秒再推一次未推送的消息（连发几条会合并成一次）。
     // AI 正在回复时不推——免得把还没发完的半截回复推过去，等回复结束那次自动推送会一起推。
-    let sendPushTimer = null;
+    // 每个角色各记各的：发完消息 3 秒内切到别的角色，前一个角色这次推送不会被取消
+    const sendPushTimers = new Map();
     function schedulePushAfterSend(chatId, tries) {
-        clearTimeout(sendPushTimer);
-        sendPushTimer = setTimeout(() => {
+        clearTimeout(sendPushTimers.get(chatId));
+        sendPushTimers.set(chatId, setTimeout(() => {
+            sendPushTimers.delete(chatId);
             const generating = (typeof isGenerating !== 'undefined') && isGenerating;
             if (generating) {
                 if (tries < 20) schedulePushAfterSend(chatId, tries + 1);   // AI 还在回，最多再等 1 分钟
                 return;
             }
             if (window.TavernSync) window.TavernSync.autoPushIfNeeded(chatId).catch(() => {});
-        }, 3000);
+        }, 3000));
     }
 
     function hookSendMessage() {
@@ -382,7 +401,7 @@
 
         const toggle = document.createElement('div');
         toggle.className = 'node-summary-toggle';
-        toggle.textContent = `酒馆剧情 · 第${t.floor}楼${t.name ? ' · ' + t.name : ''}`
+        toggle.textContent = `酒馆剧情 · 第${t.floor != null ? t.floor : '?'}楼${t.name ? ' · ' + t.name : ''}`
             + (t.trimmed ? ' · 已精简' : (t.summary ? ' · 有摘要' : ''));
 
         const body = document.createElement('div');
