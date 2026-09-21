@@ -9,7 +9,7 @@
 (function () {
     const TAG = '[酒馆外挂]';
     // 文件版本：界面上已不显示，排查时可以临时显示出来（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-21 k';
+    const HOOKS_VERSION = '2026-09-21 l';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
@@ -368,7 +368,9 @@
 
             const char = db.characters.find(c => c.id === chatId);
             if (!char || !Array.isArray(char.history)) return;
-            const ids = new Set(char.history.map(m => m.id));
+            // 只看小手机自己的消息：酒馆剧情卡片不会推到酒馆，它们没了（精简、同步删楼、你长按删掉）不用去酒馆删什么，
+            // 算进来只会白白连一次酒馆
+            const ids = new Set(char.history.filter(m => m && !m.fromTavern).map(m => m.id));
             if (knownIds) {
                 for (const id of knownIds) {
                     if (!ids.has(id)) {

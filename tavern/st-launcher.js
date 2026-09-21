@@ -37,6 +37,7 @@ function addPhoneMenuButton() {
 // ===== 小手机改了聊天 → 酒馆重新读一遍 =====
 // 小手机和酒馆是同一个网址，用浏览器自带的 BroadcastChannel 互相通知（只在同一个浏览器里有效）。
 // 小手机保存时酒馆正忙（生成回复/编辑某一楼）的话，酒馆忙完会先存一遍它手里的旧版本，可能把小手机写的盖掉。
+// 柏宝书刚写完摘要、还没存盘时也算忙（见下面 busyReason）。
 // 所以忙完、重新读完之后，回话告诉小手机是哪几次保存、当时在忙什么、什么时候忙完的，小手机据此核对并补推。
 let channel = null;
 let pendingReload = null;   // { avatar, file, saves: [{ saveId, time }], busySince, busyReason }：等着重新读的聊天
@@ -51,12 +52,23 @@ function currentChat() {
     return ch ? { ctx, avatar: ch.avatar, file: ch.chat } : null;
 }
 
-// 酒馆正在生成回复、或者你正在酒馆里编辑某一楼时，先不重新读（会打断它），过一会儿再试。
-// 返回在忙什么：'generating' / 'editing'，不忙返回 null
+// 柏宝书刚写好（或改了）摘要：它会等 1.5 秒再存盘。这时候重新读聊天，内存里那段还没存的摘要就没了。
+// 柏宝书每次摘要有变化都会发一个公开通知 st-baibai-book:changed，收到后几秒内都算“忙”，等它存完再读。
+const SUMMARY_SETTLE_MS = 4000;
+let lastSummaryChange = 0;
+try {
+    if (typeof globalThis.addEventListener === 'function') {
+        globalThis.addEventListener('st-baibai-book:changed', () => { lastSummaryChange = Date.now(); });
+    }
+} catch (e) { /* 听不了就算了 */ }
+
+// 酒馆正在生成回复、你正在酒馆里编辑某一楼、或者柏宝书刚写完摘要还没存时，先不重新读（会打断它），过一会儿再试。
+// 返回在忙什么：'generating' / 'editing' / 'summary'，不忙返回 null
 function busyReason() {
     const stop = document.getElementById('mes_stop');
     if (stop && getComputedStyle(stop).display !== 'none') return 'generating';
     if (document.getElementById('curEditTextarea')) return 'editing';
+    if (Date.now() - lastSummaryChange < SUMMARY_SETTLE_MS) return 'summary';
     return null;
 }
 
@@ -70,7 +82,7 @@ function replyMaybeOverwrote(p, ctx) {
             file: p.file,                                  // 哪个聊天
             saveIds: p.saves.map(x => x.saveId),           // 小手机哪几次保存（小手机据此找到那几次推了什么）
             phoneSaveTimes: p.saves.map(x => x.time),      // 那几次保存是什么时候
-            busyReason: p.busyReason,                      // 当时酒馆在忙什么：generating 生成回复 / editing 编辑楼层
+            busyReason: p.busyReason,                      // 当时酒馆在忙什么：generating 生成回复 / editing 编辑楼层 / summary 柏宝书存摘要
             busySince: p.busySince,                        // 酒馆这边什么时候发现在忙
             busyEnded: p.busyEnded,                        // 什么时候忙完
             reloadedAt: Date.now(),                        // 什么时候重新读完
