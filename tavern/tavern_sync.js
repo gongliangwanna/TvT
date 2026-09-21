@@ -107,7 +107,7 @@ function baibaiSummaryGone(m) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-21 j',
+    SYNC_VERSION: '2026-09-21 k',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -272,6 +272,12 @@ const TavernSync = {
             // 酒馆那边回话：「你那几次保存的时候我正忙，忙完我存了自己手里的版本，可能把你写的盖掉了」
             this._channel.addEventListener('message', (e) => {
                 const d = e.data;
+                // 酒馆页面回答了“我在”（见 pingTavernPage）
+                if (d && d.type === 'pong' && d.id && this._pings && this._pings.has(d.id)) {
+                    this._pings.get(d.id)(true);
+                    this._pings.delete(d.id);
+                    return;
+                }
                 if (!d || d.type !== 'tavern-maybe-overwrote' || !Array.isArray(d.saveIds)) return;
                 const mine = d.saveIds.filter(id => this._mySaveIds.has(id));
                 if (!mine.length) return;
@@ -284,6 +290,20 @@ const TavernSync = {
             });
         }
         return this._channel;
+    },
+
+    // 同一个浏览器里有没有开着的酒馆页面（装了本补丁的）。有 → 小手机推送后它会自动重新读取，不用手动刷新；
+    // 没有 → 酒馆可能开在别的设备/浏览器，界面上提醒你回去继续玩之前先刷新。返回 true/false
+    pingTavernPage(timeoutMs = 800) {
+        const ch = this._getChannel();
+        if (!ch) return Promise.resolve(false);
+        if (!this._pings) this._pings = new Map();
+        const id = `p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        return new Promise(resolve => {
+            this._pings.set(id, resolve);
+            setTimeout(() => { if (this._pings.has(id)) { this._pings.delete(id); resolve(false); } }, timeoutMs);
+            try { ch.postMessage({ type: 'ping', id }); } catch (e) { this._pings.delete(id); resolve(false); }
+        });
     },
 
     // ========== 被酒馆盖掉的推送：发现后补推 ==========
@@ -670,6 +690,13 @@ const TavernSync = {
             catch (e) { this.reportIssue("自动更新世界书失败：" + e.message); }
         }
 
+        // 4.5 打开了“自动更新酒馆人设”时，把酒馆里改过的人设更新到小手机
+        let personaUpdated = 0;
+        if (binding.autoUpdatePersona) {
+            try { personaUpdated = (await this.syncPersona(binding)).updated; }
+            catch (e) { this.reportIssue('自动更新酒馆人设失败：' + e.message); }
+        }
+
         char.tavernMemory = {
             lastSync: Date.now(),
             stCharAvatar: binding.stCharAvatar,
@@ -686,8 +713,10 @@ const TavernSync = {
         if (importedCount > 0 || reordered || removedGone > 0 || summariesFilled > 0 || summariesCleared > 0) {
             this._rerender(char);
         }
+        // 顺便看看酒馆里是不是开了新聊天（出错不影响这次同步）
+        try { await this._checkNewerChat(binding); } catch (e) { console.warn('[TavernSync] 检查酒馆新聊天失败:', e.message); }
         this._notifyData();
-        return { imported: importedCount, summariesFilled, summariesCleared, reordered, worldUpdated, autoTrimmed, removedGone };
+        return { imported: importedCount, summariesFilled, summariesCleared, reordered, worldUpdated, personaUpdated, autoTrimmed, removedGone };
     },
 
     // 给还没记来源聊天的旧卡片补上：算作上次同步的那个聊天（没同步记录时算作现在绑定的聊天）
@@ -836,6 +865,48 @@ const TavernSync = {
         return { removed: others.size };
     },
 
+    // ===== 酒馆里开了新聊天：自动发现，提示换过去 =====
+    // 同步完顺便看一眼这个酒馆角色的聊天列表：最近一次发消息的那个聊天不是现在绑定的，就在绑定卡片上问要不要换过去。
+    // 为了不拖慢同步，每个绑定最多 10 分钟看一次。点过「不换」的那个聊天不再问（酒馆里再开别的新聊天还会问）。
+    _chatCheckTimes: new Map(),
+    newerChatFor(binding) {
+        const n = binding && binding.newerChat;
+        if (!n || !n.file || n.file === binding.stChatFile || n.file === binding.dismissedChat) return null;
+        return n;
+    },
+    async _checkNewerChat(binding, force = false) {
+        const key = binding.uwuCharId + '|' + binding.stCharAvatar;
+        const last = this._chatCheckTimes.get(key) || 0;
+        if (!force && Date.now() - last < 10 * 60 * 1000) return;
+        this._chatCheckTimes.set(key, Date.now());
+        // simple:false 才会带上每个聊天最后一条消息的时间（last_mes）；老版本酒馆可能返回对象而不是数组
+        const res = await this.apiCall('/api/characters/chats', { avatar_url: binding.stCharAvatar, simple: false });
+        const arr = Array.isArray(res) ? res : (res && typeof res === 'object' ? Object.values(res) : []);
+        const items = arr.filter(c => c && c.file_name)
+            .map(c => ({ file: String(c.file_name).replace(/\.jsonl$/, ''), t: parseTimeValue(c.last_mes) }));
+        if (!items.length) return;
+        const cur = items.find(x => x.file === binding.stChatFile);
+        const newest = items.filter(x => x.t != null).sort((a, b) => b.t - a.t)[0];
+        // 现在绑定的聊天在酒馆里被删了，或者别的聊天最后一条消息更晚 → 算“最近在玩另一个聊天”。
+        // 现在这个聊天的时间读不懂时没法比，不提示
+        const isNewer = newest && newest.file !== binding.stChatFile && (!cur || (cur.t != null && newest.t > cur.t));
+        const had = binding.newerChat && binding.newerChat.file;
+        if (isNewer) {
+            if (had === newest.file) return;
+            binding.newerChat = { file: newest.file, time: newest.t };
+            await this.saveConfig(this.getConfig());
+            if (newest.file !== binding.dismissedChat && typeof showToast === 'function') {
+                const ch = db.characters.find(c => c.id === binding.uwuCharId);
+                showToast(`酒馆里「${ch ? (ch.remarkName || ch.name) : '这个角色'}」最近在玩另一个聊天，可以在「酒馆互联」的绑定卡片上换过去`);
+            }
+            this._notifyData();
+        } else if (had) {
+            delete binding.newerChat;
+            await this.saveConfig(this.getConfig());
+            this._notifyData();
+        }
+    },
+
     // 换绑到这个角色的另一个酒馆聊天（绑定卡片上的「更换」）。
     // 推送记录是跟着旧聊天的，一起清掉：新聊天里还一条小手机消息都没有，按“第一次自动推送最近 N 条”重新开始。
     // 同步不用特别处理：卡片记着来源聊天，下次同步会按“第一次同步最近 N 楼”从新聊天重新开始。
@@ -847,6 +918,7 @@ const TavernSync = {
         delete binding.keptIds;
         delete binding.recentPushes;
         delete binding.pushedIds;
+        delete binding.newerChat;
         await this.saveConfig(this.getConfig());
         return true;
     },
@@ -2089,26 +2161,155 @@ ${transcript}`;
             && w.tavernSource.uid === uid);
     },
 
-    // 自动更新复制过的世界书条目（绑定卡片上的开关打开时，每次从酒馆同步时调用）
+    // 小手机世界书条目自己的指纹（名字、正文、关键词、常驻、开关、前/后）。顺序（weight）不算：
+    // 你在小手机里调顺序本来就不会被冲掉。复制/更新时记下来，之后对不上就说明你在小手机里改过
+    wbLocalHash(w) {
+        return this.textHash([w.name || '', w.content || '', (Array.isArray(w.keywords) ? w.keywords : []).join(','),
+            w.alwaysOn ? 1 : 0, w.disabled ? 1 : 0, w.position || ''].join('\u0001'));
+    },
+    textHash(text) {
+        const s = String(text == null ? '' : text);
+        let h = 5381;
+        for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+        return String(h);
+    },
+
+    // 这条复制过来的世界书，你在小手机里改过没有。更新前复制的条目没记指纹：返回 null（说不准）
+    wbEditedLocally(w) {
+        const t = w && w.tavernSource;
+        if (!t || t.localHash === undefined) return null;
+        return this.wbLocalHash(w) !== t.localHash;
+    },
+
+    // 自动更新复制过的世界书条目（绑定卡片上的开关打开时，每次从酒馆同步时调用）。
+    // 酒馆里改了、小手机里没改 → 用酒馆的新内容更新；小手机里也改过 → 不覆盖，在页面顶部提示
     async syncCopiedWorldBooks(binding) {
         const linked = (db.worldBooks || []).filter(w => w && w.tavernSource && w.tavernSource.avatar === binding.stCharAvatar);
-        if (!linked.length) return { updated: 0 };
+        if (!linked.length) return { updated: 0, kept: 0 };
         const worldBooks = await this.getCharAndChatWorldBooks(binding);
         const sources = [worldBooks.charWorld, worldBooks.chatWorld].filter(Boolean);
-        let updated = 0;
+        let updated = 0, changedMeta = false;
+        const kept = [];
         for (const w of linked) {
             const src = sources.find(s => s.name === w.tavernSource.world);
             if (!src) continue;
             const entry = src.entries.find(e => e.uid === w.tavernSource.uid);
             if (!entry) continue;                       // 酒馆里删掉了 → 小手机这条保留，不动
+            const idx = src.entries.indexOf(entry);
             const hash = this.wbHash(entry);
-            if (hash === w.tavernSource.hash) continue;
-            this.applyTavernEntry(w, entry, src.entries.indexOf(entry), false);
+            if (hash === w.tavernSource.hash) {
+                // 酒馆里没变。更新前复制的条目没记指纹：趁现在补上——
+                // 拿酒馆这一条重新套一遍，和小手机里现在的一样就说明没改过
+                if (w.tavernSource.localHash === undefined) {
+                    const expect = this.applyTavernEntry(Object.assign({}, w, { tavernSource: Object.assign({}, w.tavernSource) }), entry, idx, false);
+                    w.tavernSource.localHash = this.wbLocalHash(expect);
+                    changedMeta = true;
+                }
+                continue;
+            }
+            // 酒馆里改了。小手机里也改过（或者说不准）→ 不覆盖。
+            // 酒馆这一版记在 keptHash 里（同一次改动只提示一次）；hash 不动，
+            // 这样世界书窗口里照样标「酒馆里已改」，「更新小手机里的内容」也照样能用
+            if (this.wbEditedLocally(w) !== false) {
+                if (w.tavernSource.keptHash !== hash) {
+                    kept.push(w.name || entry.comment || '未命名');
+                    w.tavernSource.keptHash = hash;
+                    changedMeta = true;
+                }
+                continue;
+            }
+            this.applyTavernEntry(w, entry, idx, false);
             w.tavernSource.hash = hash;
             w.tavernSource.order = entry.order;
+            w.tavernSource.localHash = this.wbLocalHash(w);
+            delete w.tavernSource.keptHash;
             updated++;
         }
-        return { updated };
+        if (kept.length) {
+            const names = kept.slice(0, 5).map(n => `「${n}」`).join('、') + (kept.length > 5 ? ` 等 ${kept.length} 条` : '');
+            this.reportIssue(`酒馆中「${(binding.stCharAvatar || '').replace(/\.png$/i, '')}」的世界书条目 ${names} 已经被改动，但你在小手机里也改过，没有自动更新；如果想用酒馆的版本，点「导入酒馆世界书」，勾选这些条目后点「更新小手机里的内容」。`);
+        }
+        if ((updated || changedMeta) && typeof saveData === 'function') await saveData();
+        return { updated, kept: kept.length };
+    },
+
+    // ========== 自动更新酒馆人设（yuan 版新增）==========
+    // 绑定卡片上的开关「自动更新酒馆人设」+ 下拉「更新哪个」（binding.personaUpdateMode：char / user / both）。
+    // 每次同步时看一眼酒馆里的人设：酒馆里改了、小手机里没改 → 更新；小手机里也改过 → 不覆盖，在页面顶部提示。
+    // 记录在 binding.personaSync：
+    //   charHash / userHash   上次用的酒馆版本的指纹
+    //   charLocal / userLocal 上次写进小手机时的指纹（和现在的对不上 = 你在小手机里改过）
+    //   userSource            用户人设跟着酒馆里的哪一个（人设头像名，或 '__active__' = 酒馆里当前选中的）
+    // 导入酒馆人设窗口导入时也会记这些（见 recordPersonaImport）。
+    personaUpdateMode(binding) {
+        const m = binding && binding.personaUpdateMode;
+        return (m === 'char' || m === 'user' || m === 'both') ? m : 'both';
+    },
+
+    _userPersonaText(result, source) {
+        if (!source || source === '__active__') return result.activePersona || '';
+        const p = (result.userPersonas || []).find(x => x.avatar === source);
+        return p ? (p.description || '') : null;     // null = 酒馆里这个人设没了
+    },
+
+    // 导入窗口里点了「确认导入」：记下这次用的酒馆版本和写进小手机的内容，之后自动更新拿它们比
+    recordPersonaImport(binding, char, result, what) {
+        const ps = Object.assign({}, binding.personaSync);
+        if (what.char) {
+            ps.charHash = this.textHash(result.charPersona || '');
+            ps.charLocal = this.textHash(char.persona || '');
+            delete ps.charKept;
+        }
+        if (what.user) {
+            if (what.userSource) ps.userSource = what.userSource;
+            const tv = this._userPersonaText(result, ps.userSource);
+            ps.userHash = this.textHash(tv == null ? '' : tv);
+            ps.userLocal = this.textHash(char.myPersona || '');
+            delete ps.userKept;
+        }
+        binding.personaSync = ps;
+    },
+
+    async syncPersona(binding) {
+        const char = db.characters.find(c => c.id === binding.uwuCharId);
+        if (!char) return { updated: 0, kept: 0 };
+        const mode = this.personaUpdateMode(binding);
+        const result = await this.importCharSettings(binding);
+        const ps = Object.assign({}, binding.personaSync);
+        const tavernName = result.charName || (binding.stCharAvatar || '').replace(/\.png$/i, '');
+        let updated = 0;
+        const kept = [];
+        // field：小手机里存在哪（persona / myPersona）；key：记录用的前缀（char / user）
+        const one = (field, key, tavernText, label) => {
+            if (tavernText == null || !String(tavernText).trim()) return;   // 酒馆里是空的或没了：不动
+            const th = this.textHash(tavernText);
+            if (ps[key + 'Hash'] === th) return;                            // 酒馆里没变
+            const local = char[field] || '';
+            const localUnchanged = ps[key + 'Local'] !== undefined && this.textHash(local) === ps[key + 'Local'];
+            if (local === tavernText || !local.trim() || localUnchanged) {
+                // 小手机里没改过（或本来就一样、或还是空的）→ 用酒馆的版本
+                if (local !== tavernText) { char[field] = tavernText; updated++; }
+                ps[key + 'Hash'] = th;
+                ps[key + 'Local'] = this.textHash(tavernText);
+                delete ps[key + 'Kept'];
+                return;
+            }
+            // 小手机里改过（或者以前没记录、说不准）→ 不覆盖。酒馆这一版记在 Kept 里，同一次改动只提示一次；
+            // 之后你点「导入酒馆人设」重新导入，会重新记 Hash / Local，从那以后照常自动更新
+            if (ps[key + 'Kept'] !== th) {
+                ps[key + 'Kept'] = th;
+                kept.push(label);
+            }
+        };
+        if (mode === 'char' || mode === 'both') one('persona', 'char', result.charPersona, '角色人设');
+        if (mode === 'user' || mode === 'both') one('myPersona', 'user', this._userPersonaText(result, ps.userSource), '用户人设');
+        const changed = JSON.stringify(ps) !== JSON.stringify(binding.personaSync || {});
+        binding.personaSync = ps;
+        if (kept.length) {
+            this.reportIssue(`酒馆中「${tavernName}」的${kept.join('和')}已经被改动，但你在小手机里也改过，没有自动更新；如果想用酒馆的版本，点「导入酒馆人设」重新导入。`);
+        }
+        if (updated || changed) await this.saveConfig(this.getConfig());   // 会顺带存角色数据
+        return { updated, kept: kept.length };
     },
 
     // 一次性清理：旧版“绑定世界书/跟随”功能留下的数据（yuan 版已删掉这个功能）
@@ -2230,6 +2431,7 @@ function setupTavernSyncScreen() {
                     <span style="${TS.title}">SillyTavern 连接</span>
                     <span id="ts-status" style="font-size:12px; color:#999; display:inline-flex; align-items:center; gap:2px; white-space:nowrap;">检测中...</span>
                 </div>
+                <div id="ts-page-link" style="display:none; font-size:12px; color:#888; line-height:1.6; margin-top:8px;"></div>
                 <div id="ts-login-area"></div>
             </div>
             <div id="ts-bindings-area" style="display:none; margin-top:12px;">
@@ -2478,6 +2680,18 @@ function setupTavernSyncScreen() {
         loginArea.innerHTML = ''; loginArea.style.marginTop = '0';
         bindingsArea.style.display = 'block'; rulesArea.style.display = 'block'; settingsArea.style.display = 'block';
         renderBindings(); renderRules();
+        renderPageLink();
+    }
+
+    // 同一个浏览器里有没有开着的酒馆页面：有就说明会自动处理；没有就提醒跨浏览器时要手动刷新酒馆
+    const pageLinkEl = mainEl.querySelector('#ts-page-link');
+    async function renderPageLink() {
+        const found = await TavernSync.pingTavernPage();
+        if (!pageLinkEl.isConnected) return;
+        pageLinkEl.style.display = 'block';
+        pageLinkEl.textContent = found
+            ? '同一个浏览器里开着酒馆页面：小手机推送后，酒馆会自动重新读取聊天，不用手动刷新。'
+            : '没有检测到同一个浏览器里开着的酒馆页面。如果你在别的设备或浏览器里开着酒馆，回到那边继续玩之前，请先刷新酒馆页面，否则酒馆保存时会把小手机推过去的消息盖掉。离开酒馆页面前，也最好等回复生成完、柏宝书写完摘要。';
     }
 
     function showLoginUI(users) {
@@ -2526,6 +2740,7 @@ function setupTavernSyncScreen() {
 
     async function checkAndLogin() {
         statusEl.textContent = '连接中...'; statusEl.style.color = '#999'; loginArea.innerHTML = ''; loginArea.style.marginTop = '0';
+        pageLinkEl.style.display = 'none';
         const r = await TavernSync.testConnection();
         if (r.ok) {
             const cfg = TavernSync.getConfig();
@@ -2585,6 +2800,7 @@ function setupTavernSyncScreen() {
             const tavernChars = charsOf(tavernMsgs);
             const trimmedCount = tavernMsgs.filter(m => m.tavern && m.tavern.trimmed).length;
             const synced = TavernSync.hasSynced(b);                 // 和现在这个酒馆聊天同步过没有
+            const newer = TavernSync.newerChatFor(b);                // 酒馆里这个角色最近在玩另一个聊天
             // 同一个小手机角色绑了两次：只有排在前面的那条起作用
             const dupOf = cfg.bindings.findIndex(x => x.uwuCharId === b.uwuCharId);
             const isDup = dupOf !== i;
@@ -2606,7 +2822,10 @@ function setupTavernSyncScreen() {
             return `<div style="${TS.subCard}">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                     <div style="min-width:0;"><div style="font-size:14px; font-weight:600;">${esc(charName)} ↔ ${esc(stName)}</div>
-                        <div style="font-size:11px; color:#888; margin-top:2px; word-break:break-all;">酒馆聊天：${esc(b.stChatFile || '未选')} <button data-chat="${i}" style="background:none; border:none; padding:0 2px; color:#2196F3; font-size:11px; cursor:pointer;">更换</button></div>
+                        <div style="font-size:11px; color:#888; margin-top:2px; word-break:break-all;">酒馆聊天：${esc(b.stChatFile || '未选')} <button data-chat="${i}" style="background:none; border:none; padding:0 2px; color:#2196F3; font-size:11px; cursor:pointer;">更换</button>酒馆里开了新聊天时，记得点「更换」。</div>
+                        ${newer ? `<div style="font-size:11px; color:#2196F3; margin-top:4px; word-break:break-all;">酒馆里这个角色最近玩的是另一个聊天「${esc(newer.file)}」，要换过去吗？
+                            <button data-newer-go="${i}" style="padding:2px 8px; border-radius:6px; border:none; background:rgba(33,150,243,0.15); color:#2196F3; font-size:11px; cursor:pointer;">换过去</button>
+                            <button data-newer-no="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:11px; cursor:pointer;">不换</button></div>` : ''}
                         <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}</div>
                         ${isDup ? `<div style="font-size:11px; color:#f66; margin-top:2px;">这个角色上面已经绑定过，这一条不起作用，可以删掉。</div>` : ''}</div>
                     <button data-del="${i}" style="${TS.btnD}">✕</button></div>
@@ -2626,6 +2845,7 @@ function setupTavernSyncScreen() {
                     <span>自动同步酒馆剧情</span>
                     <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-auto="autoPull" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPull') ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
+                ${!TavernSync.isAuto(b, 'autoPull') ? `<div style="font-size:11px; color:#888; margin:4px 0 0 12px;">关着时，酒馆里的新剧情要点「同步酒馆剧情」才会进来。</div>` : ''}
                 <div style="display:${synced ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 12px; font-size:13px; flex-wrap:wrap;">
                     第一次同步最近
                     <input type="number" data-first-num="${i}" min="0" value="${firstCount}"
@@ -2636,6 +2856,7 @@ function setupTavernSyncScreen() {
                     <span>自动推送小手机消息</span>
                     <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-auto="autoPush" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPush') ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
+                ${!TavernSync.isAuto(b, 'autoPush') ? `<div style="font-size:11px; color:#888; margin:4px 0 0 12px;">关着时，小手机消息要在「推送/清理消息」里手动推到酒馆。</div>` : ''}
                 <div data-firstpush-row="${i}" style="display:${(b.lastPushedMsgId || b.hasPushed) ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 12px; font-size:13px; flex-wrap:wrap;">
                     第一次自动推送最近
                     <input type="number" data-firstpush="${i}" min="0" value="${TavernSync.firstPushCountFor(b)}"
@@ -2643,9 +2864,23 @@ function setupTavernSyncScreen() {
                     <span style="font-size:11px; color:#888; width:100%;">这个角色还没推送过。只有自动推送第一次执行时看这个数字（填 0 就不自动补推）；手动推送在「推送/清理消息」窗口里自己选范围</span>
                 </div>
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
+                    <span>自动更新酒馆人设</span>
+                    <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-personaauto="${i}" ${b.autoUpdatePersona ? 'checked' : ''}><span class="kkt-slider"></span></span>
+                </label>
+                <div style="display:${b.autoUpdatePersona ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 12px; font-size:13px; flex-wrap:wrap;">
+                    更新
+                    <select data-persona-mode="${i}" aria-label="自动更新哪个人设" title="自动更新哪个人设" style="padding:4px 6px; border-radius:6px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px;">
+                        <option value="both" ${TavernSync.personaUpdateMode(b) === 'both' ? 'selected' : ''}>角色人设和用户人设</option>
+                        <option value="char" ${TavernSync.personaUpdateMode(b) === 'char' ? 'selected' : ''}>只更新角色人设</option>
+                        <option value="user" ${TavernSync.personaUpdateMode(b) === 'user' ? 'selected' : ''}>只更新用户人设</option>
+                    </select>
+                    <span style="font-size:11px; color:#888; width:100%;">每次同步时，酒馆里的人设改了就更新到小手机；你在小手机里改过的不会被覆盖。用户人设跟着你上次在「导入酒馆人设」里选的那个，没选过就跟着酒馆里当前选中的人设。</span>
+                </div>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <span>自动更新复制过的世界书</span>
                     <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-wbauto="${i}" ${b.autoUpdateWorldBooks ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
+                <div style="font-size:11px; color:#888; margin:4px 0 0 12px;">只更新已经复制过的条目，你在小手机里改过的不会被覆盖；酒馆里新加的条目，要在「导入酒馆世界书」里手动复制。</div>
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <span>自动精简旧楼层</span>
                     <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-trimauto="${i}" ${b.autoTrim ? 'checked' : ''}><span class="kkt-slider"></span></span>
@@ -2701,6 +2936,21 @@ function setupTavernSyncScreen() {
             if (!Number.isInteger(n) || n < 0) n = 0;
             inp.value = n;
             b.initialImportCount = n;
+            await TavernSync.saveConfig(cfg);
+        }));
+        bindingsList.querySelectorAll('[data-personaauto]').forEach(cb => cb.addEventListener('change', async () => {
+            const cfg = TavernSync.getConfig();
+            const b = cfg.bindings[parseInt(cb.dataset.personaauto)];
+            if (!b) return;
+            b.autoUpdatePersona = cb.checked;
+            await TavernSync.saveConfig(cfg);
+            renderBindings();   // 下面“更新哪个”那一行跟着出现/消失
+        }));
+        bindingsList.querySelectorAll('[data-persona-mode]').forEach(sel => sel.addEventListener('change', async () => {
+            const cfg = TavernSync.getConfig();
+            const b = cfg.bindings[parseInt(sel.dataset.personaMode)];
+            if (!b) return;
+            b.personaUpdateMode = sel.value;
             await TavernSync.saveConfig(cfg);
         }));
         bindingsList.querySelectorAll('[data-wbauto]').forEach(cb => cb.addEventListener('change', async () => {
@@ -2767,6 +3017,7 @@ function setupTavernSyncScreen() {
             if (!b) return;
             b[cb.dataset.auto] = cb.checked;
             await TavernSync.saveConfig(cfg);
+            renderBindings();   // 开关下面“关着时要手动…”那行跟着显示/隐藏
         }));
 
         const bindClick = (sel, handler) => bindingsList.querySelectorAll(sel).forEach(btn => btn.addEventListener('click', () => handler(btn)));
@@ -2780,6 +3031,25 @@ function setupTavernSyncScreen() {
             const name = `${ch ? (ch.remarkName || ch.name) : '未知'} ↔ ${(b.stCharAvatar || '').replace('.png', '') || '未知'}`;
             if (!confirm(`删除「${name}」的绑定？这个绑定的开关和设置会一起删掉；小手机里已经导入的酒馆剧情、酒馆里已经推送的消息都不受影响。`)) return;
             cfg.bindings.splice(idx, 1);
+            await TavernSync.saveConfig(cfg);
+            renderBindings();
+        });
+
+        bindClick('[data-newer-go]', async (btn) => {
+            const cfg = TavernSync.getConfig(); const b = cfg.bindings[parseInt(btn.dataset.newerGo)];
+            const newer = b && TavernSync.newerChatFor(b);
+            if (!newer) return;
+            btn.disabled = true;
+            try {
+                await TavernSync.changeChatFile(b, newer.file);
+                showToast('已换成酒馆里最近在玩的聊天，下次同步从它开始');
+                renderBindings();
+            } catch (e) { showToast(`${e.message}`); btn.disabled = false; }
+        });
+        bindClick('[data-newer-no]', async (btn) => {
+            const cfg = TavernSync.getConfig(); const b = cfg.bindings[parseInt(btn.dataset.newerNo)];
+            if (!b || !b.newerChat) return;
+            b.dismissedChat = b.newerChat.file;   // 这个聊天以后不再问；酒馆里再开别的新聊天还会提示
             await TavernSync.saveConfig(cfg);
             renderBindings();
         });
@@ -2801,6 +3071,7 @@ function setupTavernSyncScreen() {
                 r.reordered ? '已按时间重新排好位置' : '',
                 r.autoTrimmed ? `精简 ${r.autoTrimmed} 楼旧剧情` : '',
                 r.worldUpdated ? `更新 ${r.worldUpdated} 条世界书` : '',
+                r.personaUpdated ? `更新了酒馆人设` : '',
             ].filter(Boolean).join('，') || '酒馆没有新楼层'); renderBindings(); }
             catch (e) { showToast(`${e.message}`); }
             btn.textContent = orig; btn.disabled = false;
@@ -3452,6 +3723,12 @@ async function showImportCharModal(binding) {
             else if (val) { const p = result.userPersonas.find(x => x.avatar === val); myPersonaArea.value = p?.description || ''; }
             else myPersonaArea.value = '';
         });
+        // 上次导入的是哪个用户人设，这次默认还选它（自动更新也跟着它）
+        const lastSource = binding.personaSync && binding.personaSync.userSource;
+        if (lastSource && [...personaSelect.options].some(o => o.value === lastSource)) {
+            personaSelect.value = lastSource;
+            personaSelect.dispatchEvent(new Event('change'));
+        }
     }
 
     modal.querySelector('#ic-cancel').addEventListener('click', () => overlay.remove());
@@ -3461,16 +3738,26 @@ async function showImportCharModal(binding) {
         const importPersona = modal.querySelector('#ic-persona-check')?.checked;
         const importMyPersona = modal.querySelector('#ic-mypersona-check')?.checked;
 
+        let didChar = false, didUser = false;
         if (importPersona && result.charPersona) {
             if (hasPersona && !confirm('当前角色已有人设，确定覆盖吗？')) { /* skip */ }
-            else char.persona = modal.querySelector('#ic-persona').value;
+            else { char.persona = modal.querySelector('#ic-persona').value; didChar = true; }
         }
         if (importMyPersona && myPersonaArea?.value?.trim()) {
             if (hasMyPersona && !confirm('当前角色已有用户人设，确定覆盖吗？')) { /* skip */ }
-            else char.myPersona = myPersonaArea.value;
+            else { char.myPersona = myPersonaArea.value; didUser = true; }
         }
-
-        await saveData(); overlay.remove(); showToast('设定已导入');
+        // 记下这次导入的是酒馆哪个版本、写进小手机的是什么，「自动更新酒馆人设」拿它判断以后谁改过
+        const src = personaSelect ? personaSelect.value : '';
+        if (didChar || didUser) {
+            const cfg = TavernSync.getConfig();
+            const b = cfg.bindings.find(x => x === binding) || cfg.bindings.find(x => x.uwuCharId === binding.uwuCharId);
+            if (b) TavernSync.recordPersonaImport(b, char, result, { char: didChar, user: didUser && !!src, userSource: src });
+            await TavernSync.saveConfig(cfg);   // 会顺带存角色数据
+        } else {
+            await saveData();
+        }
+        overlay.remove(); showToast('设定已导入');
     });
 }
 
@@ -3501,7 +3788,7 @@ async function showWorldBookModal(binding) {
 
     modal.innerHTML = `
         <h3 style="margin:0 0 8px; font-size:16px; font-weight:600;">导入酒馆世界书</h3>
-        <div style="font-size:12px; color:#888; margin-bottom:8px; line-height:1.6;">复制过来就是小手机自己的世界书条目，可以随便改。酒馆里改了内容的，这里会标出来，可以选择更新。</div>
+        <div style="font-size:12px; color:#888; margin-bottom:8px; line-height:1.6;">复制过来就是小手机自己的世界书条目，可以随便改。酒馆里改了内容的，这里会标出来，可以选择更新。酒馆里以后改了内容，打开绑定卡片上的「自动更新复制过的世界书」，或者回到这里点「更新小手机里的内容」。</div>
         ${tabsHTML ? `<div style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap;">${tabsHTML}</div>` : ''}
         <div style="display:flex; gap:8px; margin-bottom:8px;">
             <button id="wb-select-all" style="${smallBtn}">全选</button>
@@ -3582,7 +3869,9 @@ async function showWorldBookModal(binding) {
         const copied = TavernSync.findCopiedWorldBook(binding, src.name, e.uid);
         if (!copied) return { text: '', color: '', changed: false, copied: null };
         const changed = copied.tavernSource.hash !== TavernSync.wbHash(e);
-        return { text: changed ? '酒馆里已改' : '已复制', color: changed ? '#FF9800' : '#4CAF50', changed, copied };
+        const edited = TavernSync.wbEditedLocally(copied) === true;
+        const text = changed ? (edited ? '酒馆里已改，小手机里也改过' : '酒馆里已改') : (edited ? '已复制，小手机里改过' : '已复制');
+        return { text, color: changed ? '#FF9800' : '#4CAF50', changed, edited, copied };
     }
     function renderEntries(srcIdx) {
         currentSourceIdx = srcIdx;
@@ -3639,6 +3928,7 @@ async function showWorldBookModal(binding) {
                 isGlobal: false,
                 tavernSource: { avatar: binding.stCharAvatar, world: src.name, uid: e.uid, hash: TavernSync.wbHash(e), order: e.order },
             }, e, src.entries.indexOf(e), true);
+            newWb.tavernSource.localHash = TavernSync.wbLocalHash(newWb);   // 以后对不上就说明你在小手机里改过
             db.worldBooks.push(newWb);
             if (!char.worldBookIds) char.worldBookIds = [];
             if (!char.worldBookIds.includes(newWb.id)) char.worldBookIds.push(newWb.id);
@@ -3657,6 +3947,11 @@ async function showWorldBookModal(binding) {
         const src = sources[currentSourceIdx];
         const selected = getSelected();
         if (!selected.length) { showToast('请先勾选条目'); return; }
+        // 你在小手机里改过的条目，更新会用酒馆的版本覆盖，先问一声
+        const editedNames = selected.map(e => TavernSync.findCopiedWorldBook(binding, src.name, e.uid))
+            .filter(c => c && c.tavernSource.hash !== TavernSync.wbHash(src.entries.find(x => x.uid === c.tavernSource.uid)) && TavernSync.wbEditedLocally(c) === true)
+            .map(c => c.name || '未命名');
+        if (editedNames.length && !confirm(`勾选的条目里有 ${editedNames.length} 条你在小手机里改过（${editedNames.slice(0, 3).map(n => `「${n}」`).join('、')}${editedNames.length > 3 ? ' 等' : ''}），更新后会换成酒馆的版本，小手机里的改动会丢失。确定更新吗？`)) return;
         let updated = 0, missing = 0;
         for (const e of selected) {
             const copied = TavernSync.findCopiedWorldBook(binding, src.name, e.uid);
@@ -3665,6 +3960,8 @@ async function showWorldBookModal(binding) {
             TavernSync.applyTavernEntry(copied, e, src.entries.indexOf(e), false);
             copied.tavernSource.hash = TavernSync.wbHash(e);
             copied.tavernSource.order = e.order;
+            copied.tavernSource.localHash = TavernSync.wbLocalHash(copied);
+            delete copied.tavernSource.keptHash;
             updated++;
         }
         await saveData();

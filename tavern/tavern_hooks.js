@@ -9,7 +9,7 @@
 (function () {
     const TAG = '[酒馆外挂]';
     // 文件版本：界面上已不显示，排查时可以临时显示出来（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-21 h';
+    const HOOKS_VERSION = '2026-09-21 k';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
@@ -451,6 +451,12 @@
             bar.appendChild(btn);
             body.appendChild(bar);
         }
+
+        // 长按删掉酒馆卡片后下次同步会重新出现，不写清楚容易以为没删成功
+        const delNote = document.createElement('div');
+        delNote.style.cssText = 'margin-top:8px; font-size:11px; color:#888; text-align:left;';
+        delNote.textContent = '在这里删掉的卡片，下次同步会重新出现；以后都不想要，用「管理同步范围」。';
+        body.appendChild(delNote);
 
         toggle.addEventListener('click', () => {
             body.style.display = body.style.display === 'none' ? 'block' : 'none';

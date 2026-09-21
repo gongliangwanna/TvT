@@ -117,6 +117,11 @@ try {
         channel = new BroadcastChannel('uwu-tavern-sync');
         channel.addEventListener('message', (e) => {
             const d = e.data;
+            // 小手机问“同一个浏览器里有没有开着的酒馆页面”：回答一声（小手机据此决定要不要提醒你手动刷新酒馆）
+            if (d && d.type === 'ping' && d.id) {
+                try { channel.postMessage({ type: 'pong', id: d.id }); } catch (err) { /* 回答不了就算了 */ }
+                return;
+            }
             if (!d || d.type !== 'chat-saved' || !d.avatar || !d.file) return;
             const same = pendingReload && pendingReload.avatar === d.avatar && pendingReload.file === d.file;
             if (!same) pendingReload = { avatar: d.avatar, file: d.file, saves: [] };
