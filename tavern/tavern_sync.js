@@ -1890,9 +1890,9 @@ function askText(title, placeholder) {
         box.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:320px;';
         box.innerHTML = `
             <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">${esc(title)}</h3>
-            <input id="ask-input" type="text" placeholder="${esc(placeholder || '')}" style="width:100%; box-sizing:border-box; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; margin-bottom:14px;">
+            <input id="ask-input" type="text" placeholder="${esc(placeholder || '')}" style="width:100%; box-sizing:border-box; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px; margin-bottom:14px;">
             <div style="display:flex; gap:10px;">
-                <button id="ask-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;">取消</button>
+                <button id="ask-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; cursor:pointer;">取消</button>
                 <button id="ask-ok" style="flex:1; ${TS.btnP}">确定</button>
             </div>`;
         overlay.appendChild(box);
@@ -1911,7 +1911,7 @@ function askText(title, placeholder) {
 const TS = {
     card: 'background:var(--received-bg, rgba(255,255,255,0.08)); border-radius:14px; padding:16px; margin-bottom:12px;',
     label: 'font-size:13px; color:#999; display:block; margin-bottom:4px;',
-    input: 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:14px; box-sizing:border-box;',
+    input: 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; box-sizing:border-box;',
     // 主按钮用 yuan 通篇在用的那个淡蓝 #cee4f1 + 深色字。写死不跟 var(--primary-color) 走，
     // 免得换了主题或夜间模式时变成别的颜色（曾经显示成淡粉色）
     btnP: 'padding:10px; border-radius:10px; border:none; background:#cee4f1; color:#2a3032; font-size:14px; font-weight:500; cursor:pointer;',
@@ -1932,10 +1932,10 @@ function setupTavernSyncScreen() {
 
     const escAttr = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const numInput = (id, value) => `<input type="number" id="${id}" value="${value}" min="0" max="999"
-                            style="width:70px; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;">`;
+                            style="width:70px; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px; text-align:center;">`;
     const tplArea = (id, rows) => `<textarea id="${id}" rows="${rows}" spellcheck="false"
-                        style="width:100%; box-sizing:border-box; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:rgba(0,0,0,0.2); color:inherit; font-size:12px; line-height:1.5; resize:vertical;"></textarea>`;
-    const smallBtn = 'padding:4px 10px; border-radius:6px; border:none; background:rgba(255,255,255,0.1); color:inherit; font-size:12px; cursor:pointer;';
+                        style="width:100%; box-sizing:border-box; padding:8px 10px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:rgba(0,0,0,0.2); color:inherit; font-size:12px; line-height:1.5; resize:vertical;"></textarea>`;
+    const smallBtn = 'padding:4px 10px; border-radius:6px; border:none; background:rgba(128,128,128,0.15); color:inherit; font-size:12px; cursor:pointer;';
 
     mainEl.innerHTML = `
         <div style="padding:4px 0;">
@@ -1971,7 +1971,7 @@ function setupTavernSyncScreen() {
                             <div style="font-size:11px; color:#888;">关闭后，发原文的酒馆楼层中只包含 AI 楼层，若不抢话不转述可能导致剧情不连贯</div>
                         </div>
                     </label>
-                    <div id="ts-wrap-toggle" style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
+                    <div id="ts-wrap-toggle" style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; margin-top:14px; padding-top:12px; border-top:1px solid rgba(128,128,128,0.3);">
                         <span style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">酒馆剧情包裹提示词自定义</span>
                         <span id="ts-wrap-arrow" style="font-size:12px; color:#888; white-space:nowrap; flex-shrink:0;">点击展开</span>
                     </div>
@@ -1994,16 +1994,16 @@ function setupTavernSyncScreen() {
                     <span style="${TS.title}">从小手机推送到酒馆</span>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:14px;">推送楼层模式</span>
-                        <select id="ts-push-mode" aria-label="推送楼层模式" title="推送楼层模式" style="padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px;">
+                        <select id="ts-push-mode" aria-label="推送楼层模式" title="推送楼层模式" style="padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px;">
                             <option value="new" ${(config.pushMode || 'new') === 'new' ? 'selected' : ''}>新开楼层</option>
                             <option value="append" ${config.pushMode === 'append' ? 'selected' : ''}>合并到最后一楼</option>
                         </select>
                     </div>
                     <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">新开楼层：小手机消息以你的身份单独发在新的一楼中。如果酒馆最后一楼就是上次新开的这层楼，就接着写进去，不会每次都新开。<br>合并到最后一楼：不管最后一楼是谁发的，都把小手机消息接在那一楼末尾。</div>
-                    <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
+                    <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(128,128,128,0.3);">
                         <div style="display:flex; align-items:center; gap:8px; font-size:14px;">
                             <span style="white-space:nowrap;">按角色设置</span>
-                            <select id="ts-push-char" aria-label="按角色设置" title="按角色设置" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;"></select>
+                            <select id="ts-push-char" aria-label="按角色设置" title="按角色设置" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px;"></select>
                         </div>
                         <div id="ts-push-per-char"></div>
                     </div>
@@ -2041,7 +2041,7 @@ function setupTavernSyncScreen() {
                 <button id="ts-issues-clear" style="${smallBtn} background:rgba(244,67,54,0.15); color:#f66;">清空</button>
             </div>
             <div style="max-height:38vh; overflow-y:auto;">
-            ${list.slice().reverse().map(it => `<div style="font-size:12px; line-height:1.6; padding:6px 0; border-top:1px solid rgba(255,255,255,0.08); word-break:break-word;"><span style="color:#888;">${new Date(it.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}${it.count > 1 ? ` ×${it.count}` : ''}</span> <span style="white-space:pre-wrap;">${escAttr(it.text)}</span></div>`).join('')}
+            ${list.slice().reverse().map(it => `<div style="font-size:12px; line-height:1.6; padding:6px 0; border-top:1px solid rgba(128,128,128,0.3); word-break:break-word;"><span style="color:#888;">${new Date(it.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}${it.count > 1 ? ` ×${it.count}` : ''}</span> <span style="white-space:pre-wrap;">${escAttr(it.text)}</span></div>`).join('')}
             </div>
         </div>`;
         issuesArea.querySelector('#ts-issues-clear').addEventListener('click', () => { TavernSync.clearIssues(); renderIssues(); });
@@ -2099,7 +2099,7 @@ function setupTavernSyncScreen() {
         perCharBox.innerHTML = `
             <label style="display:flex; align-items:center; gap:8px; margin-top:12px; font-size:14px;">
                 <span style="white-space:nowrap;">通话推送</span>
-                <select id="ts-cc-call" aria-label="通话推送" title="通话推送" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;">
+                <select id="ts-cc-call" aria-label="通话推送" title="通话推送" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px;">
                     <option value="summary" ${callMode === 'summary' ? 'selected' : ''}>只推总结</option>
                     <option value="context" ${callMode === 'context' ? 'selected' : ''}>只推记录</option>
                     <option value="both" ${callMode === 'both' ? 'selected' : ''}>都推送</option>
@@ -2205,7 +2205,7 @@ function setupTavernSyncScreen() {
         if (users?.length) {
             loginArea.innerHTML = `<div style="font-size:13px; color:#999; margin-bottom:8px;">选择酒馆账户</div>
                 ${users.map(u => `<button class="ts-user-btn" data-handle="${u.handle}" data-pwd="${u.password}"
-                    style="display:flex; align-items:center; gap:10px; width:100%; padding:12px; border-radius:10px; border:none; background:rgba(255,255,255,0.06); color:inherit; font-size:14px; cursor:pointer; margin-bottom:8px; text-align:left;">
+                    style="display:flex; align-items:center; gap:10px; width:100%; padding:12px; border-radius:10px; border:none; background:rgba(128,128,128,0.1); color:inherit; font-size:14px; cursor:pointer; margin-bottom:8px; text-align:left;">
                     <span>${esc(u.name || u.handle)}</span>
                     ${u.password ? '<span style="font-size:11px; color:#999; margin-left:auto;">需要密码</span>' : ''}</button>`).join('')}
                 <div id="ts-password-area" style="display:none; margin-top:8px;">
@@ -2255,7 +2255,7 @@ function setupTavernSyncScreen() {
         const rules = cfg.cleanRules || [];
         if (!rules.length) { rulesList.innerHTML = '<div style="text-align:center; color:#888; font-size:12px; padding:10px;">暂无规则，消息原样注入。</div>'; return; }
         rulesList.innerHTML = rules.map((r, i) => `
-            <div style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(255,255,255,0.04); border-radius:8px; margin-bottom:6px;">
+            <div style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(128,128,128,0.08); border-radius:8px; margin-bottom:6px;">
                 <input type="checkbox" data-toggle="${i}" ${r.enabled ? 'checked' : ''} style="flex-shrink:0;">
                 <div style="flex:1; min-width:0; cursor:pointer;" data-edit="${i}">
                     <div style="font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.name || '未命名')}</div>
@@ -2319,7 +2319,7 @@ function setupTavernSyncScreen() {
                 <div style="display:${synced ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
                     第一次同步最近
                     <input type="number" data-first-num="${i}" min="0" value="${firstCount}"
-                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
+                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
                     <span style="font-size:11px; color:#888; width:100%;">这个角色还没同步过。之后每次同步都会带进全部新楼层，不看这个数字；想挑具体楼层用「管理同步范围」</span>
                 </div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
@@ -2329,7 +2329,7 @@ function setupTavernSyncScreen() {
                 <div data-firstpush-row="${i}" style="display:${(b.lastPushedMsgId || b.hasPushed) ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
                     第一次自动推送最近
                     <input type="number" data-firstpush="${i}" min="0" value="${TavernSync.firstPushCountFor(b)}"
-                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 条
+                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px; text-align:center;"> 条
                     <span style="font-size:11px; color:#888; width:100%;">这个角色还没推送过。只有自动推送第一次执行时看这个数字（填 0 就不自动补推）；手动推送在「推送/清理消息」窗口里自己选范围</span>
                 </div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
@@ -2343,7 +2343,7 @@ function setupTavernSyncScreen() {
                 <div style="display:${b.autoTrim ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
                     保留最近
                     <input type="number" data-trim-num="${i}" min="${cfg.rawFloorCount}" value="${TavernSync.keepRawFloorCount(b)}"
-                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼的原文
+                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼的原文
                     <span style="font-size:11px; color:#888; width:100%;">更早的楼层只留柏宝书摘要。不能少于“最近几楼发原文”（现在是 ${cfg.rawFloorCount} 楼）</span>
                 </div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
@@ -2353,7 +2353,7 @@ function setupTavernSyncScreen() {
                 <div style="display:${b.limitTavernContext ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
                     发给 AI 的酒馆剧情最多
                     <input type="number" data-limit-num="${i}" min="0" max="${maxMem}" value="${Math.min(maxMem, parseInt(b.tavernContextCount, 10) || 0)}"
-                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
+                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
                     <span style="font-size:11px; color:#888; width:100%;">这个角色的可见上文是 ${maxMem} 条：取最新的这么多楼酒馆剧情，剩下的名额给小手机消息</span>
                 </div>
             </div>`;
@@ -2561,8 +2561,8 @@ async function showAutoPushModal(binding, onDone) {
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:400px; max-height:85vh; display:flex; flex-direction:column;';
 
-    const numStyle = 'width:66px; padding:6px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;';
-    const tabBtn = (id, label, active) => `<button data-mode="${id}" class="auto-push-tab" style="flex:1; padding:8px 4px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:${active ? 'rgba(33,150,243,0.18)' : 'transparent'}; color:${active ? '#2196F3' : '#999'}; font-size:13px; cursor:pointer;">${label}</button>`;
+    const numStyle = 'width:66px; padding:6px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px; text-align:center;';
+    const tabBtn = (id, label, active) => `<button data-mode="${id}" class="auto-push-tab" style="flex:1; padding:8px 4px; border-radius:8px; border:1px solid rgba(128,128,128,0.35); background:${active ? 'rgba(33,150,243,0.18)' : 'transparent'}; color:${active ? '#2196F3' : '#999'}; font-size:13px; cursor:pointer;">${label}</button>`;
     const rangeRow = (idPrefix, from, to) => `
         <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; font-size:14px;">
             第 <input type="number" id="${idPrefix}-from" min="1" max="${total}" value="${from}" style="${numStyle}">
@@ -2583,14 +2583,14 @@ async function showAutoPushModal(binding, onDone) {
         <div id="auto-mode-raw" style="display:flex; flex-direction:column;">
             <div style="font-size:12px; color:#888; margin-bottom:6px;">推送这些消息（默认是未推送的那一段）。</div>
             ${rangeRow('auto-raw', unpushedCount ? firstUnpushed : total, total)}
-            <div id="auto-raw-preview" style="font-size:12px; color:#ccc; background:rgba(255,255,255,0.04); border-radius:8px; padding:10px; margin-bottom:12px; max-height:180px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #2196F3;"></div>
+            <div id="auto-raw-preview" style="font-size:12px; color:#ccc; background:rgba(128,128,128,0.08); border-radius:8px; padding:10px; margin-bottom:12px; max-height:180px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #2196F3;"></div>
         </div>
 
         <div id="auto-mode-summary" style="display:none; flex-direction:column;">
             <div style="font-size:12px; color:#888; margin-bottom:6px;">把这些消息浓缩成一段总结后推送（消耗 1 次总结 API）。</div>
             ${rangeRow('auto-sum', unpushedCount ? firstUnpushed : total, total)}
             <button id="auto-sum-gen" style="${TS.btnG} width:100%; margin-bottom:10px;">生成小总结</button>
-            <textarea id="auto-sum-text" placeholder="生成后可在此编辑..." style="width:100%; box-sizing:border-box; min-height:130px; max-height:220px; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.04); color:inherit; font-size:13px; line-height:1.6; resize:vertical; margin-bottom:12px;"></textarea>
+            <textarea id="auto-sum-text" placeholder="生成后可在此编辑..." style="width:100%; box-sizing:border-box; min-height:130px; max-height:220px; padding:10px; border-radius:8px; border:1px solid rgba(128,128,128,0.35); background:rgba(128,128,128,0.08); color:inherit; font-size:13px; line-height:1.6; resize:vertical; margin-bottom:12px;"></textarea>
         </div>
 
         <div id="auto-mode-clean" style="display:none; flex-direction:column;">
@@ -2598,11 +2598,11 @@ async function showAutoPushModal(binding, onDone) {
                 把这些小手机消息从酒馆里删掉（默认全部）。只删酒馆楼层里的小手机内容，不动小手机自己的聊天记录，也不动酒馆原有的剧情。
             </div>
             ${rangeRow('auto-clean', 1, total)}
-            <div id="auto-clean-preview" style="font-size:12px; color:#ccc; background:rgba(255,255,255,0.04); border-radius:8px; padding:10px; margin-bottom:12px; max-height:180px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #f66;"></div>
+            <div id="auto-clean-preview" style="font-size:12px; color:#ccc; background:rgba(128,128,128,0.08); border-radius:8px; padding:10px; margin-bottom:12px; max-height:180px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #f66;"></div>
         </div>
 
         <div style="display:flex; gap:10px;">
-            <button id="auto-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;">取消</button>
+            <button id="auto-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; cursor:pointer;">取消</button>
             <button id="auto-confirm" style="flex:1; ${TS.btnP}">确认推送</button>
         </div>`;
 
@@ -2766,8 +2766,8 @@ function showTrimModal(binding, onDone) {
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:380px; max-height:85vh; overflow-y:auto;';
-    const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;';
-    const cancelStyle = 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;';
+    const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px; text-align:center;';
+    const cancelStyle = 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; cursor:pointer;';
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">精简旧楼层</h3>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:8px;">
@@ -2856,8 +2856,8 @@ async function showResetRangeModal(binding, onDone) {
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:380px;';
-    const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;';
-    const cancelStyle = 'flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;';
+    const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px; text-align:center;';
+    const cancelStyle = 'flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; cursor:pointer;';
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">管理同步范围</h3>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
@@ -2968,9 +2968,9 @@ function showRuleEditor(ruleIndex, onSave) {
             <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">排除：删掉匹配到的内容，其余保留。<br>提取：只保留匹配到的内容，其余全部去掉；一处都没匹配到就原样不动。</div></div>
         <div style="margin-bottom:16px;"><label style="${TS.label}">测试</label>
             <textarea id="rr-test" placeholder="粘贴消息文本测试..." style="${TS.input} height:60px; resize:vertical;"></textarea>
-            <div id="rr-result" style="margin-top:6px; font-size:12px; color:#888; background:rgba(255,255,255,0.04); border-radius:8px; padding:8px; white-space:pre-wrap; max-height:80px; overflow:auto;"></div></div>
+            <div id="rr-result" style="margin-top:6px; font-size:12px; color:#888; background:rgba(128,128,128,0.08); border-radius:8px; padding:8px; white-space:pre-wrap; max-height:80px; overflow:auto;"></div></div>
         <div style="display:flex; gap:10px;">
-            <button id="rr-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;">取消</button>
+            <button id="rr-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; cursor:pointer;">取消</button>
             <button id="rr-save" style="flex:1; ${TS.btnP}">保存</button></div>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
 
@@ -3058,7 +3058,7 @@ async function showImportCharModal(binding) {
                 <div style="font-size:12px; color:#888; margin-top:4px;">（仅供参考，不自动导入）</div>
             </div>` : ''}
         <div style="display:flex; gap:10px;">
-            <button id="ic-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;">取消</button>
+            <button id="ic-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; cursor:pointer;">取消</button>
             <button id="ic-save" style="flex:1; ${TS.btnP}">确认导入</button>
         </div>`;
 
@@ -3115,9 +3115,9 @@ async function showWorldBookModal(binding) {
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:420px; max-height:85vh; display:flex; flex-direction:column;';
 
     const tabsHTML = sources.length > 1
-        ? sources.map((src, i) => `<button class="wb-tab" data-tab="${i}" style="padding:6px 12px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:${i === 0 ? 'rgba(255,255,255,0.15)' : 'transparent'}; color:inherit; font-size:12px; cursor:pointer;">${esc(src.type)}(${src.entries.length})</button>`).join('')
+        ? sources.map((src, i) => `<button class="wb-tab" data-tab="${i}" style="padding:6px 12px; border-radius:6px; border:1px solid rgba(128,128,128,0.35); background:${i === 0 ? 'rgba(33,150,243,0.18)' : 'transparent'}; color:inherit; font-size:12px; cursor:pointer;">${esc(src.type)}(${src.entries.length})</button>`).join('')
         : '';
-    const smallBtn = 'padding:4px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:12px; cursor:pointer;';
+    const smallBtn = 'padding:4px 10px; border-radius:6px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:12px; cursor:pointer;';
 
     modal.innerHTML = `
         <h3 style="margin:0 0 8px; font-size:16px; font-weight:600;">导入酒馆世界书</h3>
@@ -3131,13 +3131,13 @@ async function showWorldBookModal(binding) {
         <div id="wb-entries" style="flex:1; overflow-y:auto; margin-bottom:10px;"></div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:13px;">
             <span style="white-space:nowrap;">加到分组</span>
-            <select id="wb-category" aria-label="加到分组" title="加到分组" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;"></select>
+            <select id="wb-category" aria-label="加到分组" title="加到分组" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px;"></select>
         </div>
         <div style="display:flex; gap:8px; margin-bottom:8px;">
             <button id="wb-import" style="flex:1; ${TS.btnB}">复制到小手机世界书</button>
             <button id="wb-update" style="flex:1; ${TS.btnG}">更新小手机里的内容</button>
         </div>
-        <button id="wb-close" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:14px; cursor:pointer;">关闭</button>`;
+        <button id="wb-close" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">关闭</button>`;
 
     overlay.appendChild(modal); document.body.appendChild(overlay);
 
@@ -3185,7 +3185,7 @@ async function showWorldBookModal(binding) {
             const on = btn === activeFilter;
             btn.style.background = on ? 'rgba(33,150,243,0.18)' : 'transparent';
             btn.style.color = on ? '#2196F3' : 'inherit';
-            btn.style.borderColor = on ? 'rgba(33,150,243,0.5)' : 'rgba(255,255,255,0.15)';
+            btn.style.borderColor = on ? 'rgba(33,150,243,0.5)' : 'rgba(128,128,128,0.35)';
         });
     }
     function applyFilter(btn, pick) {
@@ -3212,7 +3212,7 @@ async function showWorldBookModal(binding) {
             const st = statusOf(src, e);
             const preview = (e.content || '').replace(/\s+/g, ' ').trim();
             return `
-            <label style="display:flex; align-items:center; gap:10px; padding:10px; background:rgba(255,255,255,0.04); border-radius:8px; margin-bottom:6px; cursor:pointer; ${e.disabled ? 'opacity:0.55;' : ''}">
+            <label style="display:flex; align-items:center; gap:10px; padding:10px; background:rgba(128,128,128,0.08); border-radius:8px; margin-bottom:6px; cursor:pointer; ${e.disabled ? 'opacity:0.55;' : ''}">
                 <input type="checkbox" data-idx="${i}" style="flex-shrink:0; margin:0;">
                 <div style="flex:1; min-width:0;">
                     <div style="font-size:13px; font-weight:500; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(e.comment || '未命名')}${e.disabled ? '（酒馆里已关闭）' : ''}${st.text ? `<span style="font-size:11px; color:${st.color}; margin-left:6px;">${st.text}</span>` : ''}</div>
@@ -3229,7 +3229,7 @@ async function showWorldBookModal(binding) {
             const on = i === currentSourceIdx;
             t.style.background = on ? 'rgba(33,150,243,0.18)' : 'transparent';
             t.style.color = on ? '#2196F3' : 'inherit';
-            t.style.borderColor = on ? 'rgba(33,150,243,0.5)' : 'rgba(255,255,255,0.15)';
+            t.style.borderColor = on ? 'rgba(33,150,243,0.5)' : 'rgba(128,128,128,0.35)';
         });
     }
     renderEntries(0);
@@ -3354,7 +3354,7 @@ function showPromptPreview(binding) {
         s.tokens = estimateTokens(s.content || (s.items || []).map(it => it.content).join('\n'));
     });
     const totalTokens = sections.reduce((sum, s) => sum + s.tokens, 0);
-    const box = 'font-size:12px; color:#ccc; background:rgba(255,255,255,0.04); border-radius:8px; padding:10px; white-space:pre-wrap; line-height:1.5;';
+    const box = 'font-size:12px; color:#ccc; background:rgba(128,128,128,0.08); border-radius:8px; padding:10px; white-space:pre-wrap; line-height:1.5;';
 
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">提示词预览 — ${esc(char.remarkName || char.name)}</h3>
@@ -3374,7 +3374,7 @@ function showPromptPreview(binding) {
                         <div style="${box} border-left:3px solid ${it.color};">${esc(it.content)}</div>`).join('')}
                 </div>`).join('')}
         </div>
-        <button id="pp-close" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; font-size:14px; cursor:pointer;">关闭</button>`;
+        <button id="pp-close" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">关闭</button>`;
 
     overlay.appendChild(modal); document.body.appendChild(overlay);
     modal.querySelector('#pp-close').addEventListener('click', () => overlay.remove());
@@ -3398,7 +3398,7 @@ async function showBindingEditor(onSave) {
         <div style="margin-bottom:16px;"><label style="${TS.label}">酒馆聊天记录</label>
             <select id="be-chat" aria-label="酒馆聊天记录" title="酒馆聊天记录" style="${TS.input}"><option>加载中...</option></select></div>
         <div style="display:flex; gap:10px;">
-            <button id="be-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;">取消</button>
+            <button id="be-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; cursor:pointer;">取消</button>
             <button id="be-save" style="flex:1; ${TS.btnP}">保存</button></div>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
     const stSelect = modal.querySelector('#be-st'), chatSelect = modal.querySelector('#be-chat');
