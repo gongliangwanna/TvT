@@ -2922,8 +2922,8 @@ function showRuleEditor(ruleIndex, onSave) {
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:360px;';
     modal.innerHTML = `
         <h3 style="margin:0 0 16px; font-size:16px; font-weight:600;">${existing ? '编辑' : '添加'}清洗规则</h3>
-        <div style="margin-bottom:12px;"><label style="${TS.label}">规则名称</label><input id="rr-name" placeholder="例如：去除thinking" style="${TS.input}"></div>
-        <div style="margin-bottom:12px;"><label style="${TS.label}">正则表达式</label><input id="rr-regex" placeholder="例如：<thinking>[\\s\\S]*?</thinking>" style="${TS.input} font-family:monospace;"></div>
+        <div style="margin-bottom:12px;"><label style="${TS.label}">规则名称</label><input id="rr-name" placeholder="去除思考过程" style="${TS.input}"></div>
+        <div style="margin-bottom:12px;"><label style="${TS.label}">正则表达式</label><input id="rr-regex" placeholder="<thinking>[\\s\\S]*?</thinking>" style="${TS.input} font-family:monospace;"></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">用在</label><select id="rr-scope" aria-label="规则用在" title="规则用在" style="${TS.input}">
             <option value="pull" ${existing?.scope === 'pull' ? 'selected' : ''}>同步（酒馆剧情进小手机时）</option>
             <option value="push" ${existing?.scope === 'push' ? 'selected' : ''}>推送（小手机消息进酒馆时）</option>
