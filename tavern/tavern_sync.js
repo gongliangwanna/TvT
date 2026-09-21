@@ -131,7 +131,7 @@ function tagFloorNth(list) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-21 l',
+    SYNC_VERSION: '2026-09-21 m',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -231,20 +231,26 @@ const TavernSync = {
     _csrfToken: null,
     // 每次连接酒馆最多等这么久。写酒馆的操作是排队一个个做的，某一次请求卡住不返回的话（手机网络不好时会这样），
     // 后面所有推送、同步都会一直等着，看起来就像“自动推送突然不工作了”。超时就报错，让队伍接着往下走
-    // 时间从发出请求算到内容全部下载完（parse 读完内容才算结束），聊天很长、网络又慢时下载本身也要一会儿，所以给 60 秒
+    // 时间从发出请求算到内容全部下载完（parse 读完内容才算结束）。基础 60 秒；
+    // 推送时要把整份酒馆聊天传回去，聊天很长、手机网络又慢时正常上传也可能超过 60 秒，
+    // 所以要传的内容每多 1MB 再多给 FETCH_TIMEOUT_PER_MB_MS（否则大聊天会每次都被当成超时，推送永远失败）
     FETCH_TIMEOUT_MS: 60 * 1000,
+    FETCH_TIMEOUT_PER_MB_MS: 50 * 1000,
     async _fetchWithTimeout(url, opts = {}, parse = null) {
         if (typeof AbortController !== 'function') {
             const resp = await fetch(url, opts);
             return parse ? parse(resp) : resp;
         }
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), this.FETCH_TIMEOUT_MS);
+        // 中文一个字上传时占 3 个字节，按字数 × 3 保守估大小（宁可多等，不能把正常的大上传当成超时）
+        const bodyMB = typeof opts.body === 'string' ? opts.body.length * 3 / (1024 * 1024) : 0;
+        const limit = this.FETCH_TIMEOUT_MS + Math.ceil(bodyMB * this.FETCH_TIMEOUT_PER_MB_MS);
+        const timer = setTimeout(() => ctrl.abort(), limit);
         try {
             const resp = await fetch(url, Object.assign({}, opts, { signal: ctrl.signal }));
             return parse ? await parse(resp) : resp;
         } catch (e) {
-            if (ctrl.signal.aborted) throw new Error(`连接酒馆超时（${Math.round(this.FETCH_TIMEOUT_MS / 1000)} 秒没有回应），请检查网络后再试`);
+            if (ctrl.signal.aborted) throw new Error(`连接酒馆超时（${Math.round(limit / 1000)} 秒没有回应），请检查网络后再试`);
             throw e;
         } finally {
             clearTimeout(timer);
@@ -616,6 +622,23 @@ const TavernSync = {
             });
         }
 
+        // 0.6 精简时收走的 user 楼（AI 卡片上的 roundUsers 记号）核对一遍：
+        //     那楼在酒馆里被删了、或者现在已经不属于这一回合了，记号就作废。
+        //     不然旧记号会把同一分钟里另一楼长得一样的 user 挡住，那一楼永远同步不进来（随机测试测出来的）。
+        //     还在的顺便更新楼层号和先后序号（前面删了楼会变）
+        char.history.forEach(h => {
+            if (!ofThisChat(h) || !Array.isArray(h.tavern.roundUsers) || !h.tavern.roundUsers.length) return;
+            const owner = findCandidate(h.tavern);
+            if (!owner) return;
+            const used = new Set();
+            h.tavern.roundUsers = h.tavern.roundUsers.map(u => {
+                const hit = findCandidate(u);
+                if (!hit || used.has(hit) || roundAiFor(hit.floor) !== owner.floor) return null;
+                used.add(hit);
+                return Object.assign({}, u, { floor: hit.floor, nth: hit.m.__uwuNth });
+            }).filter(Boolean);
+        });
+
         const imported = char.history.filter(ofThisChat);
 
         // 1. 找出要导入的楼层：从“起点楼层”（第一次同步时导入的最早一楼）往后，所有小手机里还没有的楼层。
@@ -727,7 +750,9 @@ const TavernSync = {
             if (!ofThisChat(h)) continue;
             const found = findCandidate(h.tavern);
             if (!found) continue;
-            if (typeof h.tavern.time !== 'number' && found.time != null) h.tavern.time = found.time;
+            // 时间每次都按酒馆现在的楼层表重新算，不能只在导入时算一次：同一分钟里的楼层会被“抬”到和前一楼一样，
+            // 前一楼后来在酒馆里被删了的话，旧卡片还留着按已删楼层算的时间，和新导入的楼一比顺序就乱了（随机测试测出来的）
+            if (found.time != null && h.tavern.time !== found.time) h.tavern.time = found.time;
             if (h.tavern.floor !== found.floor) h.tavern.floor = found.floor;
             h.tavern.roundAi = roundAiFor(found.floor);   // 所属回合（酒馆后来才回复的，这时候才算得出来）
             if (h.tavern.genStarted === undefined) h.tavern.genStarted = String(found.m.gen_started || '');
