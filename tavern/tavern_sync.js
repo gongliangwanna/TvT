@@ -236,17 +236,16 @@ const TavernSync = {
      * @param {string} text - 消息文本
      * @param {number|null} depth - 消息深度（0 = 最新一条，1 = 倒数第二条…），null 表示不过滤深度
      */
-    applyCleanRules(text, depth) {
+    // direction：'pull' = 从酒馆同步进小手机，'push' = 从小手机推送到酒馆。
+    // 每条规则的 scope 决定用在哪一头（'pull' / 'push' / 'both'，老规则没有这一项就当 'both'）。
+    // 旧版的“生效深度”（minDepth/maxDepth）在 yuan 补丁里从来没起过作用，已经删掉。
+    applyCleanRules(text, direction) {
         if (!text || typeof text !== 'string') return '';
         const config = this.getConfig();
-        const rules = (config.cleanRules || []).filter(r => r.enabled);
+        const rules = (config.cleanRules || []).filter(r => r.enabled
+            && (!r.scope || r.scope === 'both' || !direction || r.scope === direction));
         let result = text;
         for (const rule of rules) {
-            // 深度过滤：规则可设置 minDepth / maxDepth 限定生效范围
-            if (depth != null) {
-                if (rule.minDepth != null && depth < rule.minDepth) continue;
-                if (rule.maxDepth != null && depth > rule.maxDepth) continue;
-            }
             try {
                 const regex = new RegExp(rule.regex, 'gs');
                 if (rule.mode === 'extract') {
@@ -383,7 +382,7 @@ const TavernSync = {
             let text = m.mes;
             // 合并到已有楼层的小手机内容（<phone_chat>）去掉，只保留酒馆原本的内容
             if (m.extra && m.extra.from_uwu) text = text.replace(/<phone_chat>[\s\S]*?<\/phone_chat>/g, '').trim();
-            const cleaned = this.applyCleanRules(text, null);
+            const cleaned = this.applyCleanRules(text, 'pull');
             if (!cleaned) continue;
             const time = timeOf(m);
             char.history.push({
@@ -664,7 +663,7 @@ const TavernSync = {
         const cleanOf = (stMsg) => {
             let text = stMsg.mes;
             if (stMsg.extra && stMsg.extra.from_uwu) text = text.replace(/<phone_chat>[\s\S]*?<\/phone_chat>/g, '').trim();
-            return this.applyCleanRules(text, null);
+            return this.applyCleanRules(text, 'pull');
         };
         for (const m of targets) {
             const found = list.find(x => x && typeof x.mes === 'string' && this._sameFloor(x, m.tavern));
@@ -767,7 +766,7 @@ const TavernSync = {
         // 这一楼里夹着的小手机推送内容先摘出来，写回时原样放回去
         const phoneBlocks = stMsg.mes.match(/<phone_chat>[\s\S]*?<\/phone_chat>/g) || [];
         const body = stMsg.mes.replace(/<phone_chat>[\s\S]*?<\/phone_chat>/g, '').trim();
-        if (this.applyCleanRules(body, null) !== body) {
+        if (this.applyCleanRules(body, 'pull') !== body) {
             return { ok: false, reason: '这一楼导入时被清洗规则改过，写回会丢内容，酒馆保持原样' };
         }
         if (String(oldContent == null ? '' : oldContent).trim() !== body) {
@@ -1109,7 +1108,7 @@ const TavernSync = {
             return lines.length ? '\n' + lines.join('\n') : '';
         };
         const toLine = (m) => {
-            let base = this.applyCleanRules(stripOnlineStatus(stripThinking(stripStatusBar(m.content))), null);
+            let base = this.applyCleanRules(stripOnlineStatus(stripThinking(stripStatusBar(m.content))), 'push');
             if (!base) return base;
             const rec = callRecordOf(m);
             if (!rec) return base;
@@ -1227,14 +1226,13 @@ const TavernSync = {
             const mergedContent = `<phone_chat>\n${lines.join('\n')}\n</phone_chat>`;
             const pushMode = this.getConfig().pushMode || 'new';
             const lastMsg = all.length > 0 ? all[all.length - 1] : null;
-            const lastIsUwu = lastMsg?.extra?.from_uwu;
-
             // 决定是否合并到已有楼层：
-            // 1. 最后一楼是 from_uwu 且同侧（都是 user 侧）→ 合并（用户只是切了酒馆又回来）
-            //    若是旧数据里的 AI 侧 from_uwu，不合并，新开 user 楼层保持干净
-            // 2. 追加模式 → 合并到最后一楼（不管是谁的），配合正则隐藏实现视觉无新楼
-            const lastIsUserSide = lastMsg?.is_user === true;
-            if ((lastIsUwu && lastIsUserSide) || (pushMode === 'append' && lastMsg)) {
+            // 1. 新开楼层模式：只有最后一楼就是小手机上次自己新开的那层楼（uwu_created）才接着写进去。
+            //    剧情楼（你写的、AI 写的）哪怕里面夹着小手机内容，也一律新开一楼。
+            //    （以前的判断是“最后一楼是 user 侧且夹着小手机内容”，会把消息写进你自己的剧情楼里）
+            // 2. 合并到最后一楼模式：不管最后一楼是什么，都接在它末尾
+            const lastIsOwnFloor = !!(lastMsg && lastMsg.extra && lastMsg.extra.uwu_created);
+            if (lastIsOwnFloor || (pushMode === 'append' && lastMsg)) {
                 const target = lastMsg;
                 const existingContent = target.mes || '';
                 const closingTag = '</phone_chat>';
@@ -1959,9 +1957,9 @@ function setupTavernSyncScreen() {
                     </label>
                 </div>
                 <div style="${TS.card} margin-top:12px;">
-                    <div style="display:flex; align-items:center; justify-content:space-between;">
-                        <span id="ts-wrap-toggle" style="${TS.title} cursor:pointer; flex:1;">酒馆剧情包裹提示词自定义 <span id="ts-wrap-arrow" style="font-size:12px; color:#888; font-weight:normal;">点击展开</span></span>
-                        <button id="ts-wrap-reset" style="${smallBtn} display:none;">恢复默认</button>
+                    <div id="ts-wrap-toggle" style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
+                        <span style="${TS.title} white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">酒馆剧情包裹提示词自定义</span>
+                        <span id="ts-wrap-arrow" style="font-size:12px; color:#888; white-space:nowrap; flex-shrink:0;">点击展开</span>
                     </div>
                     <div id="ts-wrap-body" style="display:none;">
                         <div style="font-size:12px; color:#888; margin:6px 0 10px; line-height:1.55;">
@@ -1973,11 +1971,13 @@ function setupTavernSyncScreen() {
                         ${tplArea('ts-wrap-raw', 3)}
                         <div style="font-size:13px; margin:10px 0 4px;">摘要包裹（更早的楼层）</div>
                         ${tplArea('ts-wrap-summary', 3)}
+                        <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+                            <button id="ts-wrap-reset" style="${smallBtn}">恢复默认</button>
+                        </div>
                     </div>
                 </div>
                 <div style="${TS.card} margin-top:12px;">
                     <span style="${TS.title}">从小手机推送到酒馆</span>
-                    <div style="font-size:12px; color:#888; margin-top:6px;">「自动同步酒馆剧情」「自动推送小手机消息」这些开关在上面每个角色的绑定卡片里，可以分别设置</div>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:14px;">推送楼层模式</span>
                         <select id="ts-push-mode" aria-label="推送楼层模式" title="推送楼层模式" style="padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px;">
@@ -1985,7 +1985,7 @@ function setupTavernSyncScreen() {
                             <option value="append" ${config.pushMode === 'append' ? 'selected' : ''}>合并到最后一楼</option>
                         </select>
                     </div>
-                    <div style="font-size:12px; color:#888; margin-top:4px;">新开楼层：每次推送创建新消息；合并末尾：追加到最后一楼末尾（配合正则隐藏）。注：若最后一楼已是小手机消息，无论模式都会自动合并</div>
+                    <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">新开楼层：小手机消息以你的身份单独发在新的一楼中。如果酒馆最后一楼就是上次新开的这层楼，就接着写进去，不会每次都新开。<br>合并到最后一楼：不管最后一楼是谁发的，都把小手机消息接在那一楼末尾。</div>
                     <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
                         <div style="display:flex; align-items:center; gap:8px; font-size:14px;">
                             <span style="white-space:nowrap;">按角色设置</span>
@@ -2001,7 +2001,7 @@ function setupTavernSyncScreen() {
                         <span style="${TS.title}">正则清洗规则</span>
                         <button id="ts-add-rule-btn" style="${smallBtn}">+ 添加规则</button>
                     </div>
-                    <div style="font-size:12px; color:#888; margin-bottom:10px;">从酒馆导入楼层时按顺序处理文字，推送到酒馆时也会用。提取=只保留匹配内容，排除=删除匹配内容。</div>
+                    <div style="font-size:12px; color:#888; margin-bottom:10px;">用正则把文字里不想要的部分删掉，或者只挑出想要的部分，比如删掉酒馆 AI 回复里的思考过程。每条规则可以选用在同步（酒馆剧情进小手机时）、推送（小手机消息进酒馆时），还是两头都用；多条规则按列表顺序依次处理。</div>
                     <div id="ts-rules-list"></div>
                 </div>
             </div>
@@ -2142,7 +2142,6 @@ function setupTavernSyncScreen() {
         const body = mainEl.querySelector('#ts-wrap-body');
         const open = body.style.display === 'none';
         body.style.display = open ? 'block' : 'none';
-        mainEl.querySelector('#ts-wrap-reset').style.display = open ? '' : 'none';
         mainEl.querySelector('#ts-wrap-arrow').textContent = open ? '点击收起' : '点击展开';
     });
     mainEl.querySelector('#ts-wrap-reset').addEventListener('click', async () => {
@@ -2227,7 +2226,7 @@ function setupTavernSyncScreen() {
                 <input type="checkbox" data-toggle="${i}" ${r.enabled ? 'checked' : ''} style="flex-shrink:0;">
                 <div style="flex:1; min-width:0; cursor:pointer;" data-edit="${i}">
                     <div style="font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.name || '未命名')}</div>
-                    <div style="font-size:11px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.mode === 'extract' ? '提取' : '排除'} /${esc(r.regex)}/${r.minDepth != null || r.maxDepth != null ? ` 深度${r.minDepth ?? 0}~${r.maxDepth ?? '∞'}` : ''}</div>
+                    <div style="font-size:11px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.mode === 'extract' ? '提取' : '排除'} · ${r.scope === 'pull' ? '同步' : r.scope === 'push' ? '推送' : '同步和推送'} · /${esc(r.regex)}/</div>
                 </div>
                 <button data-delrule="${i}" style="${TS.btnD} font-size:14px;">✕</button>
             </div>`).join('');
@@ -2925,18 +2924,14 @@ function showRuleEditor(ruleIndex, onSave) {
         <h3 style="margin:0 0 16px; font-size:16px; font-weight:600;">${existing ? '编辑' : '添加'}清洗规则</h3>
         <div style="margin-bottom:12px;"><label style="${TS.label}">规则名称</label><input id="rr-name" placeholder="例如：去除thinking" style="${TS.input}"></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">正则表达式</label><input id="rr-regex" placeholder="例如：<thinking>[\\s\\S]*?</thinking>" style="${TS.input} font-family:monospace;"></div>
+        <div style="margin-bottom:12px;"><label style="${TS.label}">用在</label><select id="rr-scope" aria-label="规则用在" title="规则用在" style="${TS.input}">
+            <option value="pull" ${existing?.scope === 'pull' ? 'selected' : ''}>同步（酒馆剧情进小手机时）</option>
+            <option value="push" ${existing?.scope === 'push' ? 'selected' : ''}>推送（小手机消息进酒馆时）</option>
+            <option value="both" ${(!existing || !existing.scope || existing.scope === 'both') ? 'selected' : ''}>两头都用</option></select></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">模式</label><select id="rr-mode" aria-label="规则模式" title="规则模式" style="${TS.input}">
-            <option value="exclude" ${(!existing || existing.mode === 'exclude') ? 'selected' : ''}>排除（删除匹配内容）</option>
-            <option value="extract" ${existing?.mode === 'extract' ? 'selected' : ''}>提取（只保留匹配/捕获组$1）</option></select></div>
-        <div style="margin-bottom:12px;">
-            <label style="${TS.label}">生效深度（从最新消息起算，0 = 最新一条）</label>
-            <div style="display:flex; gap:8px; margin-top:4px;">
-                <div style="flex:1;"><input id="rr-min-depth" type="number" min="0" value="${existing?.minDepth ?? ''}" placeholder="最小深度" style="${TS.input} text-align:center;"></div>
-                <span style="align-self:center; color:#888;">~</span>
-                <div style="flex:1;"><input id="rr-max-depth" type="number" min="0" value="${existing?.maxDepth ?? ''}" placeholder="最大深度" style="${TS.input} text-align:center;"></div>
-            </div>
-            <div style="font-size:12px; color:#888; margin-top:4px;">留空 = 不限。例如最小0最大4 = 只对最近5条生效；最小5留空 = 只对第6条及更早的生效</div>
-        </div>
+            <option value="exclude" ${(!existing || existing.mode === 'exclude') ? 'selected' : ''}>排除</option>
+            <option value="extract" ${existing?.mode === 'extract' ? 'selected' : ''}>提取</option></select>
+            <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">排除：删掉匹配到的内容，其余保留。<br>提取：只保留匹配到的内容，其余全部去掉；一处都没匹配到就原样不动。</div></div>
         <div style="margin-bottom:16px;"><label style="${TS.label}">测试</label>
             <textarea id="rr-test" placeholder="粘贴消息文本测试..." style="${TS.input} height:60px; resize:vertical;"></textarea>
             <div id="rr-result" style="margin-top:6px; font-size:12px; color:#888; background:rgba(255,255,255,0.04); border-radius:8px; padding:8px; white-space:pre-wrap; max-height:80px; overflow:auto;"></div></div>
@@ -2966,8 +2961,7 @@ function showRuleEditor(ruleIndex, onSave) {
     modal.querySelector('#rr-save').addEventListener('click', async () => {
         const regex = modal.querySelector('#rr-regex').value; if (!regex) { showToast('请填写正则'); return; }
         try { new RegExp(regex); } catch { showToast('正则无效'); return; }
-        const minD = modal.querySelector('#rr-min-depth').value, maxD = modal.querySelector('#rr-max-depth').value;
-        const rule = { id: existing?.id || `rule_${Date.now()}`, name: modal.querySelector('#rr-name').value.trim() || '未命名', regex, mode: modal.querySelector('#rr-mode').value, enabled: existing?.enabled ?? true, minDepth: minD !== '' ? parseInt(minD) : null, maxDepth: maxD !== '' ? parseInt(maxD) : null };
+        const rule = { id: existing?.id || `rule_${Date.now()}`, name: modal.querySelector('#rr-name').value.trim() || '未命名', regex, mode: modal.querySelector('#rr-mode').value, scope: modal.querySelector('#rr-scope').value, enabled: existing?.enabled ?? true };
         const cfg = TavernSync.getConfig(); if (!cfg.cleanRules) cfg.cleanRules = [];
         if (ruleIndex !== null) cfg.cleanRules[ruleIndex] = rule; else cfg.cleanRules.push(rule);
         await TavernSync.saveConfig(cfg); overlay.remove(); showToast('规则已保存'); if (onSave) onSave();
