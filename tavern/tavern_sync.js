@@ -1004,6 +1004,15 @@ const TavernSync = {
         return !!(mem && mem.lastSync);
     },
 
+    // 这个角色第一次自动推送时，最多补推最近多少条。每个绑定可以不一样。
+    // 只在“酒馆里一条都没有”时用得上；手动推送在推送窗口里自己选范围，不看这个数字。
+    firstPushCountFor(binding) {
+        const n = parseInt(binding && binding.firstPushCount, 10);
+        if (Number.isInteger(n) && n >= 0) return n;
+        const g = this.getConfig().maxInjectMessages;
+        return (Number.isInteger(g) && g >= 0) ? g : 50;
+    },
+
     // 推送状态栏 / 推送在线状态：每个角色分开设，没设过就用旧的全局设置（老数据照旧）
     pushIncludeStatusBarFor(binding) {
         if (binding && typeof binding.pushIncludeStatusBar === 'boolean') return binding.pushIncludeStatusBar;
@@ -1176,17 +1185,29 @@ const TavernSync = {
             newMsgs = [];
         } else if (pushCount) {
             newMsgs = allUwuMsgs.slice(-pushCount);
-        } else if (binding.lastPushedMsgId) {
-            const lastIdx = allUwuMsgs.findIndex(m => m.id === binding.lastPushedMsgId);
+        } else {
+            // 正常情况：从“上次推到哪一条”之后接着推
+            const lastIdx = binding.lastPushedMsgId ? allUwuMsgs.findIndex(m => m.id === binding.lastPushedMsgId) : -1;
             if (lastIdx >= 0) {
                 newMsgs = allUwuMsgs.slice(lastIdx + 1);
             } else {
-                const count = this.getConfig().maxInjectMessages || 50;
-                newMsgs = allUwuMsgs.slice(-count);
+                // 不知道上次推到哪（第一次推、或者那条消息被删了）→ 以酒馆里的记录为准，
+                // 和推送窗口同一套口径：最后一条已经在酒馆里的消息之后的全推。
+                const pushedIds = new Set();
+                all.forEach(m => {
+                    const ids = m && m.extra && m.extra.uwu_msg_ids;
+                    if (Array.isArray(ids)) ids.forEach(id => pushedIds.add(id));
+                });
+                let lastPushed = -1;
+                allUwuMsgs.forEach((m, i) => { if (pushedIds.has(m.id)) lastPushed = i; });
+                if (lastPushed >= 0) {
+                    newMsgs = allUwuMsgs.slice(lastPushed + 1);
+                } else {
+                    // 酒馆里一条都没有（这个角色从没推过）→ 只补最近这些，免得把几千条老消息一次全推过去
+                    const count = this.firstPushCountFor(binding);
+                    newMsgs = count > 0 ? allUwuMsgs.slice(-count) : [];
+                }
             }
-        } else {
-            const count = this.getConfig().maxInjectMessages || 50;
-            newMsgs = allUwuMsgs.slice(-count);
         }
         // “重新生成”出来的回复（skipTavernPush）不自动推送，酒馆里保留原来的版本；想换可以去酒馆手动改。
         // 手动“推送最近 N 条”（pushCount）时照样包含，由用户自己决定。
@@ -1959,10 +1980,6 @@ function setupTavernSyncScreen() {
                         </select>
                     </div>
                     <div style="font-size:12px; color:#888; margin-top:4px;">新开楼层：每次推送创建新消息；合并末尾：追加到最后一楼末尾（配合正则隐藏）。注：若最后一楼已是小手机消息，无论模式都会自动合并</div>
-                    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
-                        <span style="font-size:14px; flex:1;">手动推送时默认条数</span>
-                        ${numInput('ts-max', config.maxInjectMessages || 50)}
-                    </div>
                     <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
                         <div style="display:flex; align-items:center; gap:8px; font-size:14px;">
                             <span style="white-space:nowrap;">按角色设置</span>
@@ -2019,7 +2036,6 @@ function setupTavernSyncScreen() {
         await TavernSync.saveConfig(cfg);
     });
     saveNum('#ts-raw-count', 'rawFloorCount', 3);
-    saveNum('#ts-max', 'maxInjectMessages', 50);
 
     // ===== 推送内容：通话、状态栏、在线状态都按角色分开设 =====
     const pushCharSelect = mainEl.querySelector('#ts-push-char');
@@ -2239,7 +2255,7 @@ function setupTavernSyncScreen() {
                     <button data-del="${i}" style="${TS.btnD}">✕</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
                     <button data-pull="${i}" style="flex:1; ${TS.btnB}">同步酒馆剧情</button>
-                    <button data-reset="${i}" style="flex:1; ${TS.btnB}">管理导入范围</button></div>
+                    <button data-reset="${i}" style="flex:1; ${TS.btnB}">管理同步范围</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
                     <button data-import-char="${i}" style="flex:1; ${TS.btnB}">导入酒馆人设</button>
                     <button data-import-wb="${i}" style="flex:1; ${TS.btnB}">导入酒馆世界书</button></div>
@@ -2254,15 +2270,21 @@ function setupTavernSyncScreen() {
                     <span>自动同步酒馆剧情</span>
                 </label>
                 <div style="display:${synced ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
-                    第一次同步导入最近
+                    第一次同步最近
                     <input type="number" data-first-num="${i}" min="0" value="${firstCount}"
                         style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
-                    <span style="font-size:11px; color:#888; width:100%;">这个角色还没同步过。之后每次同步都会导入全部新楼层，不看这个数字；想挑具体楼层用「选择导入范围」</span>
+                    <span style="font-size:11px; color:#888; width:100%;">这个角色还没同步过。之后每次同步都会带进全部新楼层，不看这个数字；想挑具体楼层用「管理同步范围」</span>
                 </div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-auto="autoPush" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPush') ? 'checked' : ''}>
                     <span>自动推送小手机消息</span>
                 </label>
+                <div style="display:${b.lastPushedMsgId ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
+                    第一次自动推送最近
+                    <input type="number" data-firstpush="${i}" min="0" value="${TavernSync.firstPushCountFor(b)}"
+                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 条
+                    <span style="font-size:11px; color:#888; width:100%;">这个角色还没推送过。只有自动推送第一次执行时看这个数字（填 0 就不自动补推）；手动推送在「推送/清理消息」窗口里自己选范围</span>
+                </div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-wbauto="${i}" ${b.autoUpdateWorldBooks ? 'checked' : ''}>
                     <span>自动更新复制过的世界书</span>
@@ -2291,6 +2313,16 @@ function setupTavernSyncScreen() {
         }).join('');
 
         // 单独限制酒馆上文：开关 + 楼数（不能超过这个角色的可见上文条数）
+        bindingsList.querySelectorAll('[data-firstpush]').forEach(inp => inp.addEventListener('change', async () => {
+            const cfg = TavernSync.getConfig();
+            const b = cfg.bindings[parseInt(inp.dataset.firstpush)];
+            if (!b) return;
+            let n = parseInt(inp.value, 10);
+            if (!Number.isInteger(n) || n < 0) n = 0;
+            inp.value = n;
+            b.firstPushCount = n;
+            await TavernSync.saveConfig(cfg);
+        }));
         bindingsList.querySelectorAll('[data-first-num]').forEach(inp => inp.addEventListener('change', async () => {
             const cfg = TavernSync.getConfig();
             const b = cfg.bindings[parseInt(inp.dataset.firstNum)];
@@ -2375,7 +2407,7 @@ function setupTavernSyncScreen() {
             const cfg = TavernSync.getConfig(); const b = cfg.bindings[parseInt(btn.dataset.pull)];
             const orig = btn.textContent; btn.textContent = '同步中...'; btn.disabled = true;
             try { const r = await TavernSync.pullFromTavern(b); showToast([
-                r.imported ? `导入 ${r.imported} 楼新剧情` : '',
+                r.imported ? `同步了 ${r.imported} 楼新剧情` : '',
                 r.removedGone ? `酒馆里删掉的 ${r.removedGone} 楼也删掉了` : '',
                 r.summariesFilled ? `补上 ${r.summariesFilled} 段摘要` : '',
                 r.reordered ? '已按时间重新排好位置' : '',
@@ -2767,13 +2799,13 @@ async function showResetRangeModal(binding, onDone) {
     const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;';
     const cancelStyle = 'flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;';
     modal.innerHTML = `
-        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">管理导入范围</h3>
+        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">管理同步范围</h3>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
-            ${synced ? `小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>` : '这个角色还没同步过，选一段要导入的剧情。<br>'}
+            ${synced ? `小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>` : '这个角色还没同步过，选一段要同步的剧情。<br>'}
             酒馆里这个聊天一共 <b>${info.total}</b> 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
         </div>
         <div style="display:flex; align-items:center; gap:8px; font-size:14px;">
-            导入最近 <input type="number" id="rr-recent" min="0" max="${info.total}" value="${Math.min(firstCount, info.total)}" style="${numStyle}"> 楼
+            同步最近 <input type="number" id="rr-recent" min="0" max="${info.total}" value="${Math.min(firstCount, info.total)}" style="${numStyle}"> 楼
         </div>
         <div style="text-align:center; font-size:12px; color:#888; margin:2px 0;">or</div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
@@ -2782,11 +2814,11 @@ async function showResetRangeModal(binding, onDone) {
         </div>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:16px;">
             上面填楼数，下面的范围会跟着算好；也可以直接改下面的楼层号。<br>
-            小手机推送过去的楼层、番外楼不会导入。${synced ? '清空后，' : ''}酒馆里以后新玩的楼层照常同步，不受这里限制。<br>
+            小手机推送过去的楼层、番外楼不会同步进来。${synced ? '清空后，' : ''}酒馆里以后新玩的楼层照常同步，不受这里限制。<br>
             已经写进日记、记忆表格、向量记忆的内容不受影响。
         </div>
-        <button id="rr-range" style="width:100%; ${TS.btnP} margin-bottom:8px;">${synced ? '清空，并导入这个范围' : '开始导入'}</button>
-        <button id="rr-none" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(244,67,54,0.4); background:transparent; color:#f66; font-size:14px; cursor:pointer; margin-bottom:8px;">${synced ? '只清空（以后只同步新楼层）' : '不导入旧剧情（只同步以后的新楼层）'}</button>
+        <button id="rr-range" style="width:100%; ${TS.btnP} margin-bottom:8px;">${synced ? '清空，并同步这个范围' : '开始同步'}</button>
+        <button id="rr-none" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(244,67,54,0.4); background:transparent; color:#f66; font-size:14px; cursor:pointer; margin-bottom:8px;">${synced ? '只清空（以后只同步新楼层）' : '不要旧剧情（只同步以后的新楼层）'}</button>
         <button id="rr-cancel" style="width:100%; ${cancelStyle}">取消</button>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
     const close = () => overlay.remove();
@@ -2828,7 +2860,7 @@ async function showResetRangeModal(binding, onDone) {
             let msg = synced ? `已删掉 ${r.removed} 楼` : '';
             if (range) {
                 const p = await TavernSync.pullFromTavern(binding);
-                msg += msg ? `，重新导入 ${p.imported} 楼` : `导入了 ${p.imported} 楼`;
+                msg += msg ? `，重新同步 ${p.imported} 楼` : `同步了 ${p.imported} 楼`;
             }
             showToast(msg || '以后只同步新楼层');
             close();
