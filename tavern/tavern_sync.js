@@ -1004,6 +1004,16 @@ const TavernSync = {
         return !!(mem && mem.lastSync);
     },
 
+    // 推送状态栏 / 推送在线状态：每个角色分开设，没设过就用旧的全局设置（老数据照旧）
+    pushIncludeStatusBarFor(binding) {
+        if (binding && typeof binding.pushIncludeStatusBar === 'boolean') return binding.pushIncludeStatusBar;
+        return this.getConfig().pushIncludeStatusBar !== false;
+    },
+    pushIncludeOnlineStatusFor(binding) {
+        if (binding && typeof binding.pushIncludeOnlineStatus === 'boolean') return binding.pushIncludeOnlineStatus;
+        return this.getConfig().pushIncludeOnlineStatus === true;
+    },
+
     // 通话推送方式：'summary' 只推总结（默认）/ 'context' 只推记录 / 'both' 都推 / 'none' 不推送。
     // 兼容以前那个「通话连完整对话一起推」的开关（打开过的算“都推”）。
     callPushMode(binding) {
@@ -1015,7 +1025,7 @@ const TavernSync = {
     _pushHelpers(char, binding) {
         // 状态栏剥离：当用户关闭"推送状态栏到酒馆"时，按角色状态栏正则把内联状态栏抹掉，
         // 并过滤掉专门的状态更新楼层（isStatusUpdate）
-        const includeStatusBar = this.getConfig().pushIncludeStatusBar !== false;
+        const includeStatusBar = this.pushIncludeStatusBarFor(binding);
         let statusBarRegex = null;
         if (!includeStatusBar && char.statusPanel && char.statusPanel.enabled && char.statusPanel.regexPattern) {
             let pattern = char.statusPanel.regexPattern;
@@ -1031,7 +1041,7 @@ const TavernSync = {
 
         // 在线状态：AI 写的「[角色更新状态为：…]」，只用来改小手机界面上那行状态文字，聊天里本来就不显示。
         // 默认不推到酒馆（设置里的「推送在线状态到酒馆」）：整条只有这句的不推，夹在正文里的这段抹掉。
-        const includeOnlineStatus = this.getConfig().pushIncludeOnlineStatus === true;
+        const includeOnlineStatus = this.pushIncludeOnlineStatusFor(binding);
         const onlineStatusRe = /\[[^\[\]]*?更新状态为[：:][^\[\]]*\]/g;
         const stripOnlineStatus = (text) => {
             if (includeOnlineStatus || !text) return text;
@@ -1907,16 +1917,6 @@ function setupTavernSyncScreen() {
                     <div id="ts-bindings-list"></div>
                 </div>
             </div>
-            <div id="ts-rules-area" style="display:none; margin-top:12px;">
-                <div style="${TS.card}">
-                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-                        <span style="${TS.title}">正则清洗规则</span>
-                        <button id="ts-add-rule-btn" style="${smallBtn}">+ 添加规则</button>
-                    </div>
-                    <div style="font-size:12px; color:#888; margin-bottom:10px;">从酒馆导入楼层时按顺序处理文字，推送到酒馆时也会用。提取=只保留匹配内容，排除=删除匹配内容。</div>
-                    <div id="ts-rules-list"></div>
-                </div>
-            </div>
             <div id="ts-settings-area" style="display:none; margin-top:12px;">
                 <div style="${TS.card}">
                     <span style="${TS.title}">发给 AI 的酒馆剧情</span>
@@ -1949,7 +1949,7 @@ function setupTavernSyncScreen() {
                     ${tplArea('ts-wrap-summary', 3)}
                 </div>
                 <div style="${TS.card} margin-top:12px;">
-                    <span style="${TS.title}">推送到酒馆</span>
+                    <span style="${TS.title}">从小手机推送到酒馆</span>
                     <div style="font-size:12px; color:#888; margin-top:6px;">「自动同步酒馆剧情」「自动推送小手机消息」这些开关在上面每个角色的绑定卡片里，可以分别设置</div>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:14px;">推送楼层模式</span>
@@ -1963,20 +1963,23 @@ function setupTavernSyncScreen() {
                         <span style="font-size:14px; flex:1;">手动推送时默认条数</span>
                         ${numInput('ts-max', config.maxInjectMessages || 50)}
                     </div>
-                    <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
-                        <input type="checkbox" id="ts-push-status-bar" ${config.pushIncludeStatusBar !== false ? 'checked' : ''}>
-                        <div>
-                            <div>推送状态栏到酒馆</div>
-                            <div style="font-size:11px; color:#888;">关闭后，推送到酒馆的小手机消息将按角色状态栏正则剥离内联状态栏，并过滤专用状态更新楼层</div>
+                    <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
+                        <div style="display:flex; align-items:center; gap:8px; font-size:14px;">
+                            <span style="white-space:nowrap;">按角色设置</span>
+                            <select id="ts-push-char" aria-label="按角色设置" title="按角色设置" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;"></select>
                         </div>
-                    </label>
-                    <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
-                        <input type="checkbox" id="ts-push-online-status" ${config.pushIncludeOnlineStatus === true ? 'checked' : ''}>
-                        <div>
-                            <div>推送在线状态到酒馆</div>
-                            <div style="font-size:11px; color:#888;">在线状态是 AI 写的“[角色更新状态为：…]”，用来改小手机界面上那行状态文字。默认不推到酒馆</div>
-                        </div>
-                    </label>
+                        <div id="ts-push-per-char"></div>
+                    </div>
+                </div>
+            </div>
+            <div id="ts-rules-area" style="display:none; margin-top:12px;">
+                <div style="${TS.card}">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                        <span style="${TS.title}">正则清洗规则</span>
+                        <button id="ts-add-rule-btn" style="${smallBtn}">+ 添加规则</button>
+                    </div>
+                    <div style="font-size:12px; color:#888; margin-bottom:10px;">从酒馆导入楼层时按顺序处理文字，推送到酒馆时也会用。提取=只保留匹配内容，排除=删除匹配内容。</div>
+                    <div id="ts-rules-list"></div>
                 </div>
             </div>
         </div>`;
@@ -2017,8 +2020,72 @@ function setupTavernSyncScreen() {
     });
     saveNum('#ts-raw-count', 'rawFloorCount', 3);
     saveNum('#ts-max', 'maxInjectMessages', 50);
-    mainEl.querySelector('#ts-push-status-bar').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.pushIncludeStatusBar = e.target.checked; await TavernSync.saveConfig(cfg); });
-    mainEl.querySelector('#ts-push-online-status').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.pushIncludeOnlineStatus = e.target.checked; await TavernSync.saveConfig(cfg); });
+
+    // ===== 推送内容：通话、状态栏、在线状态都按角色分开设 =====
+    const pushCharSelect = mainEl.querySelector('#ts-push-char');
+    const perCharBox = mainEl.querySelector('#ts-push-per-char');
+    function renderPushPerChar() {
+        const cfg = TavernSync.getConfig();
+        const bindings = cfg.bindings || [];
+        if (!bindings.length) {
+            pushCharSelect.innerHTML = '<option>还没有绑定角色</option>';
+            pushCharSelect.disabled = true;
+            perCharBox.innerHTML = '<div style="font-size:12px; color:#888; margin-top:10px;">先在上面添加角色绑定，这里才能按角色设置。</div>';
+            return;
+        }
+        pushCharSelect.disabled = false;
+        const keep = parseInt(pushCharSelect.value, 10);
+        const idx = (Number.isInteger(keep) && bindings[keep]) ? keep : 0;
+        pushCharSelect.innerHTML = bindings.map((b, i) => {
+            const ch = db.characters.find(c => c.id === b.uwuCharId);
+            const name = ch ? (ch.remarkName || ch.name) : '未知角色';
+            return `<option value="${i}" ${i === idx ? 'selected' : ''}>${esc(name)}</option>`;
+        }).join('');
+        const b = bindings[idx];
+        const callMode = TavernSync.callPushMode(b);
+        const statusOn = TavernSync.pushIncludeStatusBarFor(b);
+        const onlineOn = TavernSync.pushIncludeOnlineStatusFor(b);
+        perCharBox.innerHTML = `
+            <label style="display:flex; align-items:center; gap:8px; margin-top:12px; font-size:14px;">
+                <span style="white-space:nowrap;">通话推送</span>
+                <select id="ts-cc-call" aria-label="通话推送" title="通话推送" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;">
+                    <option value="summary" ${callMode === 'summary' ? 'selected' : ''}>只推总结</option>
+                    <option value="context" ${callMode === 'context' ? 'selected' : ''}>只推记录</option>
+                    <option value="both" ${callMode === 'both' ? 'selected' : ''}>都推送</option>
+                    <option value="none" ${callMode === 'none' ? 'selected' : ''}>不推送</option>
+                </select>
+            </label>
+            <div style="font-size:12px; color:#888; margin-top:4px;">总结 = yuan 自动写的那段通话总结；记录 = 通话过程中的每一句话。前三种都带“打了多久”。</div>
+            <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
+                <input type="checkbox" id="ts-cc-status" ${statusOn ? 'checked' : ''}>
+                <div>
+                    <div>推送状态栏到酒馆</div>
+                    <div style="font-size:11px; color:#888;">关闭后，推送到酒馆的小手机消息会按这个角色的状态栏正则剥掉状态栏，专门的状态更新楼层也不推。</div>
+                </div>
+            </label>
+            <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
+                <input type="checkbox" id="ts-cc-online" ${onlineOn ? 'checked' : ''}>
+                <div>
+                    <div>推送在线状态到酒馆</div>
+                    <div style="font-size:11px; color:#888;">在线状态是 AI 写的“[角色更新状态为：…]”，用来改小手机界面上那行状态文字。默认不推。</div>
+                </div>
+            </label>`;
+        const save = async (fn) => {
+            const cfg2 = TavernSync.getConfig();
+            const b2 = (cfg2.bindings || [])[idx];
+            if (!b2) return;
+            fn(b2);
+            await TavernSync.saveConfig(cfg2);
+        };
+        perCharBox.querySelector('#ts-cc-call').addEventListener('change', (e) => save(b2 => {
+            b2.callPushMode = e.target.value;
+            delete b2.pushCallContext;   // 旧开关不再用
+        }));
+        perCharBox.querySelector('#ts-cc-status').addEventListener('change', (e) => save(b2 => { b2.pushIncludeStatusBar = e.target.checked; }));
+        perCharBox.querySelector('#ts-cc-online').addEventListener('change', (e) => save(b2 => { b2.pushIncludeOnlineStatus = e.target.checked; }));
+    }
+    pushCharSelect.addEventListener('change', renderPushPerChar);
+    renderPushPerChar();
     mainEl.querySelector('#ts-inject-user-floors').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.injectUserFloors = e.target.checked; await TavernSync.saveConfig(cfg); });
     mainEl.querySelector('#ts-push-mode').addEventListener('change', async (e) => {
         const cfg = TavernSync.getConfig(); cfg.pushMode = e.target.value; await TavernSync.saveConfig(cfg);
@@ -2154,7 +2221,6 @@ function setupTavernSyncScreen() {
             const tavernChars = tavernMsgs.reduce((n, m) => n + (m.content ? m.content.length : 0)
                 + (m.tavern && !m.tavern.trimmed && m.tavern.summary && m.tavern.summary.text ? m.tavern.summary.text.length : 0), 0);
             const trimmedCount = tavernMsgs.filter(m => m.tavern && m.tavern.trimmed).length;
-            const callMode = TavernSync.callPushMode(b);
             const synced = !!(mem && mem.lastSync);                 // 同步过没有
             const firstCount = TavernSync.initialImportFor(b);
             const sizeText = tavernChars >= 10000 ? `约 ${(tavernChars / 10000).toFixed(1)} 万字` : `约 ${tavernChars} 字`;
@@ -2175,14 +2241,14 @@ function setupTavernSyncScreen() {
                     <button data-pull="${i}" style="flex:1; ${TS.btnB}">同步酒馆剧情</button>
                     <button data-reset="${i}" style="flex:1; ${TS.btnB}">管理导入范围</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+                    <button data-import-char="${i}" style="flex:1; ${TS.btnB}">导入酒馆人设</button>
+                    <button data-import-wb="${i}" style="flex:1; ${TS.btnB}">导入酒馆世界书</button></div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
                     <button data-fillsum="${i}" style="flex:1; ${TS.btnG}">只补摘要</button>
                     <button data-trim="${i}" style="flex:1; ${TS.btnG}">精简旧楼层</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
                     <button data-push="${i}" style="flex:1; ${TS.btnO}">推送/清理消息</button>
                     <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(156,39,176,0.15); color:#CE93D8; font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button></div>
-                <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-                    <button data-import-char="${i}" style="flex:1; ${TS.btnB}">导入酒馆人设</button>
-                    <button data-import-wb="${i}" style="flex:1; ${TS.btnB}">导入酒馆世界书</button></div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-auto="autoPull" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPull') ? 'checked' : ''}>
                     <span>自动同步酒馆剧情</span>
@@ -2221,15 +2287,6 @@ function setupTavernSyncScreen() {
                         style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
                     <span style="font-size:11px; color:#888; width:100%;">这个角色的可见上文是 ${maxMem} 条：取最新的这么多楼酒馆剧情，剩下的名额给小手机消息</span>
                 </div>
-                <label style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px;">
-                    <span>通话推送</span>
-                    <select data-callmode="${i}" aria-label="通话推送" title="通话推送" style="flex:1; min-width:120px; padding:5px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px;">
-                        <option value="summary" ${callMode === 'summary' ? 'selected' : ''}>只推总结</option>
-                        <option value="context" ${callMode === 'context' ? 'selected' : ''}>只推记录</option>
-                        <option value="both" ${callMode === 'both' ? 'selected' : ''}>都推送</option>
-                        <option value="none" ${callMode === 'none' ? 'selected' : ''}>不推送</option>
-                    </select>
-                </label>
             </div>`;
         }).join('');
 
@@ -2242,14 +2299,6 @@ function setupTavernSyncScreen() {
             if (!Number.isInteger(n) || n < 0) n = 0;
             inp.value = n;
             b.initialImportCount = n;
-            await TavernSync.saveConfig(cfg);
-        }));
-        bindingsList.querySelectorAll('[data-callmode]').forEach(sel => sel.addEventListener('change', async () => {
-            const cfg = TavernSync.getConfig();
-            const b = cfg.bindings[parseInt(sel.dataset.callmode)];
-            if (!b) return;
-            b.callPushMode = sel.value;
-            delete b.pushCallContext;   // 旧开关不再用
             await TavernSync.saveConfig(cfg);
         }));
         bindingsList.querySelectorAll('[data-wbauto]').forEach(cb => cb.addEventListener('change', async () => {
@@ -2431,7 +2480,7 @@ async function showAutoPushModal(binding) {
     modal.innerHTML = `
         <h3 style="margin:0 0 4px; font-size:16px; font-weight:600;">推送/清理小手机消息</h3>
         <div style="font-size:12px; color:#888; margin-bottom:10px; line-height:1.6;">
-            小手机消息共 ${total} 条，酒馆里已有 ${pushedCount} 条<br>${unpushedCount ? `未推送：第 ${firstUnpushed} ~ ${total} 条（${unpushedCount} 条）` : '没有未推送的消息'}
+            小手机消息共 ${total} 条，酒馆里已有 ${pushedCount} 条。<br>${unpushedCount ? `未推送：第 ${firstUnpushed} ~ ${total} 条（${unpushedCount} 条）。` : '没有未推送的消息。'}
         </div>
         <div style="display:flex; gap:6px; margin-bottom:12px;">
             ${tabBtn('raw', '原始消息', true)}
@@ -2440,13 +2489,13 @@ async function showAutoPushModal(binding) {
         </div>
 
         <div id="auto-mode-raw" style="display:flex; flex-direction:column;">
-            <div style="font-size:12px; color:#888; margin-bottom:6px;">推送这些消息（默认是未推送的那一段）</div>
+            <div style="font-size:12px; color:#888; margin-bottom:6px;">推送这些消息（默认是未推送的那一段）。</div>
             ${rangeRow('auto-raw', unpushedCount ? firstUnpushed : total, total)}
             <div id="auto-raw-preview" style="font-size:12px; color:#ccc; background:rgba(255,255,255,0.04); border-radius:8px; padding:10px; margin-bottom:12px; max-height:180px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #2196F3;"></div>
         </div>
 
         <div id="auto-mode-summary" style="display:none; flex-direction:column;">
-            <div style="font-size:12px; color:#888; margin-bottom:6px;">把这些消息浓缩成一段总结后推送（消耗 1 次总结 API）</div>
+            <div style="font-size:12px; color:#888; margin-bottom:6px;">把这些消息浓缩成一段总结后推送（消耗 1 次总结 API）。</div>
             ${rangeRow('auto-sum', unpushedCount ? firstUnpushed : total, total)}
             <button id="auto-sum-gen" style="${TS.btnG} width:100%; margin-bottom:10px;">生成小总结</button>
             <textarea id="auto-sum-text" placeholder="生成后可在此编辑..." style="width:100%; box-sizing:border-box; min-height:130px; max-height:220px; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.04); color:inherit; font-size:13px; line-height:1.6; resize:vertical; margin-bottom:12px;"></textarea>
@@ -2723,11 +2772,12 @@ async function showResetRangeModal(binding, onDone) {
             ${synced ? `小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>` : '这个角色还没同步过，选一段要导入的剧情。<br>'}
             酒馆里这个聊天一共 <b>${info.total}</b> 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
         </div>
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
+        <div style="display:flex; align-items:center; gap:8px; font-size:14px;">
             导入最近 <input type="number" id="rr-recent" min="0" max="${info.total}" value="${Math.min(firstCount, info.total)}" style="${numStyle}"> 楼
         </div>
+        <div style="text-align:center; font-size:12px; color:#888; margin:2px 0;">or</div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
-            或者从第 <input type="number" id="rr-start" min="0" max="${lastFloor}" value="${defStart}" style="${numStyle}">
+            从第 <input type="number" id="rr-start" min="0" max="${lastFloor}" value="${defStart}" style="${numStyle}">
             到第 <input type="number" id="rr-end" min="0" max="${lastFloor}" value="${lastFloor}" style="${numStyle}"> 楼
         </div>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:16px;">
@@ -3221,7 +3271,7 @@ function showPromptPreview(binding) {
 
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">提示词预览 — ${esc(char.remarkName || char.name)}</h3>
-        <div style="font-size:12px; color:#888; margin-bottom:12px;">下面是 AI 下次会收到的酒馆相关内容 · 预估 <span style="color:#4CAF50; font-weight:600;">~${totalTokens.toLocaleString()}</span> tokens</div>
+        <div style="font-size:12px; color:#888; margin-bottom:12px;">下面是 AI 下次会收到的酒馆相关内容，预估 <span style="color:#4CAF50; font-weight:600;">~${totalTokens.toLocaleString()}</span> tokens。</div>
         <div style="flex:1; overflow-y:auto; margin-bottom:12px;">
             ${sections.map(s => `
                 <div style="margin-bottom:14px;">
