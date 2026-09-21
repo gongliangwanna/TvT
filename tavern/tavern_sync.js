@@ -1272,6 +1272,8 @@ const TavernSync = {
         // 更新推送追踪（只有真正推送了新消息才更新基准点）
         // 删除同步不能改变 lastPushedMsgId，否则下次推送会跳过中间的 user 消息
         // trackProgress=false 时（手动推送）也不改基准点，留出反悔余地
+        // 推送过就记一笔（手动、自动都算），卡片上“第一次自动推送最近 N 条”那一行就不再显示
+        if (newMsgs.length > 0 && !binding.hasPushed) binding.hasPushed = true;
         if (trackProgress && opts.messages && newMsgs.length > 0) {
             // 指定了范围：追踪点记到这批消息的最后一条
             binding.lastPushedMsgId = newMsgs[newMsgs.length - 1].id;
@@ -2279,7 +2281,7 @@ function setupTavernSyncScreen() {
                     <input type="checkbox" data-auto="autoPush" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPush') ? 'checked' : ''}>
                     <span>自动推送小手机消息</span>
                 </label>
-                <div style="display:${b.lastPushedMsgId ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
+                <div data-firstpush-row="${i}" style="display:${(b.lastPushedMsgId || b.hasPushed) ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
                     第一次自动推送最近
                     <input type="number" data-firstpush="${i}" min="0" value="${TavernSync.firstPushCountFor(b)}"
                         style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 条
@@ -2313,6 +2315,19 @@ function setupTavernSyncScreen() {
         }).join('');
 
         // 单独限制酒馆上文：开关 + 楼数（不能超过这个角色的可见上文条数）
+        bindingsList.querySelectorAll('[data-firstpush-row]').forEach(row => {
+            if (row.style.display === 'none') return;
+            const idx = parseInt(row.dataset.firstpushRow, 10);
+            const b = TavernSync.getConfig().bindings[idx];
+            if (!b) return;
+            TavernSync.getPushState(b).then(async st => {
+                if (!st || !st.pushed || !st.pushed.size) return;     // 酒馆里确实一条都没有，保留这一行
+                const cfg = TavernSync.getConfig();
+                if (cfg.bindings[idx]) { cfg.bindings[idx].hasPushed = true; await TavernSync.saveConfig(cfg); }
+                row.style.display = 'none';
+            }).catch(() => { /* 连不上酒馆就先照原样显示 */ });
+        });
+
         bindingsList.querySelectorAll('[data-firstpush]').forEach(inp => inp.addEventListener('change', async () => {
             const cfg = TavernSync.getConfig();
             const b = cfg.bindings[parseInt(inp.dataset.firstpush)];
