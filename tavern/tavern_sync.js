@@ -1035,7 +1035,7 @@ const TavernSync = {
             await this.saveConfig(this.getConfig());
             if (newest.file !== binding.dismissedChat && typeof showToast === 'function') {
                 const ch = db.characters.find(c => c.id === binding.uwuCharId);
-                showToast(`酒馆里「${ch ? (ch.remarkName || ch.name) : '这个角色'}」最近在玩另一个酒馆聊天，可以在「酒馆互联」的绑定卡片上改绑`);
+                showToast(`酒馆里「${ch ? (ch.remarkName || ch.name) : '这个角色'}」最近在玩另一个酒馆聊天文件，可以在「酒馆互联」的绑定卡片上改绑`);
             }
             this._notifyData();
         } else if (had) {
@@ -1186,7 +1186,7 @@ const TavernSync = {
         const targets = this._pickFloors(char, opts, binding).filter(m => m.tavern.trimmed);
         if (!targets.length) return { restored: 0, missing: 0 };
         const raw = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
-        if (!Array.isArray(raw)) throw new Error('读不到酒馆聊天');
+        if (!Array.isArray(raw)) throw new Error('读不到酒馆聊天文件');
         const offset = (raw.length && raw[0] && !('mes' in raw[0])) ? 1 : 0;
         const list = tagFloorNth(raw.slice(offset));
         let restored = 0, missing = 0, restoredUsers = 0;
@@ -1270,7 +1270,7 @@ const TavernSync = {
         if (!newBody) return { ok: false, reason: '内容是空的，没写回酒馆' };
 
         const raw = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
-        if (!Array.isArray(raw)) return { ok: false, reason: '读不到酒馆聊天，改动只留在小手机里' };
+        if (!Array.isArray(raw)) return { ok: false, reason: '读不到酒馆聊天文件，改动只留在小手机里' };
         const offset = (raw.length && raw[0] && !('mes' in raw[0])) ? 1 : 0;
         const list = tagFloorNth(raw.slice(offset));
         const stMsg = list.find(x => x && typeof x.mes === 'string' && this._sameFloor(x, t));
@@ -1331,7 +1331,7 @@ const TavernSync = {
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (!char) throw new Error('找不到角色');
         const raw = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
-        if (!Array.isArray(raw)) throw new Error('读不到酒馆聊天');
+        if (!Array.isArray(raw)) throw new Error('读不到酒馆聊天文件');
         const offset = (raw.length && raw[0] && !('mes' in raw[0])) ? 1 : 0;
         const list = tagFloorNth(raw.slice(offset));
         const imported = this._floorsOfChat(char, binding);
@@ -2896,7 +2896,7 @@ function setupTavernSyncScreen() {
         if (!pageLinkEl.isConnected) return;
         pageLinkEl.style.display = 'block';
         pageLinkEl.textContent = found
-            ? '同一个浏览器里开着酒馆页面：小手机推送后，酒馆会自动重新读取聊天，不用手动刷新。'
+            ? '同一个浏览器里开着酒馆页面：小手机推送后，酒馆会自动重新读取酒馆聊天文件，不用手动刷新。'
             : '没有检测到同一个浏览器里开着的酒馆页面。如果你在别的设备或浏览器里开着酒馆，回到那边继续玩之前，请先刷新酒馆页面，否则酒馆保存时会把小手机推过去的消息盖掉。离开酒馆页面前，也最好等回复生成完、柏宝书写完摘要。';
     }
 
@@ -3022,19 +3022,19 @@ function setupTavernSyncScreen() {
             // “上次同步”只写和现在这个聊天的；换了聊天还没同步时不写旧聊天的时间
             const syncInfo = (synced
                 ? `小手机里有 ${floorCount} 楼酒馆剧情（${sizeText}${trimText}）<br>上次同步 ${fmtSync(mem.lastSync)}`
-                : (mem && mem.lastSync ? '这个酒馆聊天还没同步' : '未同步'))
-                + (otherMsgs.length ? `<br>另有 ${otherMsgs.length} 楼来自以前绑定的酒馆聊天（${sizeOf(charsOf(otherMsgs))}）` : '');
+                : (mem && mem.lastSync ? '这个酒馆聊天文件还没同步' : '未同步'))
+                + (otherMsgs.length ? `<br>另有 ${otherMsgs.length} 楼来自以前绑定的酒馆聊天文件（${sizeOf(charsOf(otherMsgs))}）` : '');
             const maxMem = parseInt(char && char.maxMemory, 10) || 20;   // 这个角色在聊天设置里的“可见上文条数”
             return `<div style="${TS.subCard}">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                     <div style="flex:1; min-width:0;"><div style="font-size:14px; font-weight:600;">${esc(charName)} ↔ ${esc(stName)}</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
-                            <span style="flex:1; min-width:0; font-size:11px; color:#888; word-break:break-all;">酒馆聊天：${esc(b.stChatFile || '未选')}</span>
+                            <span style="flex:1; min-width:0; font-size:11px; color:#888; word-break:break-all;">酒馆聊天文件：${esc(b.stChatFile || '未选')}</span>
                             <button data-chat="${i}" style="${TS.btnS} flex-shrink:0;">更换</button></div>
-                        <div style="font-size:11px; color:#888; margin-top:2px;">酒馆里开了新聊天时，记得点「更换」。</div>
+                        <div style="font-size:11px; color:#888; margin-top:2px;">酒馆里开了新的酒馆聊天文件时，记得点「更换」。</div>
                         ${newer ? `<div style="font-size:11px; color:#2196F3; margin-top:4px; word-break:break-all;">${newer.curGone
-                            ? `现在绑定的酒馆聊天「${esc(b.stChatFile || '')}」在酒馆中已不存在，可能已被删除或重命名。这个酒馆角色最近玩的是酒馆聊天「${esc(newer.file)}」。`
-                            : `这个酒馆角色还有另一个酒馆聊天「${esc(newer.file)}」，它的最后一条消息比现在绑定的酒馆聊天更晚，你可能在酒馆里换到那个酒馆聊天记录文件玩了。`}要把绑定改成酒馆聊天「${esc(newer.file)}」吗？改了之后，从酒馆同步剧情、往酒馆推送小手机消息都改用它；以前同步进小手机的酒馆剧情会留着，如果不想要，改绑后点「管理同步范围」，在里面点红色的「删掉以前聊天留下的……楼」。
+                            ? `现在绑定的酒馆聊天文件「${esc(b.stChatFile || '')}」已不存在，可能已被删除或重命名。这个酒馆角色最近玩的是酒馆聊天文件「${esc(newer.file)}」。`
+                            : `这个酒馆角色还有另一个酒馆聊天文件「${esc(newer.file)}」，它的最后一条消息比现在绑定的酒馆聊天文件更晚，你可能在酒馆里换到那个酒馆聊天文件玩了。`}要把绑定改成酒馆聊天文件「${esc(newer.file)}」吗？改了之后，从酒馆同步剧情、往酒馆推送小手机消息都改用它；以前同步进小手机的酒馆剧情会留着，如果不想要，改绑后点「管理同步范围」，在里面点红色的「删掉以前的酒馆聊天文件留下的……楼」。
                             <button data-newer-go="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(33,150,243,0.5); background:rgba(33,150,243,0.15); color:#2196F3; font-size:11px; line-height:1.5; cursor:pointer;">改绑</button>
                             <button data-newer-no="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:11px; line-height:1.5; cursor:pointer;">不改</button></div>` : ''}
                         <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}</div>
@@ -3253,7 +3253,7 @@ function setupTavernSyncScreen() {
             btn.disabled = true;
             try {
                 await TavernSync.changeChatFile(b, newer.file);
-                showToast(`已改绑到酒馆聊天「${newer.file}」，下次同步从它开始`);
+                showToast(`已改绑到酒馆聊天文件「${newer.file}」，下次同步从它开始`);
                 renderBindings();
             } catch (e) { showToast(`${e.message}`); btn.disabled = false; }
         });
@@ -3622,7 +3622,7 @@ function showTrimModal(binding, onDone) {
     if (!char) { showToast('找不到角色'); return; }
     // 只看现在绑定的这个酒馆聊天的楼层（以前绑定的聊天楼层号会重号）
     const floors = TavernSync._floorsOfChat(char, binding);
-    if (!floors.length) { showToast('小手机里还没有这个酒馆聊天的剧情'); return; }
+    if (!floors.length) { showToast('小手机里还没有这个酒馆聊天文件的剧情'); return; }
 
     const keep = TavernSync.keepRawFloorCount(binding);
     const floorNo = (m) => (typeof m.tavern.floor === 'number' ? m.tavern.floor : 0);
@@ -3745,7 +3745,7 @@ async function showResetRangeModal(binding, onDone) {
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">管理同步范围</h3>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
             ${synced ? `小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>` : '这个角色还没同步过，选一段要同步的剧情。<br>'}
-            酒馆里这个聊天一共 <b>${info.total}</b> 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
+            这个酒馆聊天文件一共 <b>${info.total}</b> 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
         </div>
         <div style="display:flex; align-items:center; gap:8px; font-size:14px;">
             同步最近 <input type="number" id="rr-recent" min="0" max="${info.total}" value="${Math.min(firstCount, info.total)}" style="${numStyle}"> 楼
@@ -3762,8 +3762,8 @@ async function showResetRangeModal(binding, onDone) {
         </div>
         <button id="rr-range" style="width:100%; ${TS.btnP} margin-bottom:8px;">${synced ? '清空，并同步这个范围' : '开始同步'}</button>
         <button id="rr-none" style="width:100%; ${TS.btnR} margin-bottom:8px;">${synced ? '只清空（以后只同步新楼层）' : '不要旧剧情（只同步以后的新楼层）'}</button>
-        ${others ? `<div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:8px;">另外还有 <b>${others}</b> 楼是以前绑定的酒馆聊天留下的，上面的操作不会动它们。</div>
-        <button id="rr-others" style="width:100%; ${TS.btnR} margin-bottom:8px;">删掉以前聊天留下的 ${others} 楼</button>` : ''}
+        ${others ? `<div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:8px;">另外还有 <b>${others}</b> 楼是以前绑定的酒馆聊天文件留下的，上面的操作不会动它们。</div>
+        <button id="rr-others" style="width:100%; ${TS.btnR} margin-bottom:8px;">删掉以前的酒馆聊天文件留下的 ${others} 楼</button>` : ''}
         <button id="rr-cancel" style="width:100%; ${cancelStyle}">取消</button>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
     const close = () => overlay.remove();
@@ -3771,7 +3771,7 @@ async function showResetRangeModal(binding, onDone) {
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     const othersBtn = modal.querySelector('#rr-others');
     if (othersBtn) othersBtn.addEventListener('click', async () => {
-        if (!confirm(`删掉小手机里以前绑定的酒馆聊天留下的 ${others} 楼剧情？酒馆里的原文不受影响。`)) return;
+        if (!confirm(`删掉小手机里以前绑定的酒馆聊天文件留下的 ${others} 楼剧情？酒馆里的原文不受影响。`)) return;
         othersBtn.disabled = true;
         try {
             const r = await TavernSync.removeOtherChatFloors(binding);
@@ -4252,7 +4252,7 @@ function showPromptPreview(binding) {
     const maxMemory = Number(char.maxMemory) || 20;
     let slice = (char.history || []).slice(-maxMemory);
     if (typeof window.filterHistoryForAI === 'function') {
-        try { slice = window.filterHistoryForAI(char, slice); } catch (e) { TavernSync.reportIssue('预览时处理聊天记录失败：' + e.message); }
+        try { slice = window.filterHistoryForAI(char, slice); } catch (e) { TavernSync.reportIssue('预览时处理小手机聊天记录失败：' + e.message); }
     }
     const tavernViews = slice.filter(m => m && m.__tavernView);
     const totalFloors = (char.history || []).filter(m => m && m.fromTavern).length;
@@ -4264,15 +4264,15 @@ function showPromptPreview(binding) {
         const counts = {};
         tavernViews.forEach(m => { counts[m.__tavernView] = (counts[m.__tavernView] || 0) + 1; });
         sections.push({
-            title: '聊天记录里的酒馆剧情',
-            meta: `最近 ${maxMemory} 条聊天记录中有 ${tavernViews.length} 楼（小手机里共 ${totalFloors} 楼）：`
+            title: '小手机聊天记录里的酒馆剧情',
+            meta: `最近 ${maxMemory} 条小手机聊天记录中有 ${tavernViews.length} 楼（一共 ${totalFloors} 楼）：`
                 + Object.entries(counts).map(([k, n]) => `${labels[k]} ${n}`).join('，'),
             items: tavernViews.map(m => ({ label: labels[m.__tavernView], color: colors[m.__tavernView], content: m.content })),
             color: '#2196F3',
         });
     } else {
-        sections.push({ title: '聊天记录里的酒馆剧情', content: totalFloors
-            ? `最近 ${maxMemory} 条聊天记录里没有酒馆楼层（小手机里共 ${totalFloors} 楼，都已经在更早的位置，AI 这次看不到原文）。`
+        sections.push({ title: '小手机聊天记录里的酒馆剧情', content: totalFloors
+            ? `最近 ${maxMemory} 条小手机聊天记录里没有酒馆楼层（一共 ${totalFloors} 楼，都已经在更早的位置，AI 这次看不到原文）。`
             : '还没有从酒馆导入任何楼层。点「同步酒馆剧情」导入。', color: '#999' });
     }
 
@@ -4314,7 +4314,7 @@ function showPromptPreview(binding) {
 async function showChangeChatModal(binding, onDone) {
     const chats = await TavernSync.getSTChats(binding.stCharAvatar);
     const files = (Array.isArray(chats) ? chats : []).map(c => String(c.file_name || '').replace(/\.jsonl$/, '')).filter(Boolean);
-    if (!files.length) { showToast('这个酒馆角色还没有聊天记录'); return; }
+    if (!files.length) { showToast('这个酒馆角色还没有酒馆聊天文件'); return; }
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
     overlay.classList.add('ts-overlay');
@@ -4322,14 +4322,14 @@ async function showChangeChatModal(binding, onDone) {
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:360px;';
     const firstCount = TavernSync.initialImportFor(binding);
     modal.innerHTML = `
-        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">更换酒馆聊天</h3>
-        <select id="cc-chat" aria-label="酒馆聊天记录" title="酒馆聊天记录" style="${TS.input} margin-bottom:10px;">
+        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">更换酒馆聊天文件</h3>
+        <select id="cc-chat" aria-label="酒馆聊天文件" title="酒馆聊天文件" style="${TS.input} margin-bottom:10px;">
             ${files.map(f => `<option value="${esc(f)}" ${f === binding.stChatFile ? 'selected' : ''}>${esc(f)}</option>`).join('')}
         </select>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:16px;">
-            换了之后，下次同步从新聊天的最近 ${firstCount} 楼开始（在卡片上「第一次同步最近」那里可以改）。<br>
-            以前那个聊天导入的剧情会留在小手机里，不想要可以在「管理同步范围」里删掉。<br>
-            推送也从新聊天重新算，已经推到旧聊天里的消息不会搬过去。
+            换了之后，下次同步从新的酒馆聊天文件的最近 ${firstCount} 楼开始（在卡片上「第一次同步最近」那里可以改）。<br>
+            以前那个酒馆聊天文件同步进来的剧情会留在小手机里，不想要可以在「管理同步范围」里删掉。<br>
+            推送也从新的酒馆聊天文件重新算，已经推到旧的酒馆聊天文件里的消息不会搬过去。
         </div>
         <div style="display:flex; gap:10px;">
             <button id="cc-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
@@ -4344,7 +4344,7 @@ async function showChangeChatModal(binding, onDone) {
         if (file === binding.stChatFile) { close(); return; }
         try {
             await TavernSync.changeChatFile(binding, file);
-            showToast('已换成新的酒馆聊天');
+            showToast('已换成新的酒馆聊天文件');
             close();
             if (onDone) onDone();
         } catch (e) { showToast(`${e.message}`); }
@@ -4366,8 +4366,8 @@ async function showBindingEditor(onSave) {
             <select id="be-uwu" aria-label="小手机角色" title="小手机角色" style="${TS.input}">${db.characters.map(c => `<option value="${c.id}">${esc(c.remarkName || c.name)}</option>`).join('')}</select></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">酒馆角色</label>
             <select id="be-st" aria-label="酒馆角色" title="酒馆角色" style="${TS.input}">${stCharacters.map(c => `<option value="${c.avatar}">${esc(c.name)}</option>`).join('')}</select></div>
-        <div style="margin-bottom:16px;"><label style="${TS.label}">酒馆聊天记录</label>
-            <select id="be-chat" aria-label="酒馆聊天记录" title="酒馆聊天记录" style="${TS.input}"><option>加载中...</option></select></div>
+        <div style="margin-bottom:16px;"><label style="${TS.label}">酒馆聊天文件</label>
+            <select id="be-chat" aria-label="酒馆聊天文件" title="酒馆聊天文件" style="${TS.input}"><option>加载中...</option></select></div>
         <div style="display:flex; gap:10px;">
             <button id="be-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
             <button id="be-save" style="flex:1; ${TS.btnP}">保存</button></div>`;
@@ -4376,7 +4376,7 @@ async function showBindingEditor(onSave) {
     async function loadChats() {
         if (!stSelect.value) return; chatSelect.innerHTML = '<option>加载中...</option>';
         try { const chats = await TavernSync.getSTChats(stSelect.value);
-            chatSelect.innerHTML = chats?.length ? chats.map(c => `<option value="${c.file_name.replace('.jsonl', '')}">${c.file_name}</option>`).join('') : '<option value="">暂无聊天</option>';
+            chatSelect.innerHTML = chats?.length ? chats.map(c => `<option value="${c.file_name.replace('.jsonl', '')}">${c.file_name}</option>`).join('') : '<option value="">暂无酒馆聊天文件</option>';
         } catch { chatSelect.innerHTML = '<option value="">加载失败</option>'; }
     }
     stSelect.addEventListener('change', loadChats); loadChats();
@@ -4385,11 +4385,11 @@ async function showBindingEditor(onSave) {
     modal.querySelector('#be-save').addEventListener('click', async () => {
         const binding = { uwuCharId: modal.querySelector('#be-uwu').value, stCharAvatar: stSelect.value, stChatFile: chatSelect.value };
         if (!binding.uwuCharId || !binding.stCharAvatar) { showToast('请选择角色'); return; }
-        if (!binding.stChatFile) { showToast('请选择酒馆聊天记录'); return; }
+        if (!binding.stChatFile) { showToast('请选择酒馆聊天文件'); return; }
         const cfg = TavernSync.getConfig(); if (!cfg.bindings) cfg.bindings = [];
         // 一个小手机角色只能绑一个酒馆聊天（绑两次的话只有第一条起作用）
         if (cfg.bindings.some(b => b.uwuCharId === binding.uwuCharId)) {
-            showToast('这个小手机角色已经绑定过了。想换酒馆聊天，点绑定卡片上的「更换」');
+            showToast('这个小手机角色已经绑定过了。想换酒馆聊天文件，点绑定卡片上的「更换」');
             return;
         }
         cfg.bindings.push(binding); await TavernSync.saveConfig(cfg);
