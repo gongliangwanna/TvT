@@ -1886,6 +1886,7 @@ function askText(title, placeholder) {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.classList.add('ts-overlay');
         const box = document.createElement('div');
         box.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:320px;';
         box.innerHTML = `
@@ -1907,10 +1908,36 @@ function askText(title, placeholder) {
     });
 }
 
+// 输入框、下拉框、文本框统一照 yuan「思维链」设置页：
+//   平时：边框 #e2e8f0、圆角 8、白底（下拉框浅灰底 #fafafa）
+//   点进去编辑时：边框变成主题淡蓝 #cee4f1、底色变白
+// 行内样式里原来写的边框/底色在这里用 !important 统一盖掉，只作用在“酒馆互联”页面和补丁自己的弹窗里。
+(function addFieldStyle() {
+    if (document.getElementById('ts-field-style')) return;
+    const scope = ['#tavern-sync-screen', '.ts-overlay'];
+    const fields = (suffix = '') => scope.map(sc => [
+        `${sc} input:not([type=checkbox]):not([type=radio])${suffix}`,
+        `${sc} select${suffix}`,
+        `${sc} textarea${suffix}`,
+    ].join(', ')).join(', ');
+    const selects = scope.map(sc => `${sc} select`).join(', ');
+    const style = document.createElement('style');
+    style.id = 'ts-field-style';
+    style.textContent = `
+${fields()} { border: 1px solid #e2e8f0 !important; border-radius: 8px !important; background-color: var(--panel-bg, #fff) !important; outline: none; transition: border-color .2s, background-color .2s; }
+${selects} { background-color: var(--panel-bg, #fafafa) !important; }
+${fields(':focus')} { border-color: #cee4f1 !important; background-color: var(--panel-bg, #fff) !important; }
+`;
+    (document.head || document.documentElement).appendChild(style);
+})();
+
 // ========== UI 样式常量 ==========
 const TS = {
-    // 卡片加一圈灰框：浅色背景下卡片底色和页面几乎一样，不加框看不出一个个模块的边界
-    card: 'background:var(--received-bg, rgba(255,255,255,0.08)); border:1px solid rgba(128,128,128,0.3); border-radius:14px; padding:16px; margin-bottom:12px;',
+    // 模块卡片：照 yuan 设置页的分组（.kkt-group）——白底、圆角 12，靠白底和页面的灰蓝背景区分。
+    // 夜间模式下 yuan 会定义 --panel-bg，跟着变深。（原来用的 --received-bg 在 yuan 里没定义，卡片几乎透明）
+    card: 'background:var(--panel-bg, #fff); border-radius:12px; padding:16px; margin-bottom:12px;',
+    // 卡片里再套的小卡片（每个角色的绑定）：照 yuan 思维链里的条目卡片（.cot-item-card）
+    subCard: 'background:var(--panel-bg, #fff); border:1px solid #eee; border-radius:10px; padding:14px; margin-bottom:10px;',
     label: 'font-size:13px; color:#999; display:block; margin-bottom:4px;',
     input: 'width:100%; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; box-sizing:border-box;',
     // 主按钮用 yuan 通篇在用的那个淡蓝 #cee4f1 + 深色字。写死不跟 var(--primary-color) 走，
@@ -1942,9 +1969,9 @@ function setupTavernSyncScreen() {
         <div style="padding:4px 0;">
             <div id="ts-issues-area" style="display:none; margin-bottom:12px;"></div>
             <div style="${TS.card}">
-                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
                     <span style="${TS.title}">SillyTavern 连接</span>
-                    <span id="ts-status" style="font-size:12px; color:#999;">检测中...</span>
+                    <span id="ts-status" style="font-size:12px; color:#999; display:inline-flex; align-items:center; gap:2px; white-space:nowrap;">检测中...</span>
                 </div>
                 <div id="ts-login-area"></div>
             </div>
@@ -1965,14 +1992,14 @@ function setupTavernSyncScreen() {
                         ${numInput('ts-raw-count', config.rawFloorCount)}
                     </div>
                     <div style="font-size:12px; color:#888; margin-top:4px;">发给 AI 时，最近这么多楼酒馆剧情给完整原文，更早的换成柏宝书摘要（还没有摘要的暂时发原文）</div>
-                    <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
-                        <input type="checkbox" id="ts-inject-user-floors" ${config.injectUserFloors !== false ? 'checked' : ''}>
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; font-size:14px; cursor:pointer;">
                         <div>
                             <div>发原文的酒馆楼层中包含 user 楼层</div>
                             <div style="font-size:11px; color:#888;">关闭后，发原文的酒馆楼层中只包含 AI 楼层，若不抢话不转述可能导致剧情不连贯</div>
                         </div>
+                        <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" id="ts-inject-user-floors" ${config.injectUserFloors !== false ? 'checked' : ''}><span class="kkt-slider"></span></span>
                     </label>
-                    <div id="ts-wrap-toggle" style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; margin-top:14px; padding-top:12px; border-top:1px solid rgba(128,128,128,0.3);">
+                    <div id="ts-wrap-toggle" style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; margin-top:14px; padding-top:12px; border-top:1px solid #f0f0f0;">
                         <span style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">酒馆剧情包裹提示词自定义</span>
                         <span id="ts-wrap-arrow" style="font-size:12px; color:#888; white-space:nowrap; flex-shrink:0;">点击展开</span>
                     </div>
@@ -2001,7 +2028,7 @@ function setupTavernSyncScreen() {
                         </select>
                     </div>
                     <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">新开楼层：小手机消息以你的身份单独发在新的一楼中。如果酒馆最后一楼就是上次新开的这层楼，就接着写进去，不会每次都新开。<br>合并到最后一楼：不管最后一楼是谁发的，都把小手机消息接在那一楼末尾。</div>
-                    <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(128,128,128,0.3);">
+                    <div style="margin-top:14px; padding-top:12px; border-top:1px solid #f0f0f0;">
                         <div style="display:flex; align-items:center; gap:8px; font-size:14px;">
                             <span style="white-space:nowrap;">按角色设置</span>
                             <select id="ts-push-char" aria-label="按角色设置" title="按角色设置" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px;"></select>
@@ -2042,7 +2069,7 @@ function setupTavernSyncScreen() {
                 <button id="ts-issues-clear" style="${smallBtn} background:rgba(244,67,54,0.15); color:#f66;">清空</button>
             </div>
             <div style="max-height:38vh; overflow-y:auto;">
-            ${list.slice().reverse().map(it => `<div style="font-size:12px; line-height:1.6; padding:6px 0; border-top:1px solid rgba(128,128,128,0.3); word-break:break-word;"><span style="color:#888;">${new Date(it.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}${it.count > 1 ? ` ×${it.count}` : ''}</span> <span style="white-space:pre-wrap;">${escAttr(it.text)}</span></div>`).join('')}
+            ${list.slice().reverse().map(it => `<div style="font-size:12px; line-height:1.6; padding:6px 0; border-top:1px solid #f0f0f0; word-break:break-word;"><span style="color:#888;">${new Date(it.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}${it.count > 1 ? ` ×${it.count}` : ''}</span> <span style="white-space:pre-wrap;">${escAttr(it.text)}</span></div>`).join('')}
             </div>
         </div>`;
         issuesArea.querySelector('#ts-issues-clear').addEventListener('click', () => { TavernSync.clearIssues(); renderIssues(); });
@@ -2108,19 +2135,19 @@ function setupTavernSyncScreen() {
                 </select>
             </label>
             <div style="font-size:12px; color:#888; margin-top:4px;">总结 = yuan 自动写的那段通话总结；记录 = 通话过程中的每一句话。前三种都带“打了多久”。</div>
-            <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
-                <input type="checkbox" id="ts-cc-status" ${statusOn ? 'checked' : ''}>
+            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; font-size:14px; cursor:pointer;">
                 <div>
                     <div>推送状态栏到酒馆</div>
                     <div style="font-size:11px; color:#888;">关闭后，推送到酒馆的小手机消息会按这个角色的状态栏正则剥掉状态栏，专门的状态更新楼层也不推。</div>
                 </div>
+                <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" id="ts-cc-status" ${statusOn ? 'checked' : ''}><span class="kkt-slider"></span></span>
             </label>
-            <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
-                <input type="checkbox" id="ts-cc-online" ${onlineOn ? 'checked' : ''}>
+            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; font-size:14px; cursor:pointer;">
                 <div>
                     <div>推送在线状态到酒馆</div>
                     <div style="font-size:11px; color:#888;">在线状态是 AI 写的“[角色更新状态为：…]”，用来改小手机界面上那行状态文字。默认不推。</div>
                 </div>
+                <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" id="ts-cc-online" ${onlineOn ? 'checked' : ''}><span class="kkt-slider"></span></span>
             </label>`;
         const save = async (fn) => {
             const cfg2 = TavernSync.getConfig();
@@ -2188,9 +2215,9 @@ function setupTavernSyncScreen() {
 
     // ===== 连接逻辑 =====
     function showConnected(charCount) {
-        statusEl.innerHTML = `<span style="color:#4CAF50;">已连接（${charCount} 个角色）</span> <button id="ts-reconnect-btn" style="background:none; border:none; color:#999; font-size:14px; cursor:pointer; padding:2px 4px; vertical-align:middle;" title="重新连接">↻</button>`;
+        statusEl.innerHTML = `<span style="color:#4CAF50;">已连接（${charCount} 个角色）</span> <button id="ts-reconnect-btn" style="background:none; border:none; color:#999; font-size:14px; line-height:1; cursor:pointer; padding:0 2px; display:inline-flex; align-items:center;" title="重新连接">↻</button>`;
         statusEl.querySelector('#ts-reconnect-btn').addEventListener('click', checkAndLogin);
-        loginArea.innerHTML = '';
+        loginArea.innerHTML = ''; loginArea.style.marginTop = '0';
         bindingsArea.style.display = 'block'; rulesArea.style.display = 'block'; settingsArea.style.display = 'block';
         renderBindings(); renderRules();
     }
@@ -2204,6 +2231,7 @@ function setupTavernSyncScreen() {
             renderBindings();
         }
         if (users?.length) {
+            loginArea.style.marginTop = '10px';
             loginArea.innerHTML = `<div style="font-size:13px; color:#999; margin-bottom:8px;">选择酒馆账户</div>
                 ${users.map(u => `<button class="ts-user-btn" data-handle="${u.handle}" data-pwd="${u.password}"
                     style="display:flex; align-items:center; gap:10px; width:100%; padding:12px; border-radius:10px; border:none; background:rgba(128,128,128,0.1); color:inherit; font-size:14px; cursor:pointer; margin-bottom:8px; text-align:left;">
@@ -2219,6 +2247,7 @@ function setupTavernSyncScreen() {
             const pwdSubmit = loginArea.querySelector('#ts-pwd-submit'), pwdInput = loginArea.querySelector('#ts-pwd-input');
             if (pwdSubmit) { pwdSubmit.addEventListener('click', () => doLogin(selectedHandle, pwdInput.value)); pwdInput.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(selectedHandle, pwdInput.value); }); }
         } else {
+            loginArea.style.marginTop = '10px';
             loginArea.innerHTML = `<button id="ts-retry-btn" style="width:100%; ${TS.btnP}">连接酒馆</button>`;
             loginArea.querySelector('#ts-retry-btn').addEventListener('click', checkAndLogin);
         }
@@ -2238,7 +2267,7 @@ function setupTavernSyncScreen() {
     }
 
     async function checkAndLogin() {
-        statusEl.textContent = '连接中...'; statusEl.style.color = '#999'; loginArea.innerHTML = '';
+        statusEl.textContent = '连接中...'; statusEl.style.color = '#999'; loginArea.innerHTML = ''; loginArea.style.marginTop = '0';
         const r = await TavernSync.testConnection();
         if (r.ok) {
             const cfg = TavernSync.getConfig();
@@ -2257,11 +2286,11 @@ function setupTavernSyncScreen() {
         if (!rules.length) { rulesList.innerHTML = '<div style="text-align:center; color:#888; font-size:12px; padding:10px;">暂无规则，消息原样注入。</div>'; return; }
         rulesList.innerHTML = rules.map((r, i) => `
             <div style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(128,128,128,0.08); border-radius:8px; margin-bottom:6px;">
-                <input type="checkbox" data-toggle="${i}" ${r.enabled ? 'checked' : ''} style="flex-shrink:0;">
                 <div style="flex:1; min-width:0; cursor:pointer;" data-edit="${i}">
                     <div style="font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.name || '未命名')}</div>
                     <div style="font-size:11px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.mode === 'extract' ? '提取' : '排除'} · ${r.scope === 'pull' ? '同步' : r.scope === 'push' ? '推送' : '同步和推送'} · /${esc(r.regex)}/</div>
                 </div>
+                <label class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-toggle="${i}" ${r.enabled ? 'checked' : ''}><span class="kkt-slider"></span></label>
                 <button data-delrule="${i}" style="${TS.btnD} font-size:14px;">✕</button>
             </div>`).join('');
         rulesList.querySelectorAll('[data-toggle]').forEach(cb => cb.addEventListener('change', async () => { const cfg = TavernSync.getConfig(); cfg.cleanRules[parseInt(cb.dataset.toggle)].enabled = cb.checked; await TavernSync.saveConfig(cfg); }));
@@ -2296,7 +2325,7 @@ function setupTavernSyncScreen() {
             const trimText = trimmedCount ? `，其中 ${trimmedCount} 个回合已精简` : '';
             const syncInfo = mem && mem.lastSync ? `小手机里有 ${floorCount} 楼酒馆剧情（${sizeText}${trimText}）<br>上次同步 ${fmtSync(mem.lastSync)}` : '未同步';
             const maxMem = parseInt(char && char.maxMemory, 10) || 20;   // 这个角色在聊天设置里的“可见上文条数”
-            return `<div style="${TS.card} padding:14px;">
+            return `<div style="${TS.subCard}">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                     <div><div style="font-size:14px; font-weight:600;">${esc(charName)} ↔ ${esc(stName)}</div>
                         <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}</div></div>
@@ -2313,45 +2342,45 @@ function setupTavernSyncScreen() {
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
                     <button data-push="${i}" style="flex:1; ${TS.btnO}">推送/清理消息</button>
                     <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(156,39,176,0.15); color:#CE93D8; font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button></div>
-                <label style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; cursor:pointer;">
-                    <input type="checkbox" data-auto="autoPull" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPull') ? 'checked' : ''}>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:10px; font-size:13px; cursor:pointer;">
                     <span>自动同步酒馆剧情</span>
+                    <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-auto="autoPull" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPull') ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
-                <div style="display:${synced ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
+                <div style="display:${synced ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 12px; font-size:13px; flex-wrap:wrap;">
                     第一次同步最近
                     <input type="number" data-first-num="${i}" min="0" value="${firstCount}"
                         style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
                     <span style="font-size:11px; color:#888; width:100%;">这个角色还没同步过。之后每次同步都会带进全部新楼层，不看这个数字；想挑具体楼层用「管理同步范围」</span>
                 </div>
-                <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
-                    <input type="checkbox" data-auto="autoPush" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPush') ? 'checked' : ''}>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <span>自动推送小手机消息</span>
+                    <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-auto="autoPush" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPush') ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
-                <div data-firstpush-row="${i}" style="display:${(b.lastPushedMsgId || b.hasPushed) ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
+                <div data-firstpush-row="${i}" style="display:${(b.lastPushedMsgId || b.hasPushed) ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 12px; font-size:13px; flex-wrap:wrap;">
                     第一次自动推送最近
                     <input type="number" data-firstpush="${i}" min="0" value="${TavernSync.firstPushCountFor(b)}"
                         style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px; text-align:center;"> 条
                     <span style="font-size:11px; color:#888; width:100%;">这个角色还没推送过。只有自动推送第一次执行时看这个数字（填 0 就不自动补推）；手动推送在「推送/清理消息」窗口里自己选范围</span>
                 </div>
-                <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
-                    <input type="checkbox" data-wbauto="${i}" ${b.autoUpdateWorldBooks ? 'checked' : ''}>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <span>自动更新复制过的世界书</span>
+                    <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-wbauto="${i}" ${b.autoUpdateWorldBooks ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
-                <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
-                    <input type="checkbox" data-trimauto="${i}" ${b.autoTrim ? 'checked' : ''}>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <span>自动精简旧楼层</span>
+                    <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-trimauto="${i}" ${b.autoTrim ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
-                <div style="display:${b.autoTrim ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
+                <div style="display:${b.autoTrim ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 12px; font-size:13px; flex-wrap:wrap;">
                     保留最近
                     <input type="number" data-trim-num="${i}" min="${cfg.rawFloorCount}" value="${TavernSync.keepRawFloorCount(b)}"
                         style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼的原文
                     <span style="font-size:11px; color:#888; width:100%;">更早的楼层只留柏宝书摘要。不能少于“最近几楼发原文”（现在是 ${cfg.rawFloorCount} 楼）</span>
                 </div>
-                <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
-                    <input type="checkbox" data-limit="${i}" ${b.limitTavernContext ? 'checked' : ''}>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <span>单独限制酒馆上文</span>
+                    <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-limit="${i}" ${b.limitTavernContext ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
-                <div style="display:${b.limitTavernContext ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
+                <div style="display:${b.limitTavernContext ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 12px; font-size:13px; flex-wrap:wrap;">
                     发给 AI 的酒馆剧情最多
                     <input type="number" data-limit-num="${i}" min="0" max="${maxMem}" value="${Math.min(maxMem, parseInt(b.tavernContextCount, 10) || 0)}"
                         style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
@@ -2559,6 +2588,7 @@ async function showAutoPushModal(binding, onDone) {
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:400px; max-height:85vh; display:flex; flex-direction:column;';
 
@@ -2765,6 +2795,7 @@ function showTrimModal(binding, onDone) {
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:380px; max-height:85vh; overflow-y:auto;';
     const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px; text-align:center;';
@@ -2855,6 +2886,7 @@ async function showResetRangeModal(binding, onDone) {
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:380px;';
     const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px; text-align:center;';
@@ -2953,6 +2985,7 @@ function showRuleEditor(ruleIndex, onSave) {
     const existing = ruleIndex !== null ? cfg.cleanRules[ruleIndex] : null;
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:360px;';
     modal.innerHTML = `
@@ -3011,6 +3044,7 @@ async function showImportCharModal(binding) {
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:400px; max-height:80vh; overflow-y:auto;';
 
@@ -3112,6 +3146,7 @@ async function showWorldBookModal(binding) {
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:420px; max-height:85vh; display:flex; flex-direction:column;';
 
@@ -3308,6 +3343,7 @@ function showPromptPreview(binding) {
     const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:420px; max-height:85vh; display:flex; flex-direction:column;';
 
@@ -3388,6 +3424,7 @@ async function showBindingEditor(onSave) {
     try { stCharacters = await TavernSync.getSTCharacters(); } catch (e) { showToast(`${e.message}`); return; }
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
     const modal = document.createElement('div');
     modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:360px;';
     modal.innerHTML = `
