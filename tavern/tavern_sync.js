@@ -286,6 +286,29 @@ const TavernSync = {
         const sameFloor = (m, t) => this._sameFloor(m, t);
         const prevMemory = char.tavernMemory || {};
 
+        // 柏宝书的一段摘要写的是「一整个回合」：某一楼 AI 回复 + 它前面紧挨着的那些非 AI 楼
+        //（番外楼跳过，见柏宝书 engine.ts 的 floorTargets）。摘要存在那一楼 AI 上。
+        // 这里按酒馆的完整楼层表算出「每一楼属于哪一回合」，记进 tavern.roundAi。
+        // 有了它，发给 AI 时才敢拿某段摘要代表你发的那一楼——光看“挨着”会出错：
+        // 比如中间那楼 AI 卡片被你在小手机里删了，后面那楼的摘要其实盖不到前面。
+        const roundAiOf = new Map();
+        {
+            let waiting = [];
+            for (const { m, floor } of floors) {
+                if (!m || typeof m.mes !== 'string') continue;
+                if (m.extra && m.extra.bbs_omit) continue;          // 番外楼：柏宝书当它不存在
+                if (!m.is_user) {                                    // 一楼 AI 回复 → 这一回合到此为止
+                    waiting.forEach(f => roundAiOf.set(f, floor));
+                    roundAiOf.set(floor, floor);
+                    waiting = [];
+                } else {
+                    waiting.push(floor);
+                }
+            }
+            waiting.forEach(f => roundAiOf.set(f, null));            // 还没等到 AI 回复的那几楼
+        }
+        const roundAiFor = (floor) => (roundAiOf.has(floor) ? roundAiOf.get(floor) : null);
+
         // 0. 酒馆里被删掉的楼层，小手机里也删掉（只删酒馆卡片，不动小手机自己的消息）。
         //    三道保险：只在绑定的还是同一个酒馆聊天时做；从酒馆读回来是空的（比如出错）就完全不动；
         //    认楼层用的是和导入完全一样的那套标准。在酒馆里给某楼重新抽卡（swipe）也会走这里：
@@ -312,7 +335,8 @@ const TavernSync = {
             if (startIdx < 0) startIdx = candidates.findIndex(c => c.floor >= start.floor);   // 起点那楼在酒馆里被删了
             if (startIdx < 0) startIdx = candidates.length;
         } else {
-            startIdx = config.initialImportCount > 0 ? Math.max(0, candidates.length - config.initialImportCount) : candidates.length;
+            const firstCount = this.initialImportFor(binding);
+            startIdx = firstCount > 0 ? Math.max(0, candidates.length - firstCount) : candidates.length;
             const first = candidates[startIdx];
             if (first) start = { sendDate: first.m.send_date, isUser: !!first.m.is_user, floor: first.floor };
         }
@@ -329,7 +353,12 @@ const TavernSync = {
         const endIdx = sameChat && prevMemory.importEnd ? findMarker(prevMemory.importEnd) : null;
         const resumeIdx = sameChat && prevMemory.resumeAfter ? findMarker(prevMemory.resumeAfter) : null;
         const inRange = (i) => (i >= startIdx && (endIdx == null || i <= endIdx)) || (resumeIdx != null && i > resumeIdx);
-        const newOnes = candidates.filter((c, i) => inRange(i) && !imported.some(h => sameFloor(c.m, h.tavern)));
+        // 精简时连同 AI 楼一起收走的 user 楼（身份记在 AI 卡片的 roundUsers 里）不要再导入回来
+        const trimmedAwayUsers = [];
+        imported.forEach(h => { if (Array.isArray(h.tavern.roundUsers)) trimmedAwayUsers.push(...h.tavern.roundUsers); });
+        const newOnes = candidates.filter((c, i) => inRange(i)
+            && !imported.some(h => sameFloor(c.m, h.tavern))
+            && !trimmedAwayUsers.some(mark => sameFloor(c.m, mark)));
 
         // 每楼的真实发送时间：读不懂的沿用前一楼；并保证不早于前一楼（酒馆时间只精确到分钟，可能打平）
         let prevTime = null;
@@ -369,6 +398,7 @@ const TavernSync = {
                     genStarted: String(m.gen_started || ''),
                     isUser: !!m.is_user,
                     name: m.is_user ? (char.myName || m.name || '我') : (char.realName || m.name || char.name),
+                    roundAi: roundAiFor(floor),
                     summary: readBaibaiSummary(m),
                 },
             });
@@ -384,6 +414,7 @@ const TavernSync = {
             if (typeof h.tavern.time !== 'number' && found.time != null) h.tavern.time = found.time;
             // 酒馆里删了楼之后，后面的楼层号会往前挪，卡片上的“第几楼”跟着更新
             if (h.tavern.floor !== found.floor) h.tavern.floor = found.floor;
+            h.tavern.roundAi = roundAiFor(found.floor);   // 所属回合（酒馆后来才回复的，这时候才算得出来）
             if (h.tavern.genStarted === undefined) h.tavern.genStarted = String(found.m.gen_started || '');
             const summary = readBaibaiSummary(found.m);
             const oldText = h.tavern.summary && h.tavern.summary.text;
@@ -566,11 +597,16 @@ const TavernSync = {
     async trimFloors(binding, opts = {}) {
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (!char) throw new Error('找不到角色');
-        let trimmed = 0, skipped = 0, saved = 0;
+        let trimmed = 0, skipped = 0, saved = 0, removedUsers = 0;
         const skippedFloors = [];
-        for (const m of this._pickFloors(char, opts)) {
+        const picked = this._pickFloors(char, opts);
+        for (const m of picked) {
             if (m.tavern.trimmed) continue;
-            if (!this.canTrim(m)) { skipped++; skippedFloors.push(m.tavern.floor); continue; }
+            if (!this.canTrim(m)) {
+                // 你自己在酒馆里发的楼层本来就没有摘要，不算进“还没有摘要”的名单
+                if (!m.tavern.isUser) { skipped++; skippedFloors.push(m.tavern.floor); }
+                continue;
+            }
             const before = (m.content || '').length;
             m.content = m.tavern.summary.text;
             m.parts = [];
@@ -578,8 +614,37 @@ const TavernSync = {
             saved += Math.max(0, before - m.content.length);
             trimmed++;
         }
-        if (trimmed) { await saveData(); this._rerender(char); }
-        return { trimmed, skipped, saved, skippedFloors };
+        // 这一回合的 AI 楼精简之后，同一回合里 user 楼的原文也没用了（摘要已经把这一回合写进去了），
+        // 一起从小手机里删掉；身份记在 AI 卡片的 roundUsers 里，这样同步不会把它们又拉回来，
+        // 点「取回原文」时也能连它们一起从酒馆取回来。
+        // 已经精简过的楼层也顺带清一遍（比如上次精简时还没算出回合归属）。
+        // 先按“属于哪一回合”把 user 楼归好类，最后一次性删，楼层多时才不会慢。
+        const usersByRound = new Map();
+        (char.history || []).forEach(m => {
+            if (!m || !m.fromTavern || !m.tavern || !m.tavern.isUser) return;
+            const r = m.tavern.roundAi;
+            if (typeof r !== 'number') return;
+            if (!usersByRound.has(r)) usersByRound.set(r, []);
+            usersByRound.get(r).push(m);
+        });
+        const removeIds = new Set();
+        for (const m of picked) {
+            if (!m.tavern.trimmed || m.tavern.isUser) continue;
+            const users = (usersByRound.get(m.tavern.floor) || []).filter(u => !removeIds.has(u.id));
+            if (!users.length) continue;
+            const marks = Array.isArray(m.tavern.roundUsers) ? m.tavern.roundUsers.slice() : [];
+            for (const u of users) {
+                const mark = { floor: u.tavern.floor, sendDate: u.tavern.sendDate, genStarted: u.tavern.genStarted, isUser: true, name: u.tavern.name };
+                if (!marks.some(x => x.sendDate === mark.sendDate && x.genStarted === mark.genStarted)) marks.push(mark);
+                saved += (u.content || '').length;
+                removeIds.add(u.id);
+                removedUsers++;
+            }
+            m.tavern.roundUsers = marks;
+        }
+        if (removeIds.size) char.history = char.history.filter(m => !removeIds.has(m.id));
+        if (trimmed || removedUsers) { await saveData(); this._rerender(char); }
+        return { trimmed, skipped, saved, skippedFloors, removedUsers };
     },
 
     // 取回原文：从酒馆重新读那一楼的正文。返回 { restored 取回几楼, missing 酒馆里找不到几楼 }
@@ -592,21 +657,71 @@ const TavernSync = {
         if (!Array.isArray(raw)) throw new Error('读不到酒馆聊天');
         const offset = (raw.length && raw[0] && !('mes' in raw[0])) ? 1 : 0;
         const list = raw.slice(offset);
-        let restored = 0, missing = 0;
+        let restored = 0, missing = 0, restoredUsers = 0;
+        let now = Date.now();
+        const cleanOf = (stMsg) => {
+            let text = stMsg.mes;
+            if (stMsg.extra && stMsg.extra.from_uwu) text = text.replace(/<phone_chat>[\s\S]*?<\/phone_chat>/g, '').trim();
+            return this.applyCleanRules(text, null);
+        };
         for (const m of targets) {
             const found = list.find(x => x && typeof x.mes === 'string' && this._sameFloor(x, m.tavern));
             if (!found) { missing++; continue; }
-            let text = found.mes;
-            if (found.extra && found.extra.from_uwu) text = text.replace(/<phone_chat>[\s\S]*?<\/phone_chat>/g, '').trim();
-            const cleaned = this.applyCleanRules(text, null);
+            const cleaned = cleanOf(found);
             if (!cleaned) { missing++; continue; }
             m.content = cleaned;
             m.parts = [];
             m.tavern.trimmed = false;
             restored++;
+
+            // 精简时一起收走的 user 楼，也从酒馆取回来（找不到的就算了，和 AI 楼一样报“找不到”）
+            const marks = m.tavern.roundUsers || [];
+            // 时间要夹在“上一楼”和“这一回合的 AI 楼”之间，否则取回来的楼层会排到别处去
+            const aiTime = typeof m.tavern.time === 'number' ? m.tavern.time : null;
+            let prevTime = null;
+            if (aiTime != null) {
+                (char.history || []).forEach(x => {
+                    if (!x || !x.fromTavern || !x.tavern || typeof x.tavern.time !== 'number') return;
+                    if (x.tavern.time < aiTime && (prevTime == null || x.tavern.time > prevTime)) prevTime = x.tavern.time;
+                });
+            }
+            marks.forEach((mark, idx) => {
+                const hit = list.find(x => x && typeof x.mes === 'string' && this._sameFloor(x, mark));
+                if (!hit) { missing++; return; }
+                const text = cleanOf(hit);
+                if (!text) { missing++; return; }
+                let time = readFloorTime(hit);
+                if (aiTime != null && (time == null || time >= aiTime || (prevTime != null && time < prevTime))) {
+                    time = aiTime - (marks.length - idx);     // 紧挨着排在这一回合的 AI 楼前面
+                }
+                char.history.push({
+                    id: `tavern_${now}_${Math.random().toString(36).slice(2, 8)}`,
+                    role: 'system',
+                    content: text,
+                    parts: [],
+                    timestamp: time != null ? time : now++,
+                    fromTavern: true,
+                    tavern: {
+                        floor: list.indexOf(hit),
+                        time,
+                        sendDate: hit.send_date,
+                        genStarted: String(hit.gen_started || ''),
+                        isUser: true,
+                        name: mark.name || char.myName || hit.name || '我',
+                        roundAi: m.tavern.floor,
+                        summary: null,
+                    },
+                });
+                restoredUsers++;
+            });
+            m.tavern.roundUsers = [];
         }
-        if (restored) { await saveData(); this._rerender(char); }
-        return { restored, missing };
+        if (restored || restoredUsers) {
+            if (restoredUsers) this.placeTavernFloors(char);   // 取回来的 user 楼按时间排回原位
+            await saveData();
+            this._rerender(char);
+        }
+        return { restored, missing, restoredUsers };
     },
 
     // 在小手机里（调试/编辑源码）改了酒馆剧情 → 写回酒馆对应的那一楼。
@@ -683,7 +798,11 @@ const TavernSync = {
             const found = list.find(x => x && typeof x.mes === 'string' && this._sameFloor(x, h.tavern));
             if (!found) continue;
             const summary = readBaibaiSummary(found);
-            if (!summary || !summary.text) { if (!(h.tavern.summary && h.tavern.summary.text)) stillNone++; continue; }
+            // 还没有摘要的只算 AI 楼：你自己在酒馆里发的楼层本来就不会有柏宝书摘要
+            if (!summary || !summary.text) {
+                if (!h.tavern.isUser && !(h.tavern.summary && h.tavern.summary.text)) stillNone++;
+                continue;
+            }
             const oldText = h.tavern.summary && h.tavern.summary.text;
             if (summary.text === oldText) continue;
             h.tavern.summary = summary;
@@ -736,7 +855,7 @@ const TavernSync = {
 
     // 发给 AI 前处理酒馆楼层（由 tavern_hooks.js 在 yuan 的 filterHistoryForAI 之后调用）：
     //   - 最近 rawFloorCount 楼酒馆剧情：原文，套“原文包裹”
-    //   - 更早的：有柏宝书摘要的 AI 楼 → 套“摘要包裹”；user 楼若后面紧跟有摘要的 AI 楼 → 省掉（已包含在那段摘要里）
+    //   - 更早的：有柏宝书摘要的 AI 楼 → 套“摘要包裹”；user 楼没有摘要，一律发原文（发不发只看“包含 user 楼层”开关）
     //   - 更早但还没有摘要的：只能先发原文
     //   - 关闭“包含 user 楼层”时，user 楼一律不发
     // history 是 yuan 已经深拷贝过的副本，可以直接改。每条处理过的消息打上 __tavernView 方便预览统计。
@@ -764,9 +883,29 @@ const TavernSync = {
                 view = t.trimmed ? 'summary-trimmed' : 'summary';
                 content = fill(cfg.wrapSummary, m, t.summary.text, t.summary.time);
             } else if (t.isUser) {
-                const next = history.slice(i + 1).find(x => x && x.fromTavern);
-                if (next && next.tavern && !next.tavern.isUser && next.tavern.summary && !rawSet.has(history.indexOf(next))) return;
-                view = 'raw-nosummary'; content = fill(cfg.wrapRaw, m, m.content, '');
+                // 你在酒馆里发的楼层自己没有摘要。柏宝书的一段摘要写的是「一整个回合」——
+                // 你发的那楼（可以连着好几楼）+ 紧跟的那一楼 AI 回复，摘要存在 AI 那楼上
+                // （见柏宝书 engine.ts 的 floorTargets：从 AI 楼往前收，遇到上一个 AI 楼才停）。
+                // 酒馆里它也是把整个回合一起隐藏、只留摘要。所以这里同样：
+                //   这一回合的 AI 楼这次确实以摘要形式发出去 → 你发的那楼省掉（内容已经在摘要里，再发就是重复）
+                //   其余情况一律发原文：AI 楼这次发的是原文、还没写摘要、被删掉了、或者后面根本还没有 AI 楼
+                let coveredBySummary = false;
+                for (let k = i + 1; k < history.length; k++) {
+                    const nx = history[k];
+                    if (!nx || !nx.fromTavern) continue;          // 中间夹着的小手机消息不算数，继续往后找
+                    const nt = nx.tavern || {};
+                    if (nt.isUser) continue;                      // 连着的几楼 user 都归后面那一楼 AI 的摘要管
+                    // 那一楼 AI 这次是发摘要还是发原文：已精简的即使在“最近几楼发原文”里也只有摘要
+                    const asSummary = !!(nt.summary && nt.summary.text) && (!rawSet.has(k) || nt.trimmed);
+                    // 还要确认这一楼 AI 真的是这一回合的（同步时记的 roundAi）。
+                    // 万一中间那楼 AI 卡片被删了，后面那楼的摘要盖不到这一楼，就不能省。
+                    // 旧数据没记 roundAi（undefined）时退回“紧跟着的就算”，免得老卡片全变成发原文。
+                    const sameRound = (t.roundAi === undefined) ? true : (t.roundAi === nt.floor);
+                    coveredBySummary = asSummary && sameRound;
+                    break;                                        // 只看紧跟的第一楼 AI 剧情
+                }
+                if (coveredBySummary) return;
+                view = 'raw-user'; content = fill(cfg.wrapRaw, m, m.content, '');
             } else {
                 view = 'raw-nosummary'; content = fill(cfg.wrapRaw, m, m.content, '');
             }
@@ -849,11 +988,27 @@ const TavernSync = {
     // 推送用的公共部分（yuan 版把它从 pushToTavern 里抽出来，替换重新生成的回复时也要用）：
     //   allUwuMsgs：小手机里能推送到酒馆的消息
     //   toLine(消息)：把一条消息变成写进 <phone_chat> 的一行文字
-    // 通话推送方式：'summary' 只推总结（默认）/ 'context' 只推记录 / 'both' 都推。
+    // 这个角色第一次同步时导入最近多少楼。每个绑定可以不一样；没设置过就用旧的全局值，再没有就 20。
+    // 只在“从没同步过”（或清空过、换了酒馆聊天）时起作用，之后每次同步都会导入全部新楼层。
+    initialImportFor(binding) {
+        const n = parseInt(binding && binding.initialImportCount, 10);
+        if (Number.isInteger(n) && n >= 0) return n;
+        const g = this.getConfig().initialImportCount;
+        return (Number.isInteger(g) && g >= 0) ? g : 20;
+    },
+
+    // 这个角色同步过没有（用来决定界面显示“选择导入范围”还是“清空并重选范围”）
+    hasSynced(binding) {
+        const char = db.characters.find(c => c.id === binding.uwuCharId);
+        const mem = char && char.tavernMemory;
+        return !!(mem && mem.lastSync);
+    },
+
+    // 通话推送方式：'summary' 只推总结（默认）/ 'context' 只推记录 / 'both' 都推 / 'none' 不推送。
     // 兼容以前那个「通话连完整对话一起推」的开关（打开过的算“都推”）。
     callPushMode(binding) {
         const m = binding && binding.callPushMode;
-        if (m === 'summary' || m === 'context' || m === 'both') return m;
+        if (m === 'summary' || m === 'context' || m === 'both' || m === 'none') return m;
         return (binding && binding.pushCallContext) ? 'both' : 'summary';
     },
 
@@ -894,6 +1049,12 @@ const TavernSync = {
             return text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
         };
 
+        // 通话：yuan 把“打了多久 + 总结”存成一条普通消息（带 callRecordId），通话过程中的对话另存在 char.callHistory 里。
+        // 绑定上的「通话推送」四选一（见 TavernSync.callPushMode）：
+        //   summary 只推总结（默认）／ context 只推记录（通话里的每句对话，不带总结）／ both 都推 ／ none 不推送
+        // 除了“不推送”，都会带上“打了多久”那一行。
+        const callMode = this.callPushMode(binding);
+
         // 当前 UwU 中所有非酒馆来源且有内容的消息
         // 排除：thinking 独立消息、上下文禁用、role=system（time perception / 时间跳跃这类只用来 UI 展示的"[system-display:...]"）
         // 关闭状态栏推送时也剔除 isStatusUpdate
@@ -905,12 +1066,8 @@ const TavernSync = {
             && m.role !== 'system'
             && (includeStatusBar || !m.isStatusUpdate)
             && (includeOnlineStatus || !isOnlyOnlineStatus(m.content))
+            && !(callMode === 'none' && m.callRecordId)      // 通话推送选了“不推送”
         );
-        // 通话：yuan 把“打了多久 + 总结”存成一条普通消息（带 callRecordId），通话过程中的对话另存在 char.callHistory 里。
-        // 绑定上的「通话推送」三选一（见 TavernSync.callPushMode）：
-        //   summary 只推总结（默认）／ context 只推记录（通话里的每句对话，不带总结）／ both 都推
-        // 哪种都会带上“打了多久”那一行。
-        const callMode = this.callPushMode(binding);
         const callRecordOf = (m) => (m && m.callRecordId)
             ? (char.callHistory || []).find(r => r && r.id === m.callRecordId) : null;
         const dropSummary = (text, rec) => {
@@ -1423,7 +1580,7 @@ ${transcript}`;
                 console.log('[TavernSync] Deletion sync: injecting into ST');
                 try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ deletions: r.deletionOps }); } catch {}
             }
-        } catch (e) { this.reportIssue('删除同步到酒馆失败：' + e.message, 'push'); }
+        } catch (e) { this.reportIssue('把删除推送到酒馆失败：' + e.message, 'push'); }
     },
 
     // 自动推送（AI 回复后调用）
@@ -1483,7 +1640,7 @@ ${transcript}`;
                             console.log('[TavernSync] Return-sync: delete synced to ST');
                             try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ reload: true }); } catch {}
                         }
-                    }).catch(e => this.reportIssue('切回小手机时同步删除失败：' + e.message, 'push'));
+                    }).catch(e => this.reportIssue('切回小手机时把删除推送到酒馆失败：' + e.message, 'push'));
                 }
             }
         });
@@ -1762,40 +1919,17 @@ function setupTavernSyncScreen() {
             </div>
             <div id="ts-settings-area" style="display:none; margin-top:12px;">
                 <div style="${TS.card}">
-                    <span style="${TS.title}">同步设置</span>
-                    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
-                        <span style="font-size:14px; flex:1;">第一次同步导入楼数</span>
-                        ${numInput('ts-initial-count', config.initialImportCount)}
-                    </div>
-                    <div style="font-size:12px; color:#888; margin-top:4px;">某个角色第一次同步时，从酒馆导入最近多少楼。之后每次同步只导入新楼层</div>
+                    <span style="${TS.title}">发给 AI 的酒馆剧情</span>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:14px; flex:1;">最近几楼发原文</span>
                         ${numInput('ts-raw-count', config.rawFloorCount)}
                     </div>
                     <div style="font-size:12px; color:#888; margin-top:4px;">发给 AI 时，最近这么多楼酒馆剧情给完整原文，更早的换成柏宝书摘要（还没有摘要的暂时发原文）</div>
-                    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
-                        <span style="font-size:14px; flex:1;">手动推送时默认条数</span>
-                        ${numInput('ts-max', config.maxInjectMessages || 50)}
-                    </div>
                     <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
                         <input type="checkbox" id="ts-inject-user-floors" ${config.injectUserFloors !== false ? 'checked' : ''}>
                         <div>
-                            <div>发给 AI 时包含酒馆 user 楼层</div>
-                            <div style="font-size:11px; color:#888;">关闭后，酒馆里你自己写的楼层不发给 AI（小手机里照样显示），节省 token</div>
-                        </div>
-                    </label>
-                    <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
-                        <input type="checkbox" id="ts-push-status-bar" ${config.pushIncludeStatusBar !== false ? 'checked' : ''}>
-                        <div>
-                            <div>推送状态栏到酒馆</div>
-                            <div style="font-size:11px; color:#888;">关闭后，推送到酒馆的小手机消息将按角色状态栏正则剥离内联状态栏，并过滤专用状态更新楼层</div>
-                        </div>
-                    </label>
-                    <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
-                        <input type="checkbox" id="ts-push-online-status" ${config.pushIncludeOnlineStatus === true ? 'checked' : ''}>
-                        <div>
-                            <div>推送在线状态到酒馆</div>
-                            <div style="font-size:11px; color:#888;">在线状态是 AI 写的“[角色更新状态为：…]”，用来改小手机界面上那行状态文字。默认不推到酒馆</div>
+                            <div>发原文的酒馆楼层中包含 user 楼层</div>
+                            <div style="font-size:11px; color:#888;">关闭后，发原文的酒馆楼层中只包含 AI 楼层，若不抢话不转述可能导致剧情不连贯</div>
                         </div>
                     </label>
                 </div>
@@ -1815,8 +1949,8 @@ function setupTavernSyncScreen() {
                     ${tplArea('ts-wrap-summary', 3)}
                 </div>
                 <div style="${TS.card} margin-top:12px;">
-                    <span style="${TS.title}">推送设置</span>
-                    <div style="font-size:12px; color:#888; margin-top:6px;">自动同步、自动推送的开关在上面每个角色的绑定卡片里，可以分别设置</div>
+                    <span style="${TS.title}">推送到酒馆</span>
+                    <div style="font-size:12px; color:#888; margin-top:6px;">「自动同步酒馆剧情」「自动推送小手机消息」这些开关在上面每个角色的绑定卡片里，可以分别设置</div>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:14px;">推送楼层模式</span>
                         <select id="ts-push-mode" aria-label="推送楼层模式" title="推送楼层模式" style="padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px;">
@@ -1825,6 +1959,24 @@ function setupTavernSyncScreen() {
                         </select>
                     </div>
                     <div style="font-size:12px; color:#888; margin-top:4px;">新开楼层：每次推送创建新消息；合并末尾：追加到最后一楼末尾（配合正则隐藏）。注：若最后一楼已是小手机消息，无论模式都会自动合并</div>
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+                        <span style="font-size:14px; flex:1;">手动推送时默认条数</span>
+                        ${numInput('ts-max', config.maxInjectMessages || 50)}
+                    </div>
+                    <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
+                        <input type="checkbox" id="ts-push-status-bar" ${config.pushIncludeStatusBar !== false ? 'checked' : ''}>
+                        <div>
+                            <div>推送状态栏到酒馆</div>
+                            <div style="font-size:11px; color:#888;">关闭后，推送到酒馆的小手机消息将按角色状态栏正则剥离内联状态栏，并过滤专用状态更新楼层</div>
+                        </div>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; cursor:pointer;">
+                        <input type="checkbox" id="ts-push-online-status" ${config.pushIncludeOnlineStatus === true ? 'checked' : ''}>
+                        <div>
+                            <div>推送在线状态到酒馆</div>
+                            <div style="font-size:11px; color:#888;">在线状态是 AI 写的“[角色更新状态为：…]”，用来改小手机界面上那行状态文字。默认不推到酒馆</div>
+                        </div>
+                    </label>
                 </div>
             </div>
         </div>`;
@@ -1863,7 +2015,6 @@ function setupTavernSyncScreen() {
         e.target.value = cfg[key];
         await TavernSync.saveConfig(cfg);
     });
-    saveNum('#ts-initial-count', 'initialImportCount', 20);
     saveNum('#ts-raw-count', 'rawFloorCount', 3);
     saveNum('#ts-max', 'maxInjectMessages', 50);
     mainEl.querySelector('#ts-push-status-bar').addEventListener('change', async (e) => { const cfg = TavernSync.getConfig(); cfg.pushIncludeStatusBar = e.target.checked; await TavernSync.saveConfig(cfg); });
@@ -2004,13 +2155,15 @@ function setupTavernSyncScreen() {
                 + (m.tavern && !m.tavern.trimmed && m.tavern.summary && m.tavern.summary.text ? m.tavern.summary.text.length : 0), 0);
             const trimmedCount = tavernMsgs.filter(m => m.tavern && m.tavern.trimmed).length;
             const callMode = TavernSync.callPushMode(b);
+            const synced = !!(mem && mem.lastSync);                 // 同步过没有
+            const firstCount = TavernSync.initialImportFor(b);
             const sizeText = tavernChars >= 10000 ? `约 ${(tavernChars / 10000).toFixed(1)} 万字` : `约 ${tavernChars} 字`;
             // 时间写成“9月20日 10:30”，比 9/20 好认
             const fmtSync = (ts) => {
                 const d = new Date(ts);
                 return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
             };
-            const trimText = trimmedCount ? `，其中 ${trimmedCount} 楼已精简` : '';
+            const trimText = trimmedCount ? `，其中 ${trimmedCount} 个回合已精简` : '';
             const syncInfo = mem && mem.lastSync ? `小手机里有 ${floorCount} 楼酒馆剧情（${sizeText}${trimText}）<br>上次同步 ${fmtSync(mem.lastSync)}` : '未同步';
             const maxMem = parseInt(char && char.maxMemory, 10) || 20;   // 这个角色在聊天设置里的“可见上文条数”
             return `<div style="${TS.card} padding:14px;">
@@ -2020,20 +2173,26 @@ function setupTavernSyncScreen() {
                     <button data-del="${i}" style="${TS.btnD}">✕</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
                     <button data-pull="${i}" style="flex:1; ${TS.btnB}">同步酒馆剧情</button>
-                    <button data-push="${i}" style="flex:1; ${TS.btnO}">推送/清理消息</button></div>
-                <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-                    <button data-import-char="${i}" style="flex:1; ${TS.btnB}">导入酒馆人设</button>
-                    <button data-import-wb="${i}" style="flex:1; ${TS.btnB}">导入酒馆世界书</button></div>
+                    <button data-reset="${i}" style="flex:1; ${TS.btnB}">管理导入范围</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
                     <button data-fillsum="${i}" style="flex:1; ${TS.btnG}">只补摘要</button>
                     <button data-trim="${i}" style="flex:1; ${TS.btnG}">精简旧楼层</button></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-                    <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(156,39,176,0.15); color:#CE93D8; font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button>
-                    <button data-reset="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(244,67,54,0.12); color:#f66; font-size:13px; font-weight:500; cursor:pointer;">清空并重选范围</button></div>
+                    <button data-push="${i}" style="flex:1; ${TS.btnO}">推送/清理消息</button>
+                    <button data-preview="${i}" style="flex:1; padding:8px; border-radius:8px; border:none; background:rgba(156,39,176,0.15); color:#CE93D8; font-size:13px; font-weight:500; cursor:pointer;">提示词预览</button></div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+                    <button data-import-char="${i}" style="flex:1; ${TS.btnB}">导入酒馆人设</button>
+                    <button data-import-wb="${i}" style="flex:1; ${TS.btnB}">导入酒馆世界书</button></div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-auto="autoPull" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPull') ? 'checked' : ''}>
                     <span>自动同步酒馆剧情</span>
                 </label>
+                <div style="display:${synced ? 'none' : 'flex'}; align-items:center; gap:8px; margin:6px 0 0 24px; font-size:13px; flex-wrap:wrap;">
+                    第一次同步导入最近
+                    <input type="number" data-first-num="${i}" min="0" value="${firstCount}"
+                        style="width:64px; padding:4px 6px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:13px; text-align:center;"> 楼
+                    <span style="font-size:11px; color:#888; width:100%;">这个角色还没同步过。之后每次同步都会导入全部新楼层，不看这个数字；想挑具体楼层用「选择导入范围」</span>
+                </div>
                 <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <input type="checkbox" data-auto="autoPush" data-idx="${i}" ${TavernSync.isAuto(b, 'autoPush') ? 'checked' : ''}>
                     <span>自动推送小手机消息</span>
@@ -2068,12 +2227,23 @@ function setupTavernSyncScreen() {
                         <option value="summary" ${callMode === 'summary' ? 'selected' : ''}>只推总结</option>
                         <option value="context" ${callMode === 'context' ? 'selected' : ''}>只推记录</option>
                         <option value="both" ${callMode === 'both' ? 'selected' : ''}>都推送</option>
+                        <option value="none" ${callMode === 'none' ? 'selected' : ''}>不推送</option>
                     </select>
                 </label>
             </div>`;
         }).join('');
 
         // 单独限制酒馆上文：开关 + 楼数（不能超过这个角色的可见上文条数）
+        bindingsList.querySelectorAll('[data-first-num]').forEach(inp => inp.addEventListener('change', async () => {
+            const cfg = TavernSync.getConfig();
+            const b = cfg.bindings[parseInt(inp.dataset.firstNum)];
+            if (!b) return;
+            let n = parseInt(inp.value, 10);
+            if (!Number.isInteger(n) || n < 0) n = 0;
+            inp.value = n;
+            b.initialImportCount = n;
+            await TavernSync.saveConfig(cfg);
+        }));
         bindingsList.querySelectorAll('[data-callmode]').forEach(sel => sel.addEventListener('change', async () => {
             const cfg = TavernSync.getConfig();
             const b = cfg.bindings[parseInt(sel.dataset.callmode)];
@@ -2201,8 +2371,8 @@ function setupTavernSyncScreen() {
             const orig = btn.textContent; btn.textContent = '读取中...'; btn.disabled = true;
             try {
                 const r = await TavernSync.refreshSummaries(b);
-                showToast(r.filled ? `补上/更新了 ${r.filled} 段摘要` + (r.stillNone ? `，还有 ${r.stillNone} 楼柏宝书没写摘要` : '')
-                    : (r.stillNone ? `没有新摘要，还有 ${r.stillNone} 楼柏宝书没写摘要` : '摘要都是最新的'));
+                showToast(r.filled ? `补上/更新了 ${r.filled} 段摘要` + (r.stillNone ? `，还有 ${r.stillNone} 个回合柏宝书没写摘要` : '')
+                    : (r.stillNone ? `没有新摘要，还有 ${r.stillNone} 个回合柏宝书没写摘要` : '摘要都是最新的'));
                 renderBindings();
             } catch (e) { showToast(`${e.message}`); }
             btn.textContent = orig; btn.disabled = false;
@@ -2409,7 +2579,7 @@ async function showAutoPushModal(binding) {
                     showToast(`已推送 ${r.pushed} 条消息到酒馆`);
                 } else if (r.deleted) {
                     try { window.webkit?.messageHandlers?.tavernPushDone?.postMessage({ reload: true }); } catch {}
-                    showToast('已同步删除酒馆中的旧消息');
+                    showToast('已把删除推送到酒馆');
                 } else {
                     showToast('没有消息被推送');
                 }
@@ -2443,8 +2613,12 @@ function showTrimModal(binding, onDone) {
 
     const can = floors.filter(m => TavernSync.canTrim(m));
     const trimmed = floors.filter(m => m.tavern.trimmed);
-    const noSummary = floors.filter(m => !m.tavern.trimmed && !(m.tavern.summary && m.tavern.summary.text));
-    const saveable = can.reduce((n, m) => n + Math.max(0, (m.content || '').length - m.tavern.summary.text.length), 0);
+    // “还没有摘要”只算 AI 楼：你自己在酒馆里发的楼层本来就没有柏宝书摘要，列出来只会添乱
+    const noSummary = floors.filter(m => !m.tavern.trimmed && !m.tavern.isUser && !(m.tavern.summary && m.tavern.summary.text));
+    // 能省多少字：AI 楼原文换成摘要省下的 + 同一回合里会被一起收走的 user 楼
+    const roundUserChars = (ai) => floors.filter(m => m.tavern.isUser && m.tavern.roundAi === ai.tavern.floor)
+        .reduce((n, m) => n + (m.content || '').length, 0);
+    const saveable = can.reduce((n, m) => n + Math.max(0, (m.content || '').length - m.tavern.summary.text.length) + roundUserChars(m), 0);
     const sizeOf = (n) => n >= 10000 ? `约 ${(n / 10000).toFixed(1)} 万字` : `约 ${n} 字`;
 
     const overlay = document.createElement('div');
@@ -2459,8 +2633,8 @@ function showTrimModal(binding, onDone) {
             精简就是只留柏宝书摘要、把原文丢掉。原文在酒馆里一直都在，点下面的「取回原文」随时拿回来。
         </div>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
-            小手机里有 <b>${floors.length}</b> 楼酒馆剧情（第 ${firstFloor} ~ ${lastFloor} 楼），其中 <b>${trimmed.length}</b> 楼已精简、
-            <b>${can.length}</b> 楼可以精简（能省${sizeOf(saveable)}）${noSummary.length ? `、<b>${noSummary.length}</b> 楼还没有摘要（不会精简）` : ''}。
+            小手机里有 <b>${floors.length}</b> 楼酒馆剧情（第 ${firstFloor} ~ ${lastFloor} 楼）。
+            其中 <b>${trimmed.length}</b> 个回合已精简、<b>${can.length}</b> 个回合可以精简（能省${sizeOf(saveable)}）${noSummary.length ? `、<b>${noSummary.length}</b> 个回合还没有摘要（不会精简）` : ''}。
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
             从第 <input type="number" id="tm-start" min="0" value="${firstFloor}" style="${numStyle}">
@@ -2516,13 +2690,14 @@ function showTrimModal(binding, onDone) {
     modal.querySelector('#tm-do').addEventListener('click', (e) => run(e.currentTarget, async (range) => {
         const r = await TavernSync.trimFloors(binding, range);
         const where = floorRanges(r.skippedFloors || []);
-        showToast(r.trimmed ? `精简了 ${r.trimmed} 楼，省下约 ${r.saved} 字` + (r.skipped ? `；${r.skipped} 楼还没有摘要${where}` : '')
-            : (r.skipped ? `这个范围里的 ${r.skipped} 楼都还没有摘要${where}` : '这个范围里没有可以精简的楼层'));
+        showToast(r.trimmed ? `精简了 ${r.trimmed} 个回合，省下约 ${r.saved} 字` + (r.skipped ? `；${r.skipped} 个回合还没有摘要${where}` : '')
+            : (r.removedUsers ? `已整理，省下约 ${r.saved} 字`
+                : (r.skipped ? `这个范围里的 ${r.skipped} 个回合都还没有摘要${where}` : '这个范围里没有可以精简的回合')));
     }));
     modal.querySelector('#tm-restore').addEventListener('click', (e) => run(e.currentTarget, async (range) => {
         const r = await TavernSync.restoreRawFloors(binding, range);
-        showToast(r.restored ? `取回了 ${r.restored} 楼的原文` + (r.missing ? `；${r.missing} 楼在酒馆里已经找不到` : '')
-            : (r.missing ? `${r.missing} 楼在酒馆里已经找不到，取不回来` : '这个范围里没有精简过的楼层'));
+        showToast(r.restored ? `取回了 ${r.restored} 个回合的原文` + (r.missing ? `；${r.missing} 楼在酒馆里已经找不到` : '')
+            : (r.missing ? `${r.missing} 楼在酒馆里已经找不到，取不回来` : '这个范围里没有精简过的回合'));
     }));
 }
 
@@ -2532,7 +2707,9 @@ async function showResetRangeModal(binding, onDone) {
     const info = await TavernSync.getTavernFloorInfo(binding);
     const have = (char.history || []).filter(m => m && m.fromTavern).length;
     const lastFloor = Math.max(0, info.total - 1);
-    const defStart = Math.max(0, info.total - (TavernSync.getConfig().initialImportCount || 20));
+    const synced = TavernSync.hasSynced(binding);             // 同步过没有：没同步过就只是“选范围”，不用清空
+    const firstCount = TavernSync.initialImportFor(binding);
+    const defStart = Math.max(0, info.total - firstCount);
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
@@ -2541,39 +2718,69 @@ async function showResetRangeModal(binding, onDone) {
     const numStyle = 'width:80px; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:inherit; font-size:14px; text-align:center;';
     const cancelStyle = 'flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit; cursor:pointer;';
     modal.innerHTML = `
-        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">清空并重选范围</h3>
+        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">管理导入范围</h3>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
-            小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>
+            ${synced ? `小手机里现在有 <b>${have}</b> 楼酒馆剧情，会全部删掉。<br>` : '这个角色还没同步过，选一段要导入的剧情。<br>'}
             酒馆里这个聊天一共 <b>${info.total}</b> 楼（第 0 ~ ${lastFloor} 楼，和酒馆里楼层的 # 号一致）。
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
-            从第 <input type="number" id="rr-start" min="0" max="${lastFloor}" value="${defStart}" style="${numStyle}">
+            导入最近 <input type="number" id="rr-recent" min="0" max="${info.total}" value="${Math.min(firstCount, info.total)}" style="${numStyle}"> 楼
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
+            或者从第 <input type="number" id="rr-start" min="0" max="${lastFloor}" value="${defStart}" style="${numStyle}">
             到第 <input type="number" id="rr-end" min="0" max="${lastFloor}" value="${lastFloor}" style="${numStyle}"> 楼
         </div>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:16px;">
-            小手机推送过去的楼层、番外楼不会导入。清空后，酒馆里以后新玩的楼层照常同步。<br>
+            上面填楼数，下面的范围会跟着算好；也可以直接改下面的楼层号。<br>
+            小手机推送过去的楼层、番外楼不会导入。${synced ? '清空后，' : ''}酒馆里以后新玩的楼层照常同步，不受这里限制。<br>
             已经写进日记、记忆表格、向量记忆的内容不受影响。
         </div>
-        <button id="rr-range" style="width:100%; ${TS.btnP} margin-bottom:8px;">清空，并导入这个范围</button>
-        <button id="rr-none" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(244,67,54,0.4); background:transparent; color:#f66; font-size:14px; cursor:pointer; margin-bottom:8px;">只清空（以后只同步新楼层）</button>
+        <button id="rr-range" style="width:100%; ${TS.btnP} margin-bottom:8px;">${synced ? '清空，并导入这个范围' : '开始导入'}</button>
+        <button id="rr-none" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(244,67,54,0.4); background:transparent; color:#f66; font-size:14px; cursor:pointer; margin-bottom:8px;">${synced ? '只清空（以后只同步新楼层）' : '不导入旧剧情（只同步以后的新楼层）'}</button>
         <button id="rr-cancel" style="width:100%; ${cancelStyle}">取消</button>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
     const close = () => overlay.remove();
     modal.querySelector('#rr-cancel').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
+    // 「导入最近 N 楼」和下面的楼层范围互相跟着算
+    const recentInput = modal.querySelector('#rr-recent');
+    const startInput = modal.querySelector('#rr-start');
+    const endInput = modal.querySelector('#rr-end');
+    recentInput.addEventListener('input', () => {
+        let n = parseInt(recentInput.value, 10);
+        if (!Number.isInteger(n) || n < 0) return;
+        if (n > info.total) { n = info.total; recentInput.value = n; }
+        startInput.value = Math.max(0, info.total - n);
+        endInput.value = lastFloor;
+    });
+    const syncRecent = () => {
+        const start = parseInt(startInput.value, 10);
+        const end = parseInt(endInput.value, 10);
+        if (Number.isInteger(start) && Number.isInteger(end) && end === lastFloor) recentInput.value = Math.max(0, info.total - start);
+    };
+    startInput.addEventListener('input', syncRecent);
+    endInput.addEventListener('input', syncRecent);
+
     const run = async (range, btn) => {
         const buttons = modal.querySelectorAll('button');
         buttons.forEach(b => { b.disabled = true; });
         const orig = btn.textContent; btn.textContent = '处理中...';
         try {
+            // 记住这个角色填的楼数，下次打开还是它（自动同步第一次跑时也用它）
+            const n = parseInt(recentInput.value, 10);
+            if (Number.isInteger(n) && n >= 0 && n !== TavernSync.initialImportFor(binding)) {
+                const cfg = TavernSync.getConfig();
+                const b2 = (cfg.bindings || []).find(x => x === binding || (x.uwuCharId === binding.uwuCharId && x.stChatFile === binding.stChatFile));
+                if (b2) { b2.initialImportCount = n; await TavernSync.saveConfig(cfg); }
+            }
             const r = await TavernSync.resetImportRange(binding, range);
-            let msg = `已删掉 ${r.removed} 楼`;
+            let msg = synced ? `已删掉 ${r.removed} 楼` : '';
             if (range) {
                 const p = await TavernSync.pullFromTavern(binding);
-                msg += `，重新导入 ${p.imported} 楼`;
+                msg += msg ? `，重新导入 ${p.imported} 楼` : `导入了 ${p.imported} 楼`;
             }
-            showToast(msg);
+            showToast(msg || '以后只同步新楼层');
             close();
             if (onDone) onDone();
         } catch (e) {
@@ -2592,7 +2799,7 @@ async function showResetRangeModal(binding, onDone) {
         run({ start, end }, e.currentTarget);
     });
     modal.querySelector('#rr-none').addEventListener('click', (e) => {
-        if (!confirm(`删掉小手机里全部 ${have} 楼酒馆剧情，以后只同步新楼层？`)) return;
+        if (synced && !confirm(`删掉小手机里全部 ${have} 楼酒馆剧情，以后只同步新楼层？`)) return;
         run(null, e.currentTarget);
     });
 }
@@ -2986,8 +3193,10 @@ function showPromptPreview(binding) {
     }
     const tavernViews = slice.filter(m => m && m.__tavernView);
     const totalFloors = (char.history || []).filter(m => m && m.fromTavern).length;
-    const labels = { raw: '原文', summary: '摘要', 'summary-trimmed': '摘要（原文已精简）', 'raw-nosummary': '原文（还没有摘要）' };
-    const colors = { raw: '#2196F3', summary: '#4CAF50', 'summary-trimmed': '#26A69A', 'raw-nosummary': '#FF7043' };
+    const labels = { raw: '原文', summary: '摘要', 'summary-trimmed': '摘要（原文已精简）',
+        'raw-nosummary': '原文（AI 楼还没有摘要）', 'raw-user': '原文（酒馆里你发的）' };
+    const colors = { raw: '#2196F3', summary: '#4CAF50', 'summary-trimmed': '#26A69A',
+        'raw-nosummary': '#FF7043', 'raw-user': '#9E9E9E' };
     if (tavernViews.length) {
         const counts = {};
         tavernViews.forEach(m => { counts[m.__tavernView] = (counts[m.__tavernView] || 0) + 1; });

@@ -87,7 +87,7 @@
             </div>
             <span class="expansion-item-name">推送/清理</span>`;
         item.addEventListener('click', async () => {
-            if (!window.TavernSync) { showToast('酒馆同步未启用'); return; }
+            if (!window.TavernSync) { showToast('酒馆互联没启用'); return; }
             const binding = window.TavernSync.findBindingForChar(currentChatId);
             if (!binding) { showToast('该角色未绑定酒馆'); return; }
             if (typeof showPanel === 'function') showPanel('none');
