@@ -1029,12 +1029,13 @@ const TavernSync = {
         const isNewer = newest && newest.file !== binding.stChatFile && (!cur || (cur.t != null && newest.t > cur.t));
         const had = binding.newerChat && binding.newerChat.file;
         if (isNewer) {
-            if (had === newest.file) return;
-            binding.newerChat = { file: newest.file, time: newest.t };
+            // curGone：现在绑定的酒馆聊天在酒馆里已经不存在了（卡片上的提示按这个分两种写法）
+            if (had === newest.file && !!binding.newerChat.curGone === !cur) return;
+            binding.newerChat = { file: newest.file, time: newest.t, curGone: !cur };
             await this.saveConfig(this.getConfig());
             if (newest.file !== binding.dismissedChat && typeof showToast === 'function') {
                 const ch = db.characters.find(c => c.id === binding.uwuCharId);
-                showToast(`酒馆里「${ch ? (ch.remarkName || ch.name) : '这个角色'}」最近在玩另一个聊天，可以在「酒馆互联」的绑定卡片上换过去`);
+                showToast(`酒馆里「${ch ? (ch.remarkName || ch.name) : '这个角色'}」最近在玩另一个酒馆聊天，可以在「酒馆互联」的绑定卡片上改绑`);
             }
             this._notifyData();
         } else if (had) {
@@ -3026,11 +3027,16 @@ function setupTavernSyncScreen() {
             const maxMem = parseInt(char && char.maxMemory, 10) || 20;   // 这个角色在聊天设置里的“可见上文条数”
             return `<div style="${TS.subCard}">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <div style="min-width:0;"><div style="font-size:14px; font-weight:600;">${esc(charName)} ↔ ${esc(stName)}</div>
-                        <div style="font-size:11px; color:#888; margin-top:2px; word-break:break-all;">酒馆聊天：${esc(b.stChatFile || '未选')} <button data-chat="${i}" style="background:none; border:none; padding:0 2px; color:#2196F3; font-size:11px; cursor:pointer;">更换</button>酒馆里开了新聊天时，记得点「更换」。</div>
-                        ${newer ? `<div style="font-size:11px; color:#2196F3; margin-top:4px; word-break:break-all;">酒馆里这个角色最近玩的是另一个聊天「${esc(newer.file)}」，要换过去吗？
-                            <button data-newer-go="${i}" style="padding:2px 8px; border-radius:6px; border:none; background:rgba(33,150,243,0.15); color:#2196F3; font-size:11px; cursor:pointer;">换过去</button>
-                            <button data-newer-no="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:11px; cursor:pointer;">不换</button></div>` : ''}
+                    <div style="flex:1; min-width:0;"><div style="font-size:14px; font-weight:600;">${esc(charName)} ↔ ${esc(stName)}</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                            <span style="flex:1; min-width:0; font-size:11px; color:#888; word-break:break-all;">酒馆聊天：${esc(b.stChatFile || '未选')}</span>
+                            <button data-chat="${i}" style="${TS.btnS} flex-shrink:0;">更换</button></div>
+                        <div style="font-size:11px; color:#888; margin-top:2px;">酒馆里开了新聊天时，记得点「更换」。</div>
+                        ${newer ? `<div style="font-size:11px; color:#2196F3; margin-top:4px; word-break:break-all;">${newer.curGone
+                            ? `现在绑定的酒馆聊天「${esc(b.stChatFile || '')}」在酒馆中已不存在，可能已被删除或重命名。这个酒馆角色最近玩的是酒馆聊天「${esc(newer.file)}」。`
+                            : `这个酒馆角色还有另一个酒馆聊天「${esc(newer.file)}」，它的最后一条消息比现在绑定的酒馆聊天更晚，你可能在酒馆里换到那个酒馆聊天记录文件玩了。`}要把绑定改成酒馆聊天「${esc(newer.file)}」吗？改了之后，从酒馆同步剧情、往酒馆推送小手机消息都改用它；以前同步进小手机的酒馆剧情会留着，如果不想要，改绑后点「管理同步范围」，在里面点红色的「删掉以前聊天留下的……楼」。
+                            <button data-newer-go="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(33,150,243,0.5); background:rgba(33,150,243,0.15); color:#2196F3; font-size:11px; line-height:1.5; cursor:pointer;">改绑</button>
+                            <button data-newer-no="${i}" style="padding:2px 8px; border-radius:6px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:11px; line-height:1.5; cursor:pointer;">不改</button></div>` : ''}
                         <div style="font-size:11px; color:#888; margin-top:2px;">${syncInfo}</div>
                         ${isDup ? `<div style="font-size:11px; color:#f66; margin-top:2px;">这个角色上面已经绑定过，这一条不起作用，可以删掉。</div>` : ''}</div>
                     <button data-del="${i}" style="${TS.btnD}">✕</button></div>
@@ -3247,7 +3253,7 @@ function setupTavernSyncScreen() {
             btn.disabled = true;
             try {
                 await TavernSync.changeChatFile(b, newer.file);
-                showToast('已换成酒馆里最近在玩的聊天，下次同步从它开始');
+                showToast(`已改绑到酒馆聊天「${newer.file}」，下次同步从它开始`);
                 renderBindings();
             } catch (e) { showToast(`${e.message}`); btn.disabled = false; }
         });
