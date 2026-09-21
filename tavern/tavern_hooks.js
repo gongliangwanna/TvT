@@ -12,7 +12,7 @@
     const HOOKS_VERSION = '2026-09-21 l';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
-        const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js`;
+        const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js。`;
         // 记到“酒馆互联”页面顶部的问题记录里（手机上看控制台不方便）
         if (window.TavernSync && typeof window.TavernSync.reportIssue === 'function') window.TavernSync.reportIssue(text);
         else console.error(`${TAG} ${text}`);

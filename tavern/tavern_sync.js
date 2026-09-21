@@ -20,7 +20,7 @@ function readBaibaiSummary(m) {
     const leaf = m && m.extra && m.extra.bbs_leaf;
     if (!leaf) return null;
     if (!leaf.id || !leaf.delta || typeof leaf.text !== 'string') {
-        TavernSync.reportIssue('读到的柏宝书摘要格式和预期不同，可能是柏宝书更新改了格式。这些楼层会先发原文，需要调整 tavern_sync.js 的 readBaibaiSummary');
+        TavernSync.reportIssue('读到的柏宝书摘要格式和预期不同，可能是柏宝书更新改了格式。这些楼层会先发原文，需要调整 tavern_sync.js 的 readBaibaiSummary。');
         return null;
     }
     const leafSwipe = typeof leaf.swipe === 'number' ? leaf.swipe : 0;
@@ -702,7 +702,7 @@ const TavernSync = {
             if (t != null) prevTime = t;
         }
         if (unreadable.length) {
-            this.reportIssue(`有 ${unreadable.length} 楼酒馆楼层的时间读不懂（例如“${unreadable[0]}”），这些楼会排在前一楼后面。需要调整 tavern_sync.js 的 parseTimeValue`);
+            this.reportIssue(`有 ${unreadable.length} 楼酒馆楼层的时间读不懂（例如“${unreadable[0]}”），这些楼会排在前一楼后面。需要调整 tavern_sync.js 的 parseTimeValue。`);
         }
 
         let now = Date.now();
@@ -2609,6 +2609,10 @@ const TS = {
     // 页签（推送窗口、世界书窗口）：选中蓝、没选中灰字 #999（不要 inherit，主题文字色可能是粉的）
     tab: (on) => `flex:1; padding:8px 4px; border-radius:8px; border:1px solid ${on ? 'rgba(33,150,243,0.5)' : 'rgba(128,128,128,0.35)'}; background:${on ? 'rgba(33,150,243,0.18)' : 'transparent'}; color:${on ? '#2196F3' : '#999'}; font-size:14px; cursor:pointer;`,
     // 小按钮（恢复默认、+ 添加规则、全选…）：透明底 + 灰框
+    // 卡片标题栏右边的「+ 添加」「+ 添加规则」
+    btnAdd: 'padding:6px 14px; border-radius:8px; border:none; background:#cee4f1; color:#2a3032; font-size:13px; cursor:pointer;',
+    // 弹窗里整行的彩色按钮：接在 btnB/btnG/btnO 后面，和「确认」「取消」一样大
+    big: 'padding:10px; border-radius:10px; font-size:14px;',
     btnS: 'padding:4px 10px; border-radius:6px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:12px; cursor:pointer;',
     // 弹窗里删东西的次要按钮：淡红底（最终确认的「确认删除」才用实心红）
     btnR: 'padding:10px; border-radius:10px; border:none; background:rgba(244,67,54,0.15); color:#f66; font-size:14px; font-weight:500; cursor:pointer;',
@@ -2644,7 +2648,7 @@ function setupTavernSyncScreen() {
                 <div style="${TS.card}">
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <span style="${TS.title}">角色绑定</span>
-                        <button id="ts-add-btn" style="padding:6px 14px; border-radius:8px; border:none; background:#cee4f1; color:#2a3032; font-size:13px; cursor:pointer;">+ 添加</button>
+                        <button id="ts-add-btn" style="${TS.btnAdd}">+ 添加</button>
                     </div>
                     <div id="ts-bindings-list"></div>
                 </div>
@@ -2706,7 +2710,7 @@ function setupTavernSyncScreen() {
                 <div style="${TS.card}">
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <span style="${TS.title}">正则清洗规则</span>
-                        <button id="ts-add-rule-btn" style="${smallBtn}">+ 添加规则</button>
+                        <button id="ts-add-rule-btn" style="${TS.btnAdd}">+ 添加规则</button>
                     </div>
                     <div style="font-size:12px; color:#888; margin-bottom:10px; line-height:1.6;">用正则把文字里不想要的部分删掉，或者只挑出想要的部分，比如删掉酒馆 AI 回复里的思考过程。每条规则可以选用在同步（酒馆剧情进小手机时）、推送（小手机消息进酒馆时），还是两头都用；多条规则按列表顺序依次处理。</div>
                     <div id="ts-rules-list"></div>
@@ -2914,7 +2918,7 @@ function setupTavernSyncScreen() {
                 ${users.map(u => `<button class="ts-user-btn" data-handle="${u.handle}" data-pwd="${u.password}"
                     style="display:flex; align-items:center; gap:10px; width:100%; padding:12px; border-radius:10px; border:none; background:rgba(128,128,128,0.1); color:inherit; font-size:14px; cursor:pointer; margin-bottom:8px; text-align:left;">
                     <span>${esc(u.name || u.handle)}</span>
-                    ${u.password ? '<span style="font-size:11px; color:#999; margin-left:auto;">需要密码</span>' : ''}</button>`).join('')}
+                    ${u.password ? '<span style="font-size:11px; color:#888; margin-left:auto;">需要密码</span>' : ''}</button>`).join('')}
                 <div id="ts-password-area" style="display:none; margin-top:8px;">
                     <input type="password" id="ts-pwd-input" placeholder="输入密码" style="${TS.input} margin-bottom:8px;">
                     <button id="ts-pwd-submit" style="width:100%; ${TS.btnP}">登录</button></div>`;
@@ -2962,7 +2966,7 @@ function setupTavernSyncScreen() {
     function renderRules() {
         const cfg = TavernSync.getConfig();
         const rules = cfg.cleanRules || [];
-        if (!rules.length) { rulesList.innerHTML = '<div style="text-align:center; color:#888; font-size:12px; padding:10px;">暂无规则，消息原样注入。</div>'; return; }
+        if (!rules.length) { rulesList.innerHTML = '<div style="text-align:center; color:#888; font-size:12px; padding:10px;">暂无规则，文字原样同步和推送。</div>'; return; }
         rulesList.innerHTML = rules.map((r, i) => `
             <div style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(128,128,128,0.08); border-radius:8px; margin-bottom:6px;">
                 <div style="flex:1; min-width:0; cursor:pointer;" data-edit="${i}">
@@ -3021,9 +3025,9 @@ function setupTavernSyncScreen() {
             const trimText = trimmedCount ? `，其中 ${trimmedCount} 个回合已精简` : '';
             // “上次同步”只写和现在这个聊天的；换了聊天还没同步时不写旧聊天的时间
             const syncInfo = (synced
-                ? `小手机里有 ${floorCount} 楼酒馆剧情（${sizeText}${trimText}）<br>上次同步 ${fmtSync(mem.lastSync)}`
-                : (mem && mem.lastSync ? '这个酒馆聊天文件还没同步' : '未同步'))
-                + (otherMsgs.length ? `<br>另有 ${otherMsgs.length} 楼来自以前绑定的酒馆聊天文件（${sizeOf(charsOf(otherMsgs))}）` : '');
+                ? `小手机里有 ${floorCount} 楼酒馆剧情（${sizeText}${trimText}）。<br>上次同步 ${fmtSync(mem.lastSync)}`
+                : (mem && mem.lastSync ? '这个酒馆聊天文件还没同步。' : '未同步'))
+                + (otherMsgs.length ? `<br>另有 ${otherMsgs.length} 楼来自以前绑定的酒馆聊天文件（${sizeOf(charsOf(otherMsgs))}）。` : '');
             const maxMem = parseInt(char && char.maxMemory, 10) || 20;   // 这个角色在聊天设置里的“可见上文条数”
             return `<div style="${TS.subCard}">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -3031,7 +3035,7 @@ function setupTavernSyncScreen() {
                         <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
                             <span style="flex:1; min-width:0; font-size:11px; color:#888; word-break:break-all;">酒馆聊天文件：${esc(b.stChatFile || '未选')}</span>
                             <button data-chat="${i}" style="${TS.btnS} flex-shrink:0;">更换</button></div>
-                        <div style="font-size:11px; color:#888; margin-top:2px;">酒馆里开了新的酒馆聊天文件时，记得点「更换」。</div>
+                        <div style="font-size:11px; color:#888; margin-top:2px;">酒馆里开了新的酒馆聊天文件时，记得更换。</div>
                         ${newer ? `<div style="font-size:11px; color:#2196F3; margin-top:4px; word-break:break-all;">${newer.curGone
                             ? `现在绑定的酒馆聊天文件「${esc(b.stChatFile || '')}」已不存在，可能已被删除或重命名。这个酒馆角色最近玩的是酒馆聊天文件「${esc(newer.file)}」。`
                             : `这个酒馆角色还有另一个酒馆聊天文件「${esc(newer.file)}」，它的最后一条消息比现在绑定的酒馆聊天文件更晚，你可能在酒馆里换到那个酒馆聊天文件玩了。`}要把绑定改成酒馆聊天文件「${esc(newer.file)}」吗？改了之后，从酒馆同步剧情、往酒馆推送小手机消息都改用它；以前同步进小手机的酒馆剧情会留着，如果不想要，改绑后点「管理同步范围」，在里面点红色的「删掉以前的酒馆聊天文件留下的……楼」。
@@ -3240,7 +3244,7 @@ function setupTavernSyncScreen() {
             if (!b) return;
             const ch = db.characters.find(c => c.id === b.uwuCharId);
             const name = `${ch ? (ch.remarkName || ch.name) : '未知'} ↔ ${(b.stCharAvatar || '').replace('.png', '') || '未知'}`;
-            if (!confirm(`删除「${name}」的绑定？这个绑定的开关和设置会一起删掉；小手机里已经导入的酒馆剧情、酒馆里已经推送的消息都不受影响。`)) return;
+            if (!confirm(`删除「${name}」的绑定？这个绑定的开关和设置会一起删掉；已经同步进小手机的酒馆剧情、酒馆里已经推送的消息都不受影响。`)) return;
             cfg.bindings.splice(idx, 1);
             await TavernSync.saveConfig(cfg);
             renderBindings();
@@ -3420,15 +3424,15 @@ async function showAutoPushModal(binding, onDone) {
         </div>
 
         <div id="auto-mode-raw" style="display:flex; flex-direction:column;">
-            <div style="font-size:12px; color:#888; margin-bottom:6px;">推送这些消息（默认是未推送的那一段）。</div>
+            <div style="font-size:12px; color:#888; margin-bottom:6px; line-height:1.6;">推送这些消息（默认是未推送的那一段）。</div>
             ${rangeRow('auto-raw', unpushedCount ? firstUnpushed : total, total)}
             <div id="auto-raw-preview" style="font-size:12px; color:inherit; background:rgba(128,128,128,0.08); border-radius:8px; padding:10px; margin-bottom:12px; max-height:180px; overflow-y:auto; white-space:pre-wrap; line-height:1.5; border-left:3px solid #2196F3;"></div>
         </div>
 
         <div id="auto-mode-summary" style="display:none; flex-direction:column;">
-            <div style="font-size:12px; color:#888; margin-bottom:6px;">把这些消息浓缩成一段总结后推送（消耗 1 次总结 API）。</div>
+            <div style="font-size:12px; color:#888; margin-bottom:6px; line-height:1.6;">把这些消息浓缩成一段总结后推送（消耗 1 次总结 API）。</div>
             ${rangeRow('auto-sum', unpushedCount ? firstUnpushed : total, total)}
-            <button id="auto-sum-gen" style="${TS.btnG} width:100%; margin-bottom:10px;">生成小总结</button>
+            <button id="auto-sum-gen" style="${TS.btnG} ${TS.big} width:100%; margin-bottom:10px;">生成小总结</button>
             <textarea id="auto-sum-text" placeholder="生成后可在此编辑..." style="width:100%; box-sizing:border-box; min-height:130px; max-height:220px; padding:10px; border-radius:8px; border:1px solid rgba(128,128,128,0.35); background:rgba(128,128,128,0.08); color:inherit; font-size:13px; line-height:1.6; resize:vertical; margin-bottom:12px;"></textarea>
         </div>
 
@@ -3667,7 +3671,7 @@ function showTrimModal(binding, onDone) {
             精简过的楼层发给 AI 时一律用摘要，不算在「最近几楼发原文」里面。
         </div>
         <button id="tm-do" style="width:100%; ${TS.btnP} margin-bottom:8px;">精简成摘要</button>
-        <button id="tm-restore" style="width:100%; padding:10px; border-radius:10px; border:none; background:rgba(76,175,80,0.15); color:#4CAF50; font-size:14px; font-weight:500; cursor:pointer; margin-bottom:8px;">取回原文</button>
+        <button id="tm-restore" style="width:100%; ${TS.btnG} ${TS.big} margin-bottom:8px;">取回原文</button>
         <button id="tm-cancel" style="${cancelStyle}">取消</button>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
     const close = () => overlay.remove();
@@ -3920,7 +3924,7 @@ async function showImportCharModal(binding) {
         userPersonaHTML = `
             <div style="margin-bottom:12px;">
                 <div style="display:flex; align-items:center; justify-content:space-between;">
-                    <label style="${TS.label} margin-bottom:0;">用户人设（"我"的设定）</label>
+                    <label style="${TS.label} margin-bottom:0;">用户人设（“我”的人设）</label>
                     ${hasMyPersona ? '<span style="font-size:11px; color:#FF9800;">将覆盖</span>' : ''}
                 </div>
                 <select id="ic-persona-select" aria-label="用户人设" title="用户人设" style="${TS.input} margin-top:4px;">
@@ -3953,7 +3957,7 @@ async function showImportCharModal(binding) {
             <div style="margin-bottom:12px;">
                 <label style="${TS.label}">Post History Instructions</label>
                 <textarea id="ic-posthistory" style="${TS.input} height:60px; resize:vertical; font-size:12px;" readonly>${esc(result.postHistory)}</textarea>
-                <div style="font-size:12px; color:#888; margin-top:4px;">仅供参考，不会自动导入。</div>
+                <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">仅供参考，不会自动导入。</div>
             </div>` : ''}
         <div style="display:flex; gap:10px;">
             <button id="ic-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
@@ -4005,7 +4009,7 @@ async function showImportCharModal(binding) {
         } else {
             await saveData();
         }
-        overlay.remove(); showToast('设定已导入');
+        overlay.remove(); showToast('人设已导入');
     });
 }
 
@@ -4049,8 +4053,8 @@ async function showWorldBookModal(binding) {
             <select id="wb-category" aria-label="加到分组" title="加到分组" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px;"></select>
         </div>
         <div style="display:flex; gap:8px; margin-bottom:8px;">
-            <button id="wb-import" style="flex:1; ${TS.btnB}">复制到小手机世界书</button>
-            <button id="wb-update" style="flex:1; ${TS.btnG}">更新小手机里的内容</button>
+            <button id="wb-import" style="flex:1; ${TS.btnB} ${TS.big}">复制到小手机世界书</button>
+            <button id="wb-update" style="flex:1; ${TS.btnG} ${TS.big}">更新小手机里的内容</button>
         </div>
         <button id="wb-close" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">关闭</button>`;
 
@@ -4186,7 +4190,7 @@ async function showWorldBookModal(binding) {
         renderEntries(currentSourceIdx);
         // @深度 是酒馆特有的位置（插在聊天记录中间第 N 层），小手机没有这个概念，只能放到“后”
         const atDepth = selected.filter(e => e.position === 4).length;
-        const depthNote = atDepth ? `。其中 ${atDepth} 条在酒馆里是 @深度 插入，已放到 注入位置：后` : '';
+        const depthNote = atDepth ? `。其中 ${atDepth} 条在酒馆里是 @深度 插入，已放到「注入位置：后」` : '';
         showToast(added ? `已复制 ${added} 条到分组「${category}」${skipped ? `，${skipped} 条之前复制过（可用「更新小手机里的内容」）` : ''}${depthNote}` : '勾选的条目之前都复制过了，可以用「更新小手机里的内容」');
     });
 
@@ -4266,14 +4270,14 @@ function showPromptPreview(binding) {
         sections.push({
             title: '小手机聊天记录里的酒馆剧情',
             meta: `最近 ${maxMemory} 条小手机聊天记录中有 ${tavernViews.length} 楼（一共 ${totalFloors} 楼）：`
-                + Object.entries(counts).map(([k, n]) => `${labels[k]} ${n}`).join('，'),
+                + Object.entries(counts).map(([k, n]) => `${labels[k]} ${n}`).join('，') + '。',
             items: tavernViews.map(m => ({ label: labels[m.__tavernView], color: colors[m.__tavernView], content: m.content })),
             color: '#2196F3',
         });
     } else {
         sections.push({ title: '小手机聊天记录里的酒馆剧情', content: totalFloors
             ? `最近 ${maxMemory} 条小手机聊天记录里没有酒馆楼层（一共 ${totalFloors} 楼，都已经在更早的位置，AI 这次看不到原文）。`
-            : '还没有从酒馆导入任何楼层。点「同步酒馆剧情」导入。', color: '#999' });
+            : '小手机里还没有酒馆剧情，点「同步酒馆剧情」同步进来。', color: '#999' });
     }
 
     sections.forEach(s => {
@@ -4284,7 +4288,7 @@ function showPromptPreview(binding) {
 
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">提示词预览 — ${esc(char.remarkName || char.name)}</h3>
-        <div style="font-size:12px; color:#888; margin-bottom:12px;">下面是 AI 下次会收到的酒馆相关内容，预估 <span style="color:#4CAF50; font-weight:600;">~${totalTokens.toLocaleString()}</span> tokens。</div>
+        <div style="font-size:12px; color:#888; margin-bottom:12px; line-height:1.6;">下面是 AI 下次会收到的酒馆相关内容，预估 <span style="color:#4CAF50; font-weight:600;">~${totalTokens.toLocaleString()}</span> tokens。</div>
         <div style="flex:1; overflow-y:auto; margin-bottom:12px;">
             ${sections.map(s => `
                 <div style="margin-bottom:14px;">
@@ -4293,7 +4297,7 @@ function showPromptPreview(binding) {
                         <span style="font-size:13px; font-weight:600; color:${s.color};">${esc(s.title)}</span>
                         <span style="font-size:11px; color:#888; margin-left:auto;">~${s.tokens.toLocaleString()} tokens</span>
                     </div>
-                    ${s.meta ? `<div style="font-size:12px; color:#888; margin-bottom:6px;">${esc(s.meta)}</div>` : ''}
+                    ${s.meta ? `<div style="font-size:12px; color:#888; margin-bottom:6px; line-height:1.6;">${esc(s.meta)}</div>` : ''}
                     ${s.content ? `<div style="${box} border-left:3px solid ${s.color};">${esc(s.content)}</div>` : ''}
                     ${(s.items || []).map(it => `
                         <div style="font-size:11px; color:${it.color}; margin:8px 0 3px;">${esc(it.label)}</div>
