@@ -1933,9 +1933,10 @@ ${fields(':focus')} { border-color: #cee4f1 !important; background-color: var(--
 
 // ========== UI 样式常量 ==========
 const TS = {
-    // 模块卡片：照 yuan 设置页的分组（.kkt-group）——白底、圆角 12，靠白底和页面的灰蓝背景区分。
+    // 模块卡片：照 yuan 设置页的分组（.kkt-group）——白底、圆角 12。
+    // 「酒馆互联」页面本身是白底，所以再照 yuan 白底页面（聊天设置、自定义）的做法加浅灰框 + 淡阴影，否则卡片和页面融在一起。
     // 夜间模式下 yuan 会定义 --panel-bg，跟着变深。（原来用的 --received-bg 在 yuan 里没定义，卡片几乎透明）
-    card: 'background:var(--panel-bg, #fff); border-radius:12px; padding:16px; margin-bottom:12px;',
+    card: 'background:var(--panel-bg, #fff); border:1px solid #edf0f3; box-shadow:0 2px 10px rgba(30,41,59,0.05); border-radius:12px; padding:16px; margin-bottom:12px;',
     // 卡片里再套的小卡片（每个角色的绑定）：照 yuan 思维链里的条目卡片（.cot-item-card）
     subCard: 'background:var(--panel-bg, #fff); border:1px solid #eee; border-radius:10px; padding:14px; margin-bottom:10px;',
     label: 'font-size:13px; color:#999; display:block; margin-bottom:4px;',
