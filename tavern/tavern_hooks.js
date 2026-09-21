@@ -22,7 +22,7 @@
     function addScreen() {
         if (document.getElementById('tavern-sync-screen')) return;
         const moreScreen = document.getElementById('more-screen');
-        if (!moreScreen) return fail('找不到“更多”页面 #more-screen');
+        if (!moreScreen) return fail('找不到「更多」页面 #more-screen');
         const screen = document.createElement('div');
         screen.id = 'tavern-sync-screen';
         screen.className = 'screen';
@@ -42,7 +42,7 @@
     function addMenuItem() {
         if (document.querySelector('#more-screen .menu-item[data-action="tavern-sync"]')) return;
         const grids = document.querySelectorAll('#more-screen .menu-grid');
-        if (!grids.length) return fail('找不到“更多”页面里的菜单格子 .menu-grid');
+        if (!grids.length) return fail('找不到「更多」页面里的菜单格子 .menu-grid');
         const item = document.createElement('div');
         item.className = 'menu-item';
         item.dataset.action = 'tavern-sync';
@@ -74,7 +74,7 @@
     function addChatPushButton() {
         if (document.getElementById('push-tavern-btn')) return;
         const grid = document.querySelector('#panel-function-area .expansion-grid');
-        if (!grid) return fail('找不到聊天页“+”面板的按钮区 #panel-function-area .expansion-grid');
+        if (!grid) return fail('找不到聊天页「+」面板的按钮区 #panel-function-area .expansion-grid');
         const item = document.createElement('div');
         item.className = 'expansion-item';
         item.id = 'push-tavern-btn';
@@ -113,7 +113,7 @@
     // yuan 用 showPanel('function') 打开“+”面板。在它外面套一层：打开前先决定按钮显不显示
     function hookShowPanel() {
         if (typeof window.showPanel !== 'function') {
-            return fail('找不到 yuan 的面板函数 showPanel，聊天页的“推送酒馆”按钮不会显示');
+            return fail('找不到 yuan 的面板函数 showPanel，聊天页的「推送酒馆」按钮不会显示');
         }
         const originalShowPanel = window.showPanel;
         window.showPanel = function (type) {
@@ -167,7 +167,7 @@
 
     function hookRegenerate() {
         if (typeof window.handleRegenerate !== 'function') {
-            return fail('找不到 yuan 的重新生成函数 handleRegenerate，“重新生成”会删掉后面的酒馆剧情（下次同步会恢复），旧回复也会从酒馆删掉');
+            return fail('找不到 yuan 的重新生成函数 handleRegenerate，「重新生成」会删掉后面的酒馆剧情（下次同步会恢复），旧回复也会从酒馆删掉');
         }
         const originalRegenerate = window.handleRegenerate;
         window.handleRegenerate = function () {
