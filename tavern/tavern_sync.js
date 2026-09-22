@@ -131,7 +131,7 @@ function tagFloorNth(list) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-22 g',
+    SYNC_VERSION: '2026-09-22 h',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -1105,6 +1105,32 @@ const TavernSync = {
         return changed;
     },
 
+    // 两张酒馆卡片是不是同一楼（同一个酒馆聊天、同一个身份）
+    _sameCard(a, b) {
+        const x = a && a.tavern, y = b && b.tavern;
+        if (!x || !y) return false;
+        return (x.chatFile || '') === (y.chatFile || '') && x.sendDate === y.sendDate && !!x.isUser === !!y.isUser
+            && (x.genStarted === undefined || y.genStarted === undefined || x.genStarted === y.genStarted)
+            && (x.nth === undefined || y.nth === undefined || x.nth === y.nth);
+    },
+
+    // 把暂时拿开的酒馆卡片放回聊天记录（重新生成、切换消息版本时用），再按时间排好。
+    // 拿开期间可能正好自动同步了一次（比如 AI 回复时你切出去又切回来），同一楼已经被重新导入了一份：
+    // 留下原来那张（摘要、精简记录都在它身上），删掉新导入的那份，免得同一段剧情出现两次。返回删掉了几张
+    putBackFloors(char, floors) {
+        if (!char || !Array.isArray(char.history) || !Array.isArray(floors) || !floors.length) return 0;
+        const present = new Set(char.history);
+        const back = floors.filter(f => f && !present.has(f));
+        const dup = new Set(char.history.filter(m => m && m.fromTavern && back.some(f => this._sameCard(f, m))));
+        if (dup.size) {
+            const kept = char.history.filter(m => !dup.has(m));
+            char.history.splice(0, char.history.length, ...kept);   // 原地换，保持 yuan 手里的引用有效
+        }
+        char.history.push(...back);
+        this.placeTavernFloors(char);
+        return dup.size;
+    },
+
     // 读出酒馆这个聊天现在的楼层情况（给“清空并重选范围”弹窗用）
     //   total：酒馆里一共几楼（楼层号 0 ~ total-1，和酒馆界面上的 # 号一致）
     //   usable：其中会被导入的楼层（去掉小手机推送的、番外楼、空楼），每项 { floor, marker }
@@ -1713,14 +1739,10 @@ const TavernSync = {
                 }
                 // 合并在酒馆原有楼层里的 → 只去掉小手机那一段
                 stMsg.mes = stripOwnPhoneBlock(stMsg.mes);
-                delete stMsg.extra.from_uwu; delete stMsg.extra.uwu_msg_ids; delete stMsg.extra.uwu_push_time;
+                delete stMsg.extra.from_uwu; delete stMsg.extra.uwu_msg_ids; delete stMsg.extra.uwu_push_time; delete stMsg.extra.uwu_line_lens;
                 continue;
             }
-            const lines = surviving.map(id => phoneById.get(id)).filter(Boolean).map(toLine).filter(l => l && l.trim());
-            const phoneChat = `<phone_chat>\n${lines.join('\n')}\n</phone_chat>`;
-            if (stMsg.extra.uwu_created) stMsg.mes = phoneChat;
-            else stMsg.mes = replaceOwnPhoneBlock(stMsg.mes || '', phoneChat);
-            stMsg.extra.uwu_msg_ids = surviving;
+            this._rebuildPhoneBlock(stMsg, surviving, phoneById, toLine);
         }
         if (!changed) return { removed: 0 };
         await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: all });
@@ -1876,6 +1898,52 @@ const TavernSync = {
         return { allUwuMsgs, toLine: toLineSafe, phoneById };
     },
 
+    // 酒馆楼层里小手机那一段，每条消息写进去的那一行（按 uwu_msg_ids 的顺序）。
+    // 推送时在楼层上记下每一行有多长（extra.uwu_line_lens，写空的记 0），靠它从现有文字里把每一行原样切出来。
+    // 返回 Map(编号 → 那一行)；没记过、或者这一段的文字被改过（长度对不上）返回 null
+    _blockLines(stMsg) {
+        const ex = stMsg && stMsg.extra;
+        const ids = ex && ex.uwu_msg_ids, lens = ex && ex.uwu_line_lens;
+        if (!Array.isArray(ids) || !Array.isArray(lens) || lens.length !== ids.length) return null;
+        if (!lens.every(n => Number.isInteger(n) && n >= 0)) return null;
+        const b = lastPhoneBlock(stMsg.mes);
+        const head = '<phone_chat>\n', tail = '\n</phone_chat>';
+        if (!b || !b.text.startsWith(head) || !b.text.endsWith(tail)) return null;
+        const inner = b.text.slice(head.length, b.text.length - tail.length);
+        const filled = lens.filter(n => n > 0);
+        const expect = filled.reduce((s, n) => s + n, 0) + Math.max(0, filled.length - 1);
+        if (inner.length !== expect) return null;
+        const map = new Map();
+        let pos = 0;
+        ids.forEach((id, i) => {
+            if (!lens[i]) { map.set(id, ''); return; }
+            map.set(id, inner.slice(pos, pos + lens[i]));
+            pos += lens[i] + 1;
+        });
+        return map;
+    },
+    // 每一行的长度（和 uwu_msg_ids 一一对应，写空的是 0）
+    _lineLens(lines) {
+        return lines.map(l => (typeof l === 'string' && l.trim()) ? l.length : 0);
+    },
+    // 用 nextIds 重写这一楼小手机那一段。
+    // 每条优先用酒馆里原来那一行：「留在酒馆」的、重新生成时暂时保留的旧回复在小手机里已经没有了，
+    // 按小手机现有消息重新生成会把它们的文字弄丢；改了推送设置也不该回头改以前推过去的行。
+    // 原来那一行找不到的（修好之前推的旧楼层）才按小手机现在的消息生成，小手机里也没有的就只能去掉
+    _rebuildPhoneBlock(stMsg, nextIds, phoneById, toLine) {
+        const stored = this._blockLines(stMsg);
+        const lines = nextIds.map(id => {
+            if (stored && stored.has(id)) return stored.get(id);
+            const m = phoneById.get(id);
+            return m ? toLine(m) : '';
+        });
+        const phoneChat = `<phone_chat>\n${lines.filter(l => l && l.trim()).join('\n')}\n</phone_chat>`;
+        if (stMsg.extra.uwu_created) stMsg.mes = phoneChat;
+        else stMsg.mes = replaceOwnPhoneBlock(stMsg.mes || '', phoneChat);
+        stMsg.extra.uwu_msg_ids = nextIds;
+        stMsg.extra.uwu_line_lens = this._lineLens(lines);
+    },
+
     // 把“上次推送到哪一条”往后挪到 id 那条；已经在更后面就不动（手动推一段较早的消息时不能往回退，
     // 否则下次自动推送会把中间已经推过的再推一遍）
     _advancePushMark(binding, char, id) {
@@ -1972,6 +2040,7 @@ const TavernSync = {
                 delete stMsg.extra.from_uwu;
                 delete stMsg.extra.uwu_msg_ids;
                 delete stMsg.extra.uwu_push_time;
+                delete stMsg.extra.uwu_line_lens;
                 continue;
             }
             if (stMsg.extra.uwu_summary) {
@@ -1979,12 +2048,8 @@ const TavernSync = {
                 stMsg.extra.uwu_msg_ids = survivingIds;
                 continue;
             }
-            // 用还在的消息重建小手机那一段
-            const lines = survivingIds.map(id => phoneById.get(id)).filter(Boolean).map(toLine).filter(l => l && l.trim());
-            const phoneChat = `<phone_chat>\n${lines.join('\n')}\n</phone_chat>`;
-            if (stMsg.extra.uwu_created) stMsg.mes = phoneChat;
-            else stMsg.mes = replaceOwnPhoneBlock(stMsg.mes || '', phoneChat);
-            stMsg.extra.uwu_msg_ids = survivingIds;
+            // 用还在的消息重建小手机那一段（每条用酒馆里原来那一行，见 _rebuildPhoneBlock）
+            this._rebuildPhoneBlock(stMsg, survivingIds, phoneById, toLine);
         }
 
         // 酒馆里现在已经有的小手机消息（删除处理之后）
@@ -2032,8 +2097,10 @@ const TavernSync = {
         }
 
         let pushLines = [];
+        let rawLines = [];      // 和 newMsgs 一一对应（写空的也在），用来记每一行多长
         if (newMsgs.length > 0) {
-            pushLines = newMsgs.map(toLine).filter(l => l && l.trim());
+            rawLines = newMsgs.map(toLine);
+            pushLines = rawLines.filter(l => l && l.trim());
             // 新消息剥掉状态栏等之后全部为空，就当没有新消息（删除照样处理）
             if (pushLines.length === 0) { newMsgs = []; }
         }
@@ -2056,6 +2123,9 @@ const TavernSync = {
                 // 这一楼里已经有小手机那一段（楼层末尾那段）→ 接着写进那一段；
                 // 没有 → 在楼层末尾另起一段。不能往楼里第一段 <phone_chat> 里塞：那可能是酒馆 AI 自己写的
                 const own = (target.extra && target.extra.from_uwu) ? lastPhoneBlock(existingContent) : null;
+                // 接着写之前先看原来每一行的长度记录还对不对得上，对得上才接着记（对不上就不记，以后重写这一楼时按旧办法）
+                const hadIds = !!(target.extra && Array.isArray(target.extra.uwu_msg_ids) && target.extra.uwu_msg_ids.length);
+                const oldLens = own ? (this._blockLines(target) ? target.extra.uwu_line_lens : null) : (hadIds ? null : []);
                 if (own) {
                     const inner = own.text.slice(0, own.text.length - '</phone_chat>'.length);
                     target.mes = existingContent.slice(0, own.start) + inner + lines.join('\n') + '\n</phone_chat>' + existingContent.slice(own.end);
@@ -2065,6 +2135,8 @@ const TavernSync = {
                 if (!target.extra) target.extra = {};
                 target.extra.from_uwu = true;
                 target.extra.uwu_msg_ids = [...(target.extra.uwu_msg_ids || []), ...newMsgs.map(m => m.id)];
+                if (oldLens) target.extra.uwu_line_lens = [...oldLens, ...this._lineLens(rawLines)];
+                else delete target.extra.uwu_line_lens;
                 target.extra.uwu_push_time = Date.now();
             } else {
                 // 新楼层模式（默认）：推送为 user 侧消息，方便用正则只剥离 AI 输出的 phone_chat
@@ -2074,7 +2146,7 @@ const TavernSync = {
                     is_user: true, is_system: false,
                     send_date: new Date().toISOString(),
                     mes: mergedContent,
-                    extra: { from_uwu: true, uwu_created: true, uwu_push_time: Date.now(), uwu_msg_ids: newMsgs.map(m => m.id), st_char_name: stCharName },
+                    extra: { from_uwu: true, uwu_created: true, uwu_push_time: Date.now(), uwu_msg_ids: newMsgs.map(m => m.id), uwu_line_lens: this._lineLens(rawLines), st_char_name: stCharName },
                 });
             }
         }
@@ -2121,10 +2193,16 @@ const TavernSync = {
             const ids = stMsg && stMsg.extra && stMsg.extra.uwu_msg_ids;
             if (!Array.isArray(ids) || !ids.includes(msg.id)) continue;
             if (stMsg.extra.uwu_summary) continue;   // 小总结那一楼是总结文字，没有原来那一行
+            const stored = this._blockLines(stMsg);
             const at = typeof stMsg.mes === 'string' ? stMsg.mes.indexOf(oldLine) : -1;
             if (at < 0) continue;
             // 用切开再拼的办法换，不用 replace：总结里带 $ 符号时 replace 会把它当成特殊指令
             stMsg.mes = stMsg.mes.slice(0, at) + newLine + stMsg.mes.slice(at + oldLine.length);
+            // 每一行的长度记录跟着改（原来记录就对不上的，改完也对不上，不用管）
+            if (stored && stored.get(msg.id) === oldLine) {
+                stMsg.extra.uwu_line_lens = stMsg.extra.uwu_line_lens.slice();
+                stMsg.extra.uwu_line_lens[ids.indexOf(msg.id)] = newLine.length;
+            }
             updated = true;
             break;
         }
@@ -2145,14 +2223,8 @@ const TavernSync = {
         const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
         const all = Array.isArray(stMsgs) ? [...stMsgs] : [];
         const { allUwuMsgs, toLine, phoneById } = this._pushHelpers(char, binding);
-        const rebuild = (stMsg, nextIds) => {
-            // 用新的编号列表重建这一楼小手机那一段；已经不在小手机里的消息（比如之前删掉的）照旧去掉
-            const lines = nextIds.map(id => phoneById.get(id)).filter(Boolean).map(toLine).filter(l => l && l.trim());
-            const phoneChat = `<phone_chat>\n${lines.join('\n')}\n</phone_chat>`;
-            if (stMsg.extra.uwu_created) stMsg.mes = phoneChat;
-            else stMsg.mes = replaceOwnPhoneBlock(stMsg.mes || '', phoneChat);
-            stMsg.extra.uwu_msg_ids = nextIds;
-        };
+        // 用新的编号列表重建这一楼小手机那一段：别的消息用酒馆里原来那一行，新回复按小手机里的生成
+        const rebuild = (stMsg, nextIds) => this._rebuildPhoneBlock(stMsg, nextIds, phoneById, toLine);
 
         let changed = false;
         let intoSummary = false;   // 新回复是不是换进了小总结楼（那样只算“被小总结推过”，不算推过原文）
@@ -6173,21 +6245,28 @@ async function showBindingEditor(onSave) {
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">添加角色绑定</h3>
         <div style="margin-bottom:12px;"><label style="${TS.label}">小手机角色</label>
-            <select id="be-uwu" aria-label="小手机角色" title="小手机角色" style="${TS.input}">${db.characters.map(c => `<option value="${c.id}">${esc(c.remarkName || c.name)}</option>`).join('')}</select></div>
+            <select id="be-uwu" aria-label="小手机角色" title="小手机角色" style="${TS.input}">${db.characters.map(c => `<option value="${esc(c.id)}">${esc(c.remarkName || c.name)}</option>`).join('')}</select></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">酒馆角色</label>
-            <select id="be-st" aria-label="酒馆角色" title="酒馆角色" style="${TS.input}">${stCharacters.map(c => `<option value="${c.avatar}">${esc(c.name)}</option>`).join('')}</select></div>
+            <select id="be-st" aria-label="酒馆角色" title="酒馆角色" style="${TS.input}">${stCharacters.map(c => `<option value="${esc(c.avatar)}">${esc(c.name)}</option>`).join('')}</select></div>
         <div style="margin-bottom:16px;"><label style="${TS.label}">酒馆聊天文件</label>
-            <select id="be-chat" aria-label="酒馆聊天文件" title="酒馆聊天文件" style="${TS.input}"><option>加载中...</option></select></div>
+            <select id="be-chat" aria-label="酒馆聊天文件" title="酒馆聊天文件" style="${TS.input}"><option value="">加载中...</option></select></div>
         <div style="display:flex; gap:10px;">
             <button id="be-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
             <button id="be-save" style="flex:1; ${TS.btnP}">保存</button></div>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
     const stSelect = modal.querySelector('#be-st'), chatSelect = modal.querySelector('#be-chat');
+    // 「加载中」那一项不带值：没加载完就点保存会提示先选，不会把“加载中...”当成聊天文件名绑上。
+    // 快速换酒馆角色时，只认最后一次读到的列表（先发的请求后回来，会把上一个角色的聊天填进来）
+    let loadToken = 0;
     async function loadChats() {
-        if (!stSelect.value) return; chatSelect.innerHTML = '<option>加载中...</option>';
+        if (!stSelect.value) return;
+        const token = ++loadToken;
+        chatSelect.innerHTML = '<option value="">加载中...</option>';
         try { const chats = await TavernSync.getSTChats(stSelect.value);
-            chatSelect.innerHTML = chats?.length ? chats.map(c => `<option value="${c.file_name.replace('.jsonl', '')}">${c.file_name}</option>`).join('') : '<option value="">暂无酒馆聊天文件</option>';
-        } catch { chatSelect.innerHTML = '<option value="">加载失败</option>'; }
+            if (token !== loadToken) return;
+            const list = (Array.isArray(chats) ? chats : []).filter(c => c && c.file_name);
+            chatSelect.innerHTML = list.length ? list.map(c => `<option value="${esc(String(c.file_name).replace(/\.jsonl$/, ''))}">${esc(c.file_name)}</option>`).join('') : '<option value="">暂无酒馆聊天文件</option>';
+        } catch { if (token === loadToken) chatSelect.innerHTML = '<option value="">加载失败</option>'; }
     }
     stSelect.addEventListener('change', loadChats); loadChats();
     modal.querySelector('#be-cancel').addEventListener('click', () => overlay.remove());

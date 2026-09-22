@@ -9,7 +9,7 @@
 (function () {
     const TAG = '[酒馆外挂]';
     // 文件版本：界面上已不显示，排查时可以临时显示出来（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-22 e';
+    const HOOKS_VERSION = '2026-09-22 f';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是小手机更新后改了结构，需要调整 tavern/tavern_hooks.js。`;
@@ -270,8 +270,8 @@
             }
         }
         if (regen.removedFloors.length) {
-            char.history.push(...regen.removedFloors);
-            window.TavernSync.placeTavernFloors(char);
+            // 生成期间如果自动同步过（切出去又切回来），同一楼会被重新导入一份，放回时去掉那份（见 putBackFloors）
+            window.TavernSync.putBackFloors(char, regen.removedFloors);
         }
         stripTavernFromVersions(char);   // 别让酒馆楼层被存进“旧版本”里
         if (typeof saveData === 'function') await saveData();
@@ -730,7 +730,7 @@
                     // 2. 把真正的酒馆卡片放回来（恢复旧版本时它们被一起删掉了），再按时间排好
                     const present = new Set(char.history.map(m => m && m.id));
                     const missing = before.filter(m => !present.has(m.id));
-                    if (missing.length) char.history.push(...missing);
+                    window.TavernSync.putBackFloors(char, missing);
                     window.TavernSync.placeTavernFloors(char);
                     stripTavernFromVersions(char);
                     if (typeof saveData === 'function') await saveData();
