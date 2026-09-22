@@ -131,7 +131,7 @@ function tagFloorNth(list) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-22 b',
+    SYNC_VERSION: '2026-09-22 d',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -393,6 +393,28 @@ const TavernSync = {
         binding.pushedIds = [...set];
     },
 
+    // “被小总结推过的消息名单”（binding.summarizedIds）：和上面那份分开记，因为它们在酒馆里是一段总结、不是原文，
+    // 不能算进“丢了要补推原文”。重新生成时靠它（和上面那份一起）判断旧回复在不在酒馆里
+    _rememberSummarized(binding, ids) {
+        if (!ids || !ids.length) return;
+        const set = new Set(Array.isArray(binding.summarizedIds) ? binding.summarizedIds : []);
+        ids.forEach(id => set.add(id));
+        binding.summarizedIds = [...set];
+    },
+
+    // 这些消息有没有可能在酒馆里（推过原文、做成过小总结、最近推过、或者正是“上次推到的那一条”）。
+    // 只查小手机自己的记录，不连酒馆：重新生成时旧回复从没推送过，就不用去酒馆替换，连不上酒馆也不会报错
+    mayBeInTavern(binding, ids) {
+        if (!binding || !ids || !ids.length) return false;
+        const known = new Set([
+            ...(Array.isArray(binding.pushedIds) ? binding.pushedIds : []),
+            ...(Array.isArray(binding.summarizedIds) ? binding.summarizedIds : []),
+        ]);
+        (Array.isArray(binding.recentPushes) ? binding.recentPushes : []).forEach(x => (x && Array.isArray(x.ids) ? x.ids : []).forEach(id => known.add(id)));
+        if (binding.lastPushedMsgId) known.add(binding.lastPushedMsgId);
+        return ids.some(id => known.has(id));
+    },
+
     // 推送窗口里点「忽略」：这些消息从名单里去掉，以后不再提示（再推一次会重新记上）
     async ignoreMissing(binding, ids) {
         const drop = new Set(ids || []);
@@ -404,6 +426,7 @@ const TavernSync = {
     _forgetPushes(binding, ids) {
         if (!ids || !ids.size) return;
         if (Array.isArray(binding.pushedIds)) binding.pushedIds = binding.pushedIds.filter(id => !ids.has(id));
+        if (Array.isArray(binding.summarizedIds)) binding.summarizedIds = binding.summarizedIds.filter(id => !ids.has(id));
         if (!Array.isArray(binding.recentPushes)) return;
         binding.recentPushes = binding.recentPushes
             .map(x => Object.assign({}, x, { ids: x.ids.filter(id => !ids.has(id)) }))
@@ -819,18 +842,18 @@ const TavernSync = {
             catch (e) { this.reportIssue('自动精简旧楼层失败：' + e.message); }
         }
 
-        // 4. 打开了“自动更新复制过的世界书”时，把酒馆里改过的条目同步到小手机的世界书
+        // 4. 打开了「双向自动更新复制过的世界书」时：酒馆里改了的更新到小手机，小手机里改了的推到酒馆
         let worldUpdated = 0;
         if (binding.autoUpdateWorldBooks) {
             try { worldUpdated = (await this.syncCopiedWorldBooks(binding)).updated; }
-            catch (e) { this.reportIssue("自动更新世界书失败：" + e.message); }
+            catch (e) { this.reportIssue('双向自动更新世界书失败：' + e.message); }
         }
 
-        // 4.5 打开了“自动更新酒馆人设”时，把酒馆里改过的人设更新到小手机
+        // 4.5 打开了「双向自动更新人设」时：人设和头像，哪边改了就更新到另一边
         let personaUpdated = 0;
         if (binding.autoUpdatePersona) {
             try { personaUpdated = (await this.syncPersona(binding)).updated; }
-            catch (e) { this.reportIssue('自动更新酒馆人设失败：' + e.message); }
+            catch (e) { this.reportIssue('双向自动更新人设失败：' + e.message); }
         }
 
         char.tavernMemory = {
@@ -1062,6 +1085,7 @@ const TavernSync = {
         delete binding.keptIds;
         delete binding.recentPushes;
         delete binding.pushedIds;
+        delete binding.summarizedIds;
         delete binding.newerChat;
         delete binding.keepInTavern;
         delete binding.bulkDeleteNotice;
@@ -1495,7 +1519,15 @@ const TavernSync = {
             if (ex && ex.from_uwu && !ex.uwu_summary && Array.isArray(ex.uwu_msg_ids)) ex.uwu_msg_ids.forEach(id => { if (phoneById.has(id)) ledger.add(id); });
         });
         binding.pushedIds = [...ledger];
-        if (JSON.stringify(binding.pushedIds) !== before) await this.saveConfig(this.getConfig());
+        // 小总结覆盖的另记一份（重新生成时用来判断旧回复在不在酒馆里），同样把酒馆里现有的补进去
+        const sumBefore = JSON.stringify(binding.summarizedIds || []);
+        const sumLedger = new Set((Array.isArray(binding.summarizedIds) ? binding.summarizedIds : []).filter(id => phoneById.has(id)));
+        (Array.isArray(stMsgs) ? stMsgs : []).forEach(m => {
+            const ex = m && m.extra;
+            if (ex && ex.from_uwu && ex.uwu_summary && Array.isArray(ex.uwu_msg_ids)) ex.uwu_msg_ids.forEach(id => { if (phoneById.has(id)) sumLedger.add(id); });
+        });
+        binding.summarizedIds = [...sumLedger];
+        if (JSON.stringify(binding.pushedIds) !== before || JSON.stringify(binding.summarizedIds) !== sumBefore) await this.saveConfig(this.getConfig());
         const missing = allUwuMsgs.filter(m => ledger.has(m.id) && !pushed.has(m.id));
         let lastPushedIdx = -1;
         allUwuMsgs.forEach((m, i) => { if (pushed.has(m.id)) lastPushedIdx = i; });
@@ -1977,44 +2009,37 @@ const TavernSync = {
         };
 
         let changed = false;
+        let intoSummary = false;   // 新回复是不是换进了小总结楼（那样只算“被小总结推过”，不算推过原文）
         let inserted = false;   // 新回复只放进第一处出现旧回复的地方
         for (const stMsg of all) {
             const ids = stMsg && stMsg.extra && stMsg.extra.from_uwu && Array.isArray(stMsg.extra.uwu_msg_ids) ? stMsg.extra.uwu_msg_ids : null;
             if (!ids || !ids.some(id => oldSet.has(id))) continue;
             const nextIds = [];
+            let hereNew = false;
             for (const id of ids) {
                 if (!oldSet.has(id)) { nextIds.push(id); continue; }
-                if (!inserted) { nextIds.push(...newIds); inserted = true; }
+                if (!inserted) { nextIds.push(...newIds); inserted = true; hereNew = true; }
             }
             if (stMsg.extra.uwu_summary) {
                 // 旧回复已经被浓缩进一段小总结：总结文字不动，只把“覆盖了哪几条”换成新回复
                 stMsg.extra.uwu_msg_ids = nextIds;
+                if (hereNew) intoSummary = true;
             } else {
                 rebuild(stMsg, nextIds);
             }
             changed = true;
         }
-        // 酒馆里没有旧回复（从没推送过）：找到酒馆里记着“这轮之前最后一条小手机消息”的那一楼，把新回复接在它后面。
-        // 不能按平常推送——那样会作为新楼层排在酒馆最后面，跑到之后的酒馆剧情后面去
-        if (!changed) {
-            const firstNewIdx = allUwuMsgs.findIndex(m => m.id === newIds[0]);
-            const earlier = (firstNewIdx >= 0 ? allUwuMsgs.slice(0, firstNewIdx) : []).reverse();
-            for (const prev of earlier) {
-                const stMsg = all.find(x => x && x.extra && x.extra.from_uwu && Array.isArray(x.extra.uwu_msg_ids) && x.extra.uwu_msg_ids.includes(prev.id));
-                if (!stMsg) continue;
-                // 上一条在小总结里：没法把新回复写进总结文字，交给平常的推送
-                if (stMsg.extra.uwu_summary) break;
-                const nextIds = [...stMsg.extra.uwu_msg_ids];
-                nextIds.splice(nextIds.indexOf(prev.id) + 1, 0, ...newIds.filter(id => !nextIds.includes(id)));
-                rebuild(stMsg, nextIds);
-                changed = true;
-                break;
-            }
-        }
+        // 酒馆里没有旧回复（没推送过，或者你在酒馆里删掉了）：酒馆一概不动，新回复当成普通的未推送消息，
+        // 开了自动推送就照常推过去（2026-09-22 维护者要求：旧回复不在酒馆里时不该去改酒馆）
         if (!changed) return { replaced: false };
         await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: all });
-        this._logPush(binding, { kind: 'raw', ids: newIds.slice() });
-        this._rememberPushed(binding, newIds);
+        if (intoSummary) {
+            // 换进小总结楼的不记推送记录：被盖掉时只能整段补推总结文字，这里没有
+            this._rememberSummarized(binding, newIds);
+        } else {
+            this._logPush(binding, { kind: 'raw', ids: newIds.slice() });
+            this._rememberPushed(binding, newIds);
+        }
         return { replaced: true };
     },
 
@@ -2110,6 +2135,7 @@ ${transcript}`;
         await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: all });
 
         if (!opts.noLog) this._logPush(binding, { kind: 'summary', ids: (coveredMsgIds || []).slice(), text });
+        this._rememberSummarized(binding, coveredMsgIds || []);
         // 总结代表了那段消息：把“上次推送到哪一条”挪到它覆盖的最后一条（只往后挪，总结的是较早的一段时不往回退）
         binding.hasPushed = true;
         this._advancePushMark(binding, char, lastCoveredMsgId);
@@ -2192,6 +2218,15 @@ ${transcript}`;
         if (this._visibilityListenerAdded) return;
         this._visibilityListenerAdded = true;
         document.addEventListener('visibilitychange', () => {
+            // 离开小手机页面时：打开了双向自动更新的角色，把小手机里改过的人设、世界书推到酒馆。
+            // 设定是在设置页里改的，所以不管现在在哪个界面都做（下面的聊天同步只在聊天界面做）
+            if (document.hidden) {
+                try {
+                    const cfg0 = this.getConfig();
+                    if (cfg0.enabled) cfg0.bindings.filter(b => b.autoUpdatePersona || b.autoUpdateWorldBooks)
+                        .forEach(b => this.syncSettingsBothWays(b).catch(e => this.reportIssue('离开小手机时双向更新人设和世界书失败：' + e.message)));
+                } catch (e) { /* 不影响下面的聊天同步 */ }
+            }
             // 只在聊天界面时才运行同步，避免在主页触发意外操作
             // OVO 通过 active class 控制屏幕显示，不是 display:none
             const chatScreen = document.getElementById('chat-room-screen');
@@ -2232,27 +2267,53 @@ ${transcript}`;
     async importCharSettings(binding) {
         const stChar = await this.getSTCharacter(binding.stCharAvatar);
         const d = stChar.data || stChar;
-        const parts = [];
-        if (d.description) parts.push(d.description);
-        if (d.personality) parts.push(`性格：${d.personality}`);
-        if (d.scenario) parts.push(`场景：${d.scenario}`);
-        const charPersona = parts.join('\n\n');
+        const raw = { description: d.description || '', personality: d.personality || '', scenario: d.scenario || '' };
+        const charPersona = this._composeCharPersona(raw);
 
         let userPersonas = [];
         let activePersona = '';
+        let activeAvatar = '';     // 酒馆里当前选中的用户人设的头像文件名
         try {
             const settings = await this.getSTSettings();
             const pu = settings.power_user || {};
             const personas = pu.personas || {};
             const descs = pu.persona_descriptions || {};
             activePersona = pu.persona_description || '';
+            activeAvatar = settings.user_avatar || '';
             for (const [avatar, name] of Object.entries(personas)) {
                 const descObj = descs[avatar] || {};
                 userPersonas.push({ avatar, name, description: descObj.description || '' });
             }
         } catch (e) { console.warn('[TavernSync] Failed to load user personas:', e); }
 
-        return { charPersona, charName: d.name, userPersonas, activePersona, postHistory: d.post_history_instructions || '' };
+        return { charPersona, raw, charName: d.name, userPersonas, activePersona, activeAvatar, charAvatar: stChar.avatar || binding.stCharAvatar, postHistory: d.post_history_instructions || '' };
+    },
+
+    // 酒馆角色卡的「描述 + 性格 + 场景」拼成小手机的一段角色人设（导入时的格式）
+    _composeCharPersona(f) {
+        const parts = [];
+        if (f.description) parts.push(f.description);
+        if (f.personality) parts.push(`性格：${f.personality}`);
+        if (f.scenario) parts.push(`场景：${f.scenario}`);
+        return parts.join('\n\n');
+    },
+    // 反过来：小手机的角色人设拆回酒馆的三栏。只有酒馆那一栏原来有内容时才拆（说明是导入时拼进来的），
+    // 否则整段都进「描述」——你自己在人设里写“场景：”不会被误拆。拆完再拼回去和原文一模一样
+    _splitCharPersona(text, cur) {
+        let rest = String(text || '');
+        const out = { description: '', personality: '', scenario: '' };
+        const cut = (field, mark) => {
+            if (!(cur && cur[field])) return;
+            if (rest.startsWith(mark)) { out[field] = rest.slice(mark.length); rest = ''; return; }
+            const at = rest.lastIndexOf('\n\n' + mark);
+            if (at < 0) return;
+            out[field] = rest.slice(at + 2 + mark.length);
+            rest = rest.slice(0, at);
+        };
+        cut('scenario', '场景：');
+        cut('personality', '性格：');
+        out.description = rest;
+        return out;
     },
 
     // 获取角色世界书（优先关联世界书，没有则用内嵌）+ 聊天世界书
@@ -2359,11 +2420,19 @@ ${transcript}`;
     },
 
     // 找到“从酒馆这一条复制过来”的小手机世界书条目
+    // 从小手机推到这一条的（tavernPushes）也算：两个世界书窗口认的是同一套对应关系
     findCopiedWorldBook(binding, worldName, uid) {
-        return (db.worldBooks || []).find(w => w && w.tavernSource
+        const list = (db.worldBooks || []).filter(Boolean);
+        return list.find(w => w.tavernSource
             && w.tavernSource.avatar === binding.stCharAvatar
             && w.tavernSource.world === worldName
-            && w.tavernSource.uid === uid);
+            && w.tavernSource.uid === uid)
+            || list.find(w => w.tavernPushes && w.tavernPushes[worldName] && w.tavernPushes[worldName].uid === uid);
+    },
+    // 这一条和酒馆 worldName 里 uid 那一条是怎么对应上的（推过去的优先，和 _wbLinksFor 一样）
+    copiedLink(w, worldName, uid) {
+        const p = w.tavernPushes && w.tavernPushes[worldName];
+        return { world: worldName, uid, via: (p && p.uid === uid) ? 'push' : 'import' };
     },
 
     // 小手机世界书条目自己的指纹（名字、正文、关键词、常驻、开关、前/后）。顺序（weight）不算：
@@ -2386,75 +2455,169 @@ ${transcript}`;
         return this.wbLocalHash(w) !== t.localHash;
     },
 
-    // 自动更新复制过的世界书条目（绑定卡片上的开关打开时，每次从酒馆同步时调用）。
-    // 酒馆里改了、小手机里没改 → 用酒馆的新内容更新；小手机里也改过 → 不覆盖，在页面顶部提示
-    async syncCopiedWorldBooks(binding) {
-        const linked = (db.worldBooks || []).filter(w => w && w.tavernSource && w.tavernSource.avatar === binding.stCharAvatar);
-        if (!linked.length) return { updated: 0, kept: 0 };
-        const worldBooks = await this.getCharAndChatWorldBooks(binding);
-        const sources = [worldBooks.charWorld, worldBooks.chatWorld].filter(Boolean);
-        let updated = 0, changedMeta = false;
-        const kept = [];
-        for (const w of linked) {
-            const src = sources.find(s => s.name === w.tavernSource.world);
-            if (!src) continue;
-            const entry = src.entries.find(e => e.uid === w.tavernSource.uid);
-            if (!entry) continue;                       // 酒馆里删掉了 → 小手机这条保留，不动
-            const idx = src.entries.indexOf(entry);
-            const hash = this.wbHash(entry);
-            if (hash === w.tavernSource.hash) {
-                // 酒馆里没变。更新前复制的条目没记指纹：趁现在补上——
-                // 拿酒馆这一条重新套一遍，和小手机里现在的一样就说明没改过
-                if (w.tavernSource.localHash === undefined) {
-                    const expect = this.applyTavernEntry(Object.assign({}, w, { tavernSource: Object.assign({}, w.tavernSource) }), entry, idx, false);
-                    w.tavernSource.localHash = this.wbLocalHash(expect);
-                    changedMeta = true;
-                }
-                continue;
+    // ========== 双向自动更新复制过的世界书（2026-09-22 改成双向）==========
+    // 绑定卡片开关「双向自动更新复制过的世界书」（binding.autoUpdateWorldBooks）。每次同步时、离开小手机时检查
+    // 这个角色的酒馆角色世界书、聊天世界书里，和小手机有对应关系的条目：
+    //   从酒馆复制过来的（tavernSource，avatar 是这个角色）、从小手机推过去的（tavernPushes[这本]）。
+    // 只有酒馆里改了 → 更新小手机；只有小手机里改了 → 推到酒馆；两边都改了 → 都不动，页面顶部提示一次。
+    // 酒馆里删掉的条目不动小手机这边；角色内嵌的世界书不是单独的文件，推不回去，只更新小手机。
+
+    // 小手机这一条和酒馆 world 里 uid 那一条的对应关系（推过去的优先）
+    _wbLinksFor(w, binding, worldNames) {
+        const links = [];
+        const seen = new Set();
+        if (w.tavernPushes && typeof w.tavernPushes === 'object') {
+            for (const [world, link] of Object.entries(w.tavernPushes)) {
+                if (!link || !worldNames.includes(world)) continue;
+                links.push({ world, uid: link.uid, via: 'push' });
+                seen.add(world + '\u0001' + link.uid);
             }
-            // 酒馆里改了。小手机里也改过（或者说不准）→ 不覆盖。
-            // 酒馆这一版记在 keptHash 里（同一次改动只提示一次）；hash 不动，
-            // 这样世界书窗口里照样标「酒馆里已改」，「更新小手机里的内容」也照样能用
-            if (this.wbEditedLocally(w) !== false) {
-                if (w.tavernSource.keptHash !== hash) {
-                    kept.push(w.name || entry.comment || '未命名');
-                    w.tavernSource.keptHash = hash;
-                    changedMeta = true;
-                }
-                continue;
-            }
-            this.applyTavernEntry(w, entry, idx, false);
-            w.tavernSource.hash = hash;
-            w.tavernSource.order = entry.order;
-            w.tavernSource.localHash = this.wbLocalHash(w);
-            delete w.tavernSource.keptHash;
-            updated++;
         }
-        if (kept.length) {
-            const names = kept.slice(0, 5).map(n => `「${n}」`).join('、') + (kept.length > 5 ? ` 等 ${kept.length} 条` : '');
-            this.reportIssue(`酒馆中「${(binding.stCharAvatar || '').replace(/\.png$/i, '')}」的世界书条目 ${names} 已经被改动，但你在小手机里也改过，没有自动更新；如果想用酒馆的版本，点「导入酒馆世界书」，勾选这些条目后点「更新小手机里的内容」。`);
-        }
-        if ((updated || changedMeta) && typeof saveData === 'function') await saveData();
-        return { updated, kept: kept.length };
+        const t = w.tavernSource;
+        if (t && t.avatar === binding.stCharAvatar && !seen.has(t.world + '\u0001' + t.uid)) links.push({ world: t.world, uid: t.uid, via: 'import' });
+        return links;
     },
 
-    // ========== 自动更新酒馆人设（yuan 版新增）==========
-    // 绑定卡片上的开关「自动更新酒馆人设」+ 下拉「更新哪个」（binding.personaUpdateMode：char / user / both）。
-    // 每次同步时看一眼酒馆里的人设：酒馆里改了、小手机里没改 → 更新；小手机里也改过 → 不覆盖，在页面顶部提示。
-    // 记录在 binding.personaSync：
-    //   charHash / userHash   上次用的酒馆版本的指纹
-    //   charLocal / userLocal 上次写进小手机时的指纹（和现在的对不上 = 你在小手机里改过）
-    //   userSource            用户人设跟着酒馆里的哪一个（人设头像名，或 '__active__' = 酒馆里当前选中的）
-    // 导入酒馆人设窗口导入时也会记这些（见 recordPersonaImport）。
+    // 两边的记录都换成现在这一版（推送、更新之后调用）
+    _relinkEntry(w, world, uid, hash, order) {
+        const t = w.tavernSource;
+        if (t && t.world === world && t.uid === uid) {
+            t.hash = hash;
+            t.order = order;
+            t.localHash = this.wbLocalHash(w);
+            delete t.keptHash;
+        }
+        const link = w.tavernPushes && w.tavernPushes[world];
+        if (link && link.uid === uid) {
+            link.hash = hash;
+            link.localHash = this.wbPushHash(w);
+            delete link.keptHash;
+        }
+    },
+
+    // 用酒馆那一条的内容更新小手机这一条（自动更新、「导入酒馆世界书」的「更新小手机里的内容」都走这里）
+    //   via 'push'（从小手机推过去的）：权重直接取酒馆的顺序、常驻的也留着关键词——推过去时就是这么对应的
+    //   小手机原来是「中」、酒馆里还是角色定义后：保持「中」（推过去时「中」「后」都变成了角色定义后）
+    pullEntryInto(w, entry, idx, world, via) {
+        const prevPos = w.position;
+        this.applyTavernEntry(w, entry, idx, false);
+        if (prevPos === 'middle' && entry.position !== 0) w.position = 'middle';
+        if (via === 'push') {
+            const n = Number(entry.order);
+            if (Number.isFinite(n)) w.weight = n;
+            w.keywords = this.entryKeywords(entry);
+        }
+        this._relinkEntry(w, world, entry.uid, this.wbHash(entry), entry.order);
+    },
+
+    // 这一条两边各自改过没有。localChanged：true / false / null（更新前复制的条目没记指纹，说不准）
+    _wbChangeState(w, link, entry) {
+        const hash = this.wbHash(entry);
+        if (link.via === 'push') {
+            const rec = w.tavernPushes[link.world];
+            return { hash, tavernChanged: hash !== rec.hash, localChanged: this.wbPushHash(w) !== rec.localHash, rec };
+        }
+        return { hash, tavernChanged: hash !== w.tavernSource.hash, localChanged: this.wbEditedLocally(w), rec: w.tavernSource };
+    },
+
+    async syncCopiedWorldBooks(binding) {
+        const all = (db.worldBooks || []).filter(Boolean);
+        if (!all.some(w => (w.tavernSource && w.tavernSource.avatar === binding.stCharAvatar) || (w.tavernPushes && Object.keys(w.tavernPushes).length))) {
+            return { updated: 0, pushed: 0, kept: 0 };
+        }
+        const worldBooks = await this.getCharAndChatWorldBooks(binding);
+        const sources = [worldBooks.charWorld, worldBooks.chatWorld].filter(Boolean);
+        const fileNames = sources.map(s => s.name).filter(n => n !== '角色内嵌世界书');
+        const names = sources.map(s => s.name);
+        let updated = 0, changedMeta = false;
+        const kept = [];
+        const toPush = [];          // [小手机条目, link]
+        for (const w of all) {
+            for (const link of this._wbLinksFor(w, binding, names)) {
+                const src = sources.find(s => s.name === link.world);
+                const entry = src && src.entries.find(e => e.uid === link.uid);
+                if (!entry) continue;                       // 酒馆里删掉了 → 小手机这条保留，不动
+                const idx = src.entries.indexOf(entry);
+                const st = this._wbChangeState(w, link, entry);
+                if (!st.tavernChanged) {
+                    if (st.localChanged === true) { if (fileNames.includes(link.world)) toPush.push([w, link]); continue; }
+                    // 两边都没改。更新前复制的条目没记指纹：趁现在补上——拿酒馆这一条重新套一遍，一样就说明没改过
+                    if (st.localChanged === null) {
+                        const expect = this.applyTavernEntry(Object.assign({}, w, { tavernSource: Object.assign({}, w.tavernSource) }), entry, idx, false);
+                        w.tavernSource.localHash = this.wbLocalHash(expect);
+                        changedMeta = true;
+                        if (w.tavernSource.localHash !== this.wbLocalHash(w) && fileNames.includes(link.world)) toPush.push([w, link]);
+                    }
+                    continue;
+                }
+                if (st.localChanged === false) {
+                    this.pullEntryInto(w, entry, idx, link.world, link.via);
+                    updated++;
+                    continue;
+                }
+                // 两边都改过（或者说不准）→ 不覆盖。同一次改动只提示一次；指纹不动，
+                // 这样两个世界书窗口里照样标出改动，手动更新照样能用
+                const keptKey = st.hash + '|' + (link.via === 'push' ? this.wbPushHash(w) : this.wbLocalHash(w));
+                if (st.rec.keptHash !== keptKey) {
+                    kept.push(w.name || entry.comment || '未命名');
+                    st.rec.keptHash = keptKey;
+                    changedMeta = true;
+                }
+            }
+        }
+        // 小手机里改了的推到酒馆：按世界书分组，每本读一次、存一次
+        let pushed = 0;
+        const byWorld = new Map();
+        toPush.forEach(([w, link]) => { if (!byWorld.has(link.world)) byWorld.set(link.world, []); byWorld.get(link.world).push([w, link]); });
+        for (const [world, list] of byWorld) {
+            const data = await this.getSTWorldInfo(world);
+            if (!data || !data.entries) continue;
+            const done = [];
+            for (const [w, link] of list) {
+                const target = data.entries[link.uid];
+                if (!target) continue;
+                this._applyPhoneEntry(target, w, { keepOrder: link.via === 'import' });
+                done.push([w, link, target]);
+            }
+            if (!done.length) continue;
+            await this.apiCall('/api/worldinfo/edit', { name: world, data });
+            this._tellTavernPage({ type: 'worldinfo-saved', name: world });
+            done.forEach(([w, link, target]) => this._relinkEntry(w, world, link.uid, this.wbHash(this._normTavernEntry(target)), target.order));
+            pushed += done.length;
+        }
+        if (kept.length) {
+            const names2 = kept.slice(0, 5).map(n => `「${n}」`).join('、') + (kept.length > 5 ? ` 等 ${kept.length} 条` : '');
+            this.reportIssue(`酒馆中「${(binding.stCharAvatar || '').replace(/\.png$/i, '')}」的世界书条目 ${names2} 在酒馆和小手机里都改过，没有自动更新。想用酒馆的版本：点「导入酒馆世界书」，勾选这些条目后点「更新小手机里的内容」；想用小手机的版本：点「推送小手机世界书」，选这本世界书，勾选这些条目后点「更新酒馆里的内容」。`);
+        }
+        if ((updated || pushed || changedMeta) && typeof saveData === 'function') await saveData();
+        return { updated, pushed, kept: kept.length };
+    },
+
+    // ========== 双向自动更新人设（2026-09-22 改成双向，头像也算）==========
+    // 绑定卡片上的开关「双向自动更新人设」（binding.autoUpdatePersona）+ 下拉「更新」（binding.personaUpdateMode：char / user / both）。
+    // 每次同步时、离开小手机时检查四样：角色人设、角色头像、用户人设、用户头像（角色的两样跟着 char，用户的两样跟着 user）。
+    //   只有酒馆里改了 → 更新小手机；只有小手机里改了 → 推到酒馆；两边都改了 → 都不动，绑定卡片上让你选用哪边的。
+    // 记录在 binding.personaSync，每一样一组（key = char / user / charAvatar / userAvatar）：
+    //   <key>Hash   上次两边一致时酒馆那一版的指纹（头像用酒馆缩略图的指纹）
+    //   <key>Local  上次两边一致时小手机那一版的指纹
+    //   <key>Kept   两边都改过、还没选用哪边时记下（同一次改动只提示一次；绑定卡片上据此显示「用酒馆的 / 用小手机的」）
+    //   userSource  用户人设跟着酒馆里的哪一个（人设头像名，或 '__active__' = 酒馆里当前选中的）
+    // 导入酒馆人设窗口导入时也会记这些（见 recordPersonaImport / recordAvatarImport）。
     personaUpdateMode(binding) {
         const m = binding && binding.personaUpdateMode;
         return (m === 'char' || m === 'user' || m === 'both') ? m : 'both';
     },
+    PERSONA_LABELS: { char: '角色人设', charAvatar: '角色头像', user: '用户人设', userAvatar: '用户头像' },
 
     _userPersonaText(result, source) {
         if (!source || source === '__active__') return result.activePersona || '';
         const p = (result.userPersonas || []).find(x => x.avatar === source);
         return p ? (p.description || '') : null;     // null = 酒馆里这个人设没了
+    },
+    // 用户人设在酒馆里的头像文件名（也就是这个人设的编号）
+    _userPersonaAvatar(result, source) {
+        if (!source || source === '__active__') return result.activeAvatar || '';
+        return (result.userPersonas || []).some(x => x.avatar === source) ? source : '';
     },
 
     // 导入窗口里点了「确认导入」：记下这次用的酒馆版本和写进小手机的内容，之后自动更新拿它们比
@@ -2474,47 +2637,228 @@ ${transcript}`;
         }
         binding.personaSync = ps;
     },
+    // 导入窗口里换了头像：同样记下两边这一版
+    async recordAvatarImport(binding, char, result, what) {
+        const ps = Object.assign({}, binding.personaSync);
+        if (what.char) {
+            const h = await this._imageHash(this.tavernCharThumbUrl(result.charAvatar || binding.stCharAvatar));
+            if (h) { ps.charAvatarHash = h; ps.charAvatarLocal = this.textHash(char.avatar || ''); delete ps.charAvatarKept; }
+        }
+        if (what.userFile) {
+            const h = await this._imageHash(this.tavernUserThumbUrl(what.userFile));
+            if (h) { ps.userAvatarHash = h; ps.userAvatarLocal = this.textHash(char.myAvatar || ''); delete ps.userAvatarKept; }
+        }
+        binding.personaSync = ps;
+    },
 
-    async syncPersona(binding) {
+    // 缩略图（小，每次同步都要拿来比一比，不能每次都下整张大图）
+    tavernCharThumbUrl(avatar) { return avatar ? `/thumbnail?type=avatar&file=${encodeURIComponent(avatar)}` : ''; },
+    tavernUserThumbUrl(file) { return file ? `/thumbnail?type=persona&file=${encodeURIComponent(file)}` : ''; },
+    // 一张酒馆图片的指纹；读不到返回 null
+    async _imageHash(url) {
+        if (!url) return null;
+        try {
+            const r = await this._fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now(), { credentials: 'same-origin', cache: 'no-store' });
+            if (!r || !r.ok || typeof r.arrayBuffer !== 'function') return null;
+            const bytes = new Uint8Array(await r.arrayBuffer());
+            if (!bytes.length) return null;
+            let h = 5381;
+            for (let i = 0; i < bytes.length; i++) h = ((h << 5) + h + bytes[i]) | 0;
+            return 'img' + bytes.length + '_' + h;
+        } catch (e) { return null; }
+    },
+    // 小手机头像是不是你自己传过的（默认头像是外链，当作“还没有”）
+    _isOwnAvatar(src) { return /^data:/i.test(String(src || '')); },
+
+    // 不需要读回内容的请求（酒馆有的接口只回一个 OK，不是 JSON）
+    async _apiPostText(endpoint, body) {
+        return this._stFetch(endpoint, { method: 'POST', body: JSON.stringify(body) }, (resp) => {
+            if (resp.status === 404) throw new Error('你的酒馆版本不支持这个功能，请更新酒馆');
+            if (!resp.ok) throw new Error(`API ${resp.status}`);
+            return resp.text();
+        });
+    },
+    // 写酒馆角色卡的描述、性格、场景（只改这三栏，别的不动）
+    async _writeCharFields(avatar, f) {
+        await this._apiPostText('/api/characters/merge-attributes', {
+            avatar, description: f.description, personality: f.personality, scenario: f.scenario,
+            data: { description: f.description, personality: f.personality, scenario: f.scenario },
+        });
+        this._tellTavernPage({ type: 'character-updated', avatar, fields: f });
+    },
+    async _writeCharAvatar(avatar, blob) {
+        const form = new FormData();
+        form.append('avatar', blob, 'avatar.png');
+        form.append('avatar_url', avatar);
+        await this._stFetchForm('/api/characters/edit-avatar', form, (resp) => {
+            if (resp.status === 404) throw new Error('你的酒馆版本不支持换角色头像，请更新酒馆');
+            if (!resp.ok) throw new Error(`API ${resp.status}`);
+            return resp.text();
+        });
+        this._tellTavernPage({ type: 'character-updated', avatar, avatarChanged: true });
+    },
+    async _writePersonaAvatar(file, blob) {
+        const form = new FormData();
+        form.append('avatar', blob, 'avatar.png');
+        form.append('overwrite_name', file);
+        await this._stFetchForm('/api/avatars/upload', form, (resp) => {
+            if (!resp.ok) throw new Error(`API ${resp.status}`);
+            return resp.text();
+        });
+        this._tellTavernPage({ type: 'persona-updated', avatarId: file, avatarChanged: true });
+    },
+    // 改酒馆用户人设的内容。和新建一样：开着酒馆页面时让它自己改，没开才直接改设置文件
+    async _writePersonaText(file, text, activeAvatar) {
+        const answer = await this._askTavernPage({ type: 'update-persona', avatarId: file, description: text, activeAvatar });
+        if (answer && answer.ok) return 'page';
+        const resp = await this.apiCall('/api/settings/get', {});
+        const settings = typeof resp.settings === 'string' ? JSON.parse(resp.settings) : (resp.settings || {});
+        const pu = settings.power_user || (settings.power_user = {});
+        if (!pu.persona_descriptions || typeof pu.persona_descriptions !== 'object') pu.persona_descriptions = {};
+        pu.persona_descriptions[file] = Object.assign({ position: 0, depth: 2, role: 0, lorebook: '' }, pu.persona_descriptions[file], { description: text });
+        if (settings.user_avatar === file) pu.persona_description = text;
+        await this.apiCall('/api/settings/save', settings);
+        return 'file';
+    },
+
+    // opts.force = { key, use: 'tavern' | 'phone' }：绑定卡片上点了「用酒馆的」「用小手机的」，只处理这一样
+    async syncPersona(binding, opts = {}) {
         const char = db.characters.find(c => c.id === binding.uwuCharId);
-        if (!char) return { updated: 0, kept: 0 };
+        if (!char) return { updated: 0, pushed: 0, kept: 0 };
         const mode = this.personaUpdateMode(binding);
         const result = await this.importCharSettings(binding);
         const ps = Object.assign({}, binding.personaSync);
         const tavernName = result.charName || (binding.stCharAvatar || '').replace(/\.png$/i, '');
-        let updated = 0;
+        const force = opts.force || null;
+        let updated = 0, pushed = 0, viaFile = false;
         const kept = [];
-        // field：小手机里存在哪（persona / myPersona）；key：记录用的前缀（char / user）
-        const one = (field, key, tavernText, label) => {
-            if (tavernText == null || !String(tavernText).trim()) return;   // 酒馆里是空的或没了：不动
-            const th = this.textHash(tavernText);
-            if (ps[key + 'Hash'] === th) return;                            // 酒馆里没变
-            const local = char[field] || '';
-            const localUnchanged = ps[key + 'Local'] !== undefined && this.textHash(local) === ps[key + 'Local'];
-            if (local === tavernText || !local.trim() || localUnchanged) {
-                // 小手机里没改过（或本来就一样、或还是空的）→ 用酒馆的版本
-                if (local !== tavernText) { char[field] = tavernText; updated++; }
-                ps[key + 'Hash'] = th;
-                ps[key + 'Local'] = this.textHash(tavernText);
-                delete ps[key + 'Kept'];
-                return;
+        const errors = [];
+        const userFile = this._userPersonaAvatar(result, ps.userSource);
+
+        // 每一样怎么读、怎么写
+        const items = [];
+        if (mode === 'char' || mode === 'both') {
+            items.push({
+                key: 'char', text: true,
+                tavern: async () => result.charPersona,
+                local: () => char.persona || '',
+                pull: async () => { char.persona = result.charPersona; },
+                push: async () => {
+                    const f = this._splitCharPersona(char.persona || '', result.raw);
+                    await this._writeCharFields(binding.stCharAvatar, f);
+                    return this.textHash(this._composeCharPersona(f));
+                },
+            });
+            items.push({
+                key: 'charAvatar',
+                tavernHash: () => this._imageHash(this.tavernCharThumbUrl(binding.stCharAvatar)),
+                local: () => char.avatar || '',
+                empty: () => !this._isOwnAvatar(char.avatar),
+                pull: async () => { char.avatar = await this.avatarToSquare(this.tavernCharAvatarUrl(binding.stCharAvatar) + '?_t=' + Date.now()); },
+                push: async () => {
+                    const a = await this.avatarToTall(char.avatar);
+                    await this._writeCharAvatar(binding.stCharAvatar, a.blob);
+                    return this._imageHash(this.tavernCharThumbUrl(binding.stCharAvatar));
+                },
+            });
+        }
+        if ((mode === 'user' || mode === 'both') && userFile !== null) {
+            const tv = this._userPersonaText(result, ps.userSource);
+            if (tv !== null) {
+                items.push({
+                    key: 'user', text: true,
+                    tavern: async () => tv,
+                    local: () => char.myPersona || '',
+                    pull: async () => { char.myPersona = tv; },
+                    push: userFile ? async () => {
+                        if ((await this._writePersonaText(userFile, char.myPersona || '', result.activeAvatar)) === 'file') viaFile = true;
+                        return this.textHash(char.myPersona || '');
+                    } : null,
+                });
             }
-            // 小手机里改过（或者以前没记录、说不准）→ 不覆盖。酒馆这一版记在 Kept 里，同一次改动只提示一次；
-            // 之后你点「导入酒馆人设」重新导入，会重新记 Hash / Local，从那以后照常自动更新
-            if (ps[key + 'Kept'] !== th) {
-                ps[key + 'Kept'] = th;
-                kept.push(label);
+            if (userFile) {
+                items.push({
+                    key: 'userAvatar',
+                    tavernHash: () => this._imageHash(this.tavernUserThumbUrl(userFile)),
+                    local: () => char.myAvatar || '',
+                    empty: () => !this._isOwnAvatar(char.myAvatar),
+                    pull: async () => { char.myAvatar = await this.avatarToSquare(this.tavernUserAvatarUrl(userFile) + '?_t=' + Date.now()); },
+                    push: async () => {
+                        const a = await this.avatarToTall(char.myAvatar);
+                        await this._writePersonaAvatar(userFile, a.blob);
+                        return this._imageHash(this.tavernUserThumbUrl(userFile));
+                    },
+                });
             }
-        };
-        if (mode === 'char' || mode === 'both') one('persona', 'char', result.charPersona, '角色人设');
-        if (mode === 'user' || mode === 'both') one('myPersona', 'user', this._userPersonaText(result, ps.userSource), '用户人设');
+        }
+
+        for (const it of items) {
+            if (force && force.key !== it.key) continue;
+            const K = it.key;
+            try {
+                const tavernText = it.text ? await it.tavern() : null;
+                const th = it.text ? this.textHash(tavernText) : await it.tavernHash();
+                if (th == null) continue;                                   // 酒馆那边读不到：这次不管
+                const local = it.local();
+                const lh = this.textHash(local);
+                const record = (t, l) => { ps[K + 'Hash'] = t; ps[K + 'Local'] = l; delete ps[K + 'Kept']; };
+                const doPull = async () => { await it.pull(); record(th, this.textHash(it.local())); updated++; };
+                const doPush = async () => { const nt = await it.push(); if (nt) record(nt, this.textHash(it.local())); pushed++; };
+                const tavernEmpty = it.text ? !String(tavernText || '').trim() : false;
+                const localEmpty = it.text ? !String(local).trim() : it.empty();
+                const same = it.text && local === tavernText;
+                if (force) {
+                    if (force.use === 'tavern') { if (!tavernEmpty) await doPull(); }
+                    else if (it.push) await doPush();
+                    continue;
+                }
+                if (same) { if (ps[K + 'Hash'] !== th || ps[K + 'Local'] !== lh || ps[K + 'Kept']) record(th, lh); continue; }
+                const H = ps[K + 'Hash'], L = ps[K + 'Local'];
+                const tChanged = H === undefined ? true : th !== H;
+                const lChanged = L === undefined ? !localEmpty : lh !== L;
+                if (!tChanged && !lChanged) continue;
+                if (localEmpty && !tavernEmpty) { await doPull(); continue; }        // 小手机这边还是空的 / 默认头像 → 用酒馆的
+                if (H === undefined && !it.text) { record(th, lh); continue; }       // 以前没记过头像：先记下现在两边，不动
+                if (tChanged && !lChanged) { if (!tavernEmpty) await doPull(); continue; }
+                if (!tChanged && lChanged) { if (it.push) await doPush(); continue; }
+                // 两边都改过 → 都不动，等你在绑定卡片上选
+                const keptKey = th + '|' + lh;
+                if (ps[K + 'Kept'] !== keptKey) { ps[K + 'Kept'] = keptKey; kept.push(this.PERSONA_LABELS[K]); }
+            } catch (e) {
+                errors.push(`${this.PERSONA_LABELS[K]}：${e.message}`);
+            }
+        }
         const changed = JSON.stringify(ps) !== JSON.stringify(binding.personaSync || {});
         binding.personaSync = ps;
         if (kept.length) {
-            this.reportIssue(`酒馆中「${tavernName}」的${kept.join('和')}已经被改动，但你在小手机里也改过，没有自动更新；如果想用酒馆的版本，点「导入酒馆人设」重新导入。`);
+            this.reportIssue(`酒馆中「${tavernName}」的${kept.join('、')}在酒馆和小手机里都改过，没有自动更新；在绑定卡片「双向自动更新人设」下面选用哪一边的。`);
         }
-        if (updated || changed) await this.saveConfig(this.getConfig());   // 会顺带存角色数据
-        return { updated, kept: kept.length };
+        if (errors.length) this.reportIssue(`「${tavernName}」双向自动更新人设时出错：${errors.join('；')}`);
+        if (viaFile) this.reportIssue(`「${tavernName}」的用户人设是直接写进酒馆设置文件的（同一个浏览器里没有开着的酒馆页面）。如果别的设备或浏览器里开着酒馆，请先刷新那边的酒馆页面，否则酒馆保存设置时会把它盖回去。`);
+        if (updated || pushed || changed) await this.saveConfig(this.getConfig());   // 会顺带存角色数据
+        return { updated, pushed, kept: kept.length, errors: errors.length };
+    },
+
+    // 绑定卡片上「用酒馆的」「用小手机的」
+    async resolvePersonaConflict(binding, key, use) {
+        return this.syncPersona(binding, { force: { key, use } });
+    },
+    // 离开小手机页面时：人设、世界书双向检查一次（小手机里改完设定就去酒馆玩的情况）
+    async syncSettingsBothWays(binding) {
+        if (binding.autoUpdateWorldBooks) {
+            try { await this.syncCopiedWorldBooks(binding); } catch (e) { this.reportIssue('双向自动更新世界书失败：' + e.message); }
+        }
+        if (binding.autoUpdatePersona) {
+            try { await this.syncPersona(binding); } catch (e) { this.reportIssue('双向自动更新人设失败：' + e.message); }
+        }
+    },
+    // 两边都改过、还没选的那几样（绑定卡片上显示）
+    personaConflicts(binding) {
+        const ps = binding && binding.personaSync;
+        if (!ps || !binding.autoUpdatePersona) return [];
+        const mode = this.personaUpdateMode(binding);
+        return ['char', 'charAvatar', 'user', 'userAvatar'].filter(k => ps[k + 'Kept']
+            && (mode === 'both' || (mode === 'char' ? k.startsWith('char') : k.startsWith('user'))));
     },
 
     // ========== 把小手机设定推送到酒馆（2026-09-22 加）==========
@@ -2553,7 +2897,7 @@ ${transcript}`;
     _normTavernEntry(e) {
         return {
             uid: e.uid, comment: e.comment || '未命名', content: e.content || '', key: e.key || '',
-            order: e.order ?? e.uid ?? 0, position: e.position, depth: e.depth, role: e.role, disabled: !!e.disable, constant: !!e.constant,
+            order: e.order ?? e.uid ?? 0, position: e.position, depth: e.depth, role: e.role, disabled: !!(e.disable ?? e.disabled), constant: !!e.constant,
         };
     },
 
@@ -2561,13 +2905,17 @@ ${transcript}`;
     // 位置：「前」→ 角色定义前（0）；「中」「后」→ 角色定义后（1）。
     // 更新时如果酒馆里那条放在别的位置（比如 @深度），而小手机是「中」「后」，就不动酒馆的位置
     // （导入时这些位置都变成了「后」，推回去不该把你在酒馆里设的位置冲掉）
-    _applyPhoneEntry(target, w) {
+    // opts.keepOrder：这条是从酒馆导入来的。导入时小手机的权重是按列表位置排的（100、101…），不是酒馆的顺序数字，
+    //   所以推回去不动酒馆的顺序；常驻条目导入时关键词被清空了，小手机里还是没有关键词的话，也不动酒馆的关键词
+    _applyPhoneEntry(target, w, opts = {}) {
+        const keys = (Array.isArray(w.keywords) ? w.keywords : []).map(k => String(k).trim()).filter(Boolean);
+        const alwaysOn = w.alwaysOn !== false;      // yuan 里没写 alwaysOn 就算常驻
         target.comment = w.name || '未命名';
         target.content = w.content || '';
-        target.key = (Array.isArray(w.keywords) ? w.keywords : []).map(k => String(k).trim()).filter(Boolean);
-        target.constant = w.alwaysOn !== false;     // yuan 里没写 alwaysOn 就算常驻
+        if (!(opts.keepOrder && alwaysOn && !keys.length)) target.key = keys;
+        target.constant = alwaysOn;
         target.disable = !!w.disabled;
-        target.order = this._phoneWeight(w);
+        if (!opts.keepOrder) target.order = this._phoneWeight(w);
         if (w.position === 'before') target.position = 0;
         else if (target.position === undefined || target.position === null || target.position === 0) target.position = 1;
         return target;
@@ -2677,7 +3025,7 @@ ${transcript}`;
                 added++;
             } else {
                 if (!st.linked) { notLinked++; continue; }
-                this._applyPhoneEntry(data.entries[st.uid], w);
+                this._applyPhoneEntry(data.entries[st.uid], w, { keepOrder: st.via === 'import' });
                 touched.push([w, st.uid]);
                 updated++;
             }
@@ -2687,14 +3035,11 @@ ${transcript}`;
         for (const [w, uid] of touched) {
             const hash = this.wbHash(this._normTavernEntry(data.entries[uid]));
             if (!w.tavernPushes || typeof w.tavernPushes !== 'object') w.tavernPushes = {};
-            w.tavernPushes[name] = { uid, hash, localHash: this.wbPushHash(w) };
-            // 这条原来就是从这本导入的：导入那边的记录也跟着更新，免得「导入酒馆世界书」里标成「酒馆里已改」
-            if (w.tavernSource && w.tavernSource.world === name && w.tavernSource.uid === uid) {
-                w.tavernSource.hash = hash;
-                w.tavernSource.order = data.entries[uid].order;
-                w.tavernSource.localHash = this.wbLocalHash(w);
-                delete w.tavernSource.keptHash;
-            }
+            // 原来就是从这本导入的条目不另记推送关系（导入那边的记录已经认得它），两边记录都更新成现在这一版，
+            // 免得「导入酒馆世界书」里标成「酒馆里已改」
+            const fromHere = w.tavernSource && w.tavernSource.world === name && w.tavernSource.uid === uid;
+            if (!fromHere || w.tavernPushes[name]) w.tavernPushes[name] = { uid };
+            this._relinkEntry(w, name, uid, hash, data.entries[uid].order);
         }
         if (touched.length && typeof saveData === 'function') await saveData();
         this._tellTavernPage({ type: 'worldinfo-saved', name, created: !!opts.create });
@@ -2713,6 +3058,78 @@ ${transcript}`;
         return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}@${p(d.getHours())}h${p(d.getMinutes())}m${p(d.getSeconds())}s`;
     },
 
+    // ========== 头像（2026-09-22 加）==========
+    // 酒馆的角色头像、用户头像都是竖长方形（2:3，400×600），列表里显示成圆形，只露出正中间；
+    // 小手机头像保持上传时的比例，显示时也只露出正中间。所以：
+    //   酒馆 → 小手机：从正中间截一个正方形（就是酒馆圆形头像里看到的那块）
+    //   小手机 → 酒馆：把整张图放在 2:3 画布正中间，上下空的地方用这张图模糊放大铺满（圆形里露出的正好是原图）
+    TALL_W: 400,
+    TALL_H: 600,
+    // 正中间最大的正方形：{ sx, sy, s }
+    _squareCrop(w, h) {
+        const s = Math.min(w, h);
+        return { sx: Math.round((w - s) / 2), sy: Math.round((h - s) / 2), s };
+    },
+    // 整张图放进 W×H 里、居中不裁（contain）/ 铺满 W×H、居中裁掉多的（cover）：{ dx, dy, dw, dh }
+    _fitRect(w, h, W, H, cover) {
+        const k = cover ? Math.max(W / w, H / h) : Math.min(W / w, H / h);
+        const dw = Math.round(w * k), dh = Math.round(h * k);
+        return { dx: Math.round((W - dw) / 2), dy: Math.round((H - dh) / 2), dw, dh };
+    },
+    // 读一张图。外链图片要对方网站允许才能读（否则画到画布上后拿不出来），读不到就报错
+    _loadImage(src, timeoutMs = 10000) {
+        return new Promise((resolve, reject) => {
+            if (!src) { reject(new Error('没有头像')); return; }
+            const img = new Image();
+            if (!/^data:|^blob:/i.test(src)) img.crossOrigin = 'anonymous';
+            const timer = setTimeout(() => reject(new Error('读取头像超时')), timeoutMs);
+            img.onload = () => { clearTimeout(timer); resolve(img); };
+            img.onerror = () => { clearTimeout(timer); reject(new Error('头像读不到')); };
+            img.src = src;
+        });
+    },
+    // 酒馆头像地址（和酒馆同一个网址，一定能读）
+    tavernCharAvatarUrl(avatar) { return avatar ? `/characters/${encodeURIComponent(avatar)}` : ''; },
+    tavernUserAvatarUrl(file) { return file ? `/User%20Avatars/${encodeURIComponent(file)}` : ''; },
+
+    // 酒馆 → 小手机：截正中间的正方形，压成 JPEG（和 yuan 自己上传头像时一样的格式）
+    async avatarToSquare(src, size = 400) {
+        const img = await this._loadImage(src);
+        const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+        if (!w || !h) throw new Error('头像读不到');
+        const c = this._squareCrop(w, h);
+        const out = Math.min(size, c.s);
+        const canvas = document.createElement('canvas');
+        canvas.width = out; canvas.height = out;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';           // 透明底的 PNG 转 JPEG 会变黑，先铺白
+        ctx.fillRect(0, 0, out, out);
+        ctx.drawImage(img, c.sx, c.sy, c.s, c.s, 0, 0, out, out);
+        return canvas.toDataURL('image/jpeg', 0.85);
+    },
+
+    // 小手机 → 酒馆：2:3 画布，整张图居中，上下用模糊放大的同一张图铺满。返回 { blob, url }（url 给窗口里预览）
+    // 模糊用“先缩到很小再放大”的办法：手机浏览器（苹果）不一定支持画布的模糊滤镜
+    async avatarToTall(src) {
+        const img = await this._loadImage(src);
+        const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+        if (!w || !h) throw new Error('头像读不到');
+        const W = this.TALL_W, H = this.TALL_H;
+        const canvas = document.createElement('canvas');
+        canvas.width = W; canvas.height = H;
+        const ctx = canvas.getContext('2d');
+        const tiny = document.createElement('canvas');
+        tiny.width = 12; tiny.height = 18;
+        const cv = this._fitRect(w, h, tiny.width, tiny.height, true);
+        tiny.getContext('2d').drawImage(img, cv.dx, cv.dy, cv.dw, cv.dh);
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(tiny, 0, 0, W, H);
+        const r = this._fitRect(w, h, W, H, false);
+        ctx.drawImage(img, r.dx, r.dy, r.dw, r.dh);
+        const blob = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('头像处理失败')), 'image/png'));
+        return { blob, url: canvas.toDataURL('image/jpeg', 0.8) };
+    },
+
     // 人设头像：先用酒馆自带的默认头像，读不到就用一张灰色小图
     async _defaultAvatarBlob() {
         try {
@@ -2728,9 +3145,10 @@ ${transcript}`;
 
     // 在酒馆新建用户人设。同一个浏览器开着酒馆页面时让酒馆页面自己加（它手里的设置不会把我们盖掉）；
     // 没开时直接改酒馆的设置文件，这时返回 via: 'file'，界面上提醒先刷新酒馆页面
-    async createTavernPersona(name, description) {
+    // avatarBlob：用这张图当头像（avatarToTall 做好的）；不给就用酒馆默认头像
+    async createTavernPersona(name, description, avatarBlob) {
         const form = new FormData();
-        form.append('avatar', await this._defaultAvatarBlob(), 'avatar.png');
+        form.append('avatar', avatarBlob || await this._defaultAvatarBlob(), 'avatar.png');
         const up = await this._stFetchForm('/api/avatars/upload', form, (resp) => {
             if (!resp.ok) throw new Error(`上传人设头像失败（API ${resp.status}）`);
             return resp.json();
@@ -2753,7 +3171,8 @@ ${transcript}`;
     // 「推送小手机人设」：在酒馆里新建角色。opts：
     //   charId          小手机角色（绑定用）
     //   name / description / firstMes   酒馆角色卡的角色名、角色描述、开场白
-    //   userPersona     { name, description } 或 null：同时新建用户人设
+    //   avatarBlob      角色头像（avatarToTall 做好的），不给就用酒馆默认头像
+    //   userPersona     { name, description, avatarBlob } 或 null：同时新建用户人设
     //   world           { name, entries: [小手机条目] } 或 null：同时新建世界书并设成这个角色的角色世界书
     //   bind            建好后绑定到这个小手机角色（已经绑定过的不绑）
     // 中途失败时，已经建好的写在报错里（done）
@@ -2792,6 +3211,7 @@ ${transcript}`;
                 depth_prompt_prompt: '', depth_prompt_depth: '4', depth_prompt_role: 'system',
             };
             Object.entries(fields).forEach(([k, v]) => form.append(k, v));
+            if (opts.avatarBlob) form.append('avatar', opts.avatarBlob, 'avatar.png');
             avatar = await this._stFetchForm('/api/characters/create', form, (resp) => {
                 if (!resp.ok) throw new Error(`API ${resp.status}`);
                 return resp.text();
@@ -2805,7 +3225,7 @@ ${transcript}`;
 
         if (opts.userPersona) {
             try {
-                const p = await this.createTavernPersona(String(opts.userPersona.name || '').trim() || 'User', opts.userPersona.description || '');
+                const p = await this.createTavernPersona(String(opts.userPersona.name || '').trim() || 'User', opts.userPersona.description || '', opts.userPersona.avatarBlob);
                 result.persona = p;
                 done.push('用户人设');
             } catch (e) { throw fail('新建用户人设', e); }
@@ -3417,7 +3837,7 @@ function setupTavernSyncScreen() {
                     <span style="font-size:11px; color:#888; width:100%;">这个角色还没推送过。只有自动推送第一次执行时看这个数字（填 0 就不自动补推）；手动推送在「推送/清理消息」窗口里自己选范围。</span>
                 </div>
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
-                    <span>自动更新酒馆人设</span>
+                    <span>双向自动更新人设</span>
                     <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-personaauto="${i}" ${b.autoUpdatePersona ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
                 <div style="display:${b.autoUpdatePersona ? 'flex' : 'none'}; align-items:center; gap:8px; margin:6px 0 0 12px; font-size:13px; flex-wrap:wrap;">
@@ -3427,13 +3847,19 @@ function setupTavernSyncScreen() {
                         <option value="char" ${TavernSync.personaUpdateMode(b) === 'char' ? 'selected' : ''}>只更新角色人设</option>
                         <option value="user" ${TavernSync.personaUpdateMode(b) === 'user' ? 'selected' : ''}>只更新用户人设</option>
                     </select>
-                    <span style="font-size:11px; color:#888; width:100%;">每次同步时，酒馆里的人设改了就更新到小手机；你在小手机里改过的不会被覆盖。用户人设跟着你上次在「导入酒馆人设」里选的那个，没选过就跟着酒馆里当前选中的人设。</span>
+                    <span style="font-size:11px; color:#888; width:100%;">每次同步和离开小手机时检查：酒馆里改了就更新到小手机，小手机里改了就推送到酒馆，头像也一样；两边都改过的不动，会在这里让你选用哪边的。用户人设跟着你上次在「导入酒馆人设」里选的那个，没选过就跟着酒馆里当前选中的人设。</span>
                 </div>
+                ${TavernSync.personaConflicts(b).map(k => `
+                <div style="display:flex; align-items:center; gap:6px; margin:6px 0 0 12px; font-size:11px; color:#FF9800; line-height:1.5; flex-wrap:wrap;">
+                    <span style="flex:1; min-width:0;">${TavernSync.PERSONA_LABELS[k]}在酒馆和小手机里都改过，选用哪边的：</span>
+                    <button data-pconf="${i}" data-key="${k}" data-use="tavern" style="${TS.btnS} font-size:11px; padding:2px 8px; line-height:1.5;">用酒馆的</button>
+                    <button data-pconf="${i}" data-key="${k}" data-use="phone" style="${TS.btnS} font-size:11px; padding:2px 8px; line-height:1.5;">用小手机的</button>
+                </div>`).join('')}
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
-                    <span>自动更新复制过的世界书</span>
+                    <span>双向自动更新复制过的世界书</span>
                     <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-wbauto="${i}" ${b.autoUpdateWorldBooks ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
-                <div style="font-size:11px; color:#888; margin:4px 0 0 12px;">只更新已经复制过的条目，你在小手机里改过的不会被覆盖；酒馆里新加的条目，要在「导入酒馆世界书」里手动复制。</div>
+                <div style="font-size:11px; color:#888; margin:4px 0 0 12px;">酒馆里改了就更新到小手机，小手机里改了就推送到酒馆；两边都改过的不动，页面顶部会提示。只管从酒馆复制过来的、和推送到这个角色世界书里的条目，新条目要在「导入酒馆世界书」「推送小手机世界书」里手动加。</div>
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <span>自动精简旧楼层</span>
                     <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-trimauto="${i}" ${b.autoTrim ? 'checked' : ''}><span class="kkt-slider"></span></span>
@@ -3498,6 +3924,20 @@ function setupTavernSyncScreen() {
             b.autoUpdatePersona = cb.checked;
             await TavernSync.saveConfig(cfg);
             renderBindings();   // 下面“更新哪个”那一行跟着出现/消失
+        }));
+        // 人设两边都改过：选用哪边的
+        bindingsList.querySelectorAll('[data-pconf]').forEach(btn => btn.addEventListener('click', async () => {
+            const b = TavernSync.getConfig().bindings[parseInt(btn.dataset.pconf, 10)];
+            if (!b) return;
+            const label = TavernSync.PERSONA_LABELS[btn.dataset.key];
+            const phone = btn.dataset.use === 'phone';
+            if (!confirm(phone ? `用小手机的${label}覆盖酒馆里的？酒馆里的改动会丢失。` : `用酒馆的${label}覆盖小手机里的？小手机里的改动会丢失。`)) return;
+            btn.disabled = true;
+            try {
+                const r = await TavernSync.resolvePersonaConflict(b, btn.dataset.key, btn.dataset.use);
+                showToast(r.errors ? '没有成功，原因写在页面顶部' : (phone ? `已用小手机的${label}更新酒馆` : `已用酒馆的${label}更新小手机`));
+            } catch (e) { showToast(e.message); }
+            renderBindings();
         }));
         bindingsList.querySelectorAll('[data-persona-mode]').forEach(sel => sel.addEventListener('change', async () => {
             const cfg = TavernSync.getConfig();
@@ -4268,6 +4708,8 @@ async function showImportCharModal(binding) {
 
     const hasPersona = char.persona?.trim();
     const hasMyPersona = char.myPersona?.trim();
+    // 你自己传过的头像（小手机里存成图片数据）才标「将覆盖」；默认头像是外链，换掉没关系
+    const isUserAvatar = (src) => /^data:/i.test(String(src || ''));
 
     let userPersonaHTML = '';
     if (result.userPersonas.length) {
@@ -4304,6 +4746,22 @@ async function showImportCharModal(binding) {
                 </label>
             </div>` : '<div style="color:#888; font-size:12px; margin-bottom:12px;">酒馆角色没有人设描述。</div>'}
         ${userPersonaHTML}
+        <div style="margin-bottom:12px;">
+            <label style="${TS.label}">头像</label>
+            <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:6px;">从酒馆头像的正中间截一个正方形，就是酒馆圆形头像里看到的那块。</div>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:6px; cursor:pointer;">
+                <input type="checkbox" id="ic-avatar-check" checked>
+                <img id="ic-avatar-prev" src="${esc(TavernSync.tavernCharAvatarUrl(result.charAvatar))}" style="width:40px; height:40px; border-radius:50%; object-fit:cover; flex-shrink:0; background:rgba(128,128,128,0.15);">
+                <span style="flex:1;">导入角色头像</span>
+                ${isUserAvatar(char.avatar) ? '<span style="font-size:11px; color:#FF9800;">将覆盖</span>' : ''}
+            </label>
+            <label id="ic-myavatar-row" style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
+                <input type="checkbox" id="ic-myavatar-check" checked>
+                <img id="ic-myavatar-prev" style="width:40px; height:40px; border-radius:50%; object-fit:cover; flex-shrink:0; background:rgba(128,128,128,0.15);">
+                <span id="ic-myavatar-text" style="flex:1;">导入用户头像</span>
+                ${isUserAvatar(char.myAvatar) ? '<span style="font-size:11px; color:#FF9800;">将覆盖</span>' : ''}
+            </label>
+        </div>
         ${result.postHistory ? `
             <div style="margin-bottom:12px;">
                 <label style="${TS.label}">Post History Instructions</label>
@@ -4319,8 +4777,24 @@ async function showImportCharModal(binding) {
 
     const personaSelect = modal.querySelector('#ic-persona-select');
     const myPersonaArea = modal.querySelector('#ic-mypersona');
+    // 用户头像：跟着上面选的用户人设走（「酒馆中当前选中的人设」= 酒馆现在选中的那个的头像）
+    const myAvatarFile = () => {
+        const val = personaSelect ? personaSelect.value : '';
+        if (val === '__active__') return result.activeAvatar || '';
+        return val || '';
+    };
+    function paintMyAvatar() {
+        const file = myAvatarFile();
+        const prev = modal.querySelector('#ic-myavatar-prev');
+        const cb = modal.querySelector('#ic-myavatar-check');
+        const text = modal.querySelector('#ic-myavatar-text');
+        if (file) { prev.src = TavernSync.tavernUserAvatarUrl(file); prev.style.visibility = 'visible'; cb.disabled = false; text.textContent = '导入用户头像'; }
+        else { prev.removeAttribute('src'); prev.style.visibility = 'hidden'; cb.disabled = true; text.textContent = '导入用户头像（先在上面选用户人设）'; }
+    }
+    paintMyAvatar();
     if (personaSelect) {
         personaSelect.addEventListener('change', () => {
+            paintMyAvatar();
             const val = personaSelect.value;
             if (val === '__active__') myPersonaArea.value = result.activePersona;
             else if (val) { const p = result.userPersonas.find(x => x.avatar === val); myPersonaArea.value = p?.description || ''; }
@@ -4350,17 +4824,34 @@ async function showImportCharModal(binding) {
             if (hasMyPersona && !confirm('当前角色已有用户人设，确定覆盖吗？')) { /* skip */ }
             else { char.myPersona = myPersonaArea.value; didUser = true; }
         }
-        // 记下这次导入的是酒馆哪个版本、写进小手机的是什么，「自动更新酒馆人设」拿它判断以后谁改过
+        // 头像：截好正方形再换上；读不到的不换，告诉你是哪张
+        const avatarFails = [];
+        let didAvatar = false, didCharAv = false, didUserAv = false;
+        if (modal.querySelector('#ic-avatar-check').checked && result.charAvatar) {
+            try { char.avatar = await TavernSync.avatarToSquare(TavernSync.tavernCharAvatarUrl(result.charAvatar)); didAvatar = didCharAv = true; }
+            catch (e) { avatarFails.push('角色头像'); }
+        }
+        const myFile = myAvatarFile();
+        if (modal.querySelector('#ic-myavatar-check').checked && myFile) {
+            try { char.myAvatar = await TavernSync.avatarToSquare(TavernSync.tavernUserAvatarUrl(myFile)); didAvatar = didUserAv = true; }
+            catch (e) { avatarFails.push('用户头像'); }
+        }
+        // 记下这次导入的是酒馆哪个版本、写进小手机的是什么，「双向自动更新人设」拿它判断以后谁改过
         const src = personaSelect ? personaSelect.value : '';
-        if (didChar || didUser) {
+        if (didChar || didUser || didAvatar) {
             const cfg = TavernSync.getConfig();
             const b = cfg.bindings.find(x => x === binding) || cfg.bindings.find(x => x.uwuCharId === binding.uwuCharId);
-            if (b) TavernSync.recordPersonaImport(b, char, result, { char: didChar, user: didUser && !!src, userSource: src });
+            if (b) {
+                TavernSync.recordPersonaImport(b, char, result, { char: didChar, user: didUser && !!src, userSource: src });
+                // 头像也记下两边这一版，「双向自动更新人设」拿它判断以后谁改过
+                try { await TavernSync.recordAvatarImport(b, char, result, { char: didCharAv, userFile: didUserAv ? myFile : '' }); } catch (e) { /* 记不下就当以前没记过 */ }
+            }
             await TavernSync.saveConfig(cfg);   // 会顺带存角色数据
         } else {
             await saveData();
         }
-        overlay.remove(); showToast('人设已导入');
+        overlay.remove();
+        showToast(avatarFails.length ? `人设已导入，${avatarFails.join('和')}读不到，没有换` : (didChar || didUser || didAvatar ? '人设已导入' : '没有要导入的内容'));
     });
 }
 
@@ -4391,7 +4882,7 @@ async function showWorldBookModal(binding) {
 
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">导入酒馆世界书</h3>
-        <div style="font-size:12px; color:#888; margin-bottom:8px; line-height:1.6;">复制过来就是小手机自己的世界书条目，可以随便改。酒馆里改了内容的，这里会标出来，可以选择更新。酒馆里以后改了内容，打开绑定卡片上的「自动更新复制过的世界书」，或者回到这里点「更新小手机里的内容」。</div>
+        <div style="font-size:12px; color:#888; margin-bottom:8px; line-height:1.6;">复制过来就是小手机自己的世界书条目，可以随便改。酒馆里改了内容的，这里会标出来，可以选择更新。以后想让两边的改动自动跟过去，打开绑定卡片上的「双向自动更新复制过的世界书」；也可以回到这里点「更新小手机里的内容」。</div>
         ${tabsHTML ? `<div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">${tabsHTML}</div>` : ''}
         <div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
             <button id="wb-select-all" style="${smallBtn}">全选</button>
@@ -4471,8 +4962,9 @@ async function showWorldBookModal(binding) {
     function statusOf(src, e) {
         const copied = TavernSync.findCopiedWorldBook(binding, src.name, e.uid);
         if (!copied) return { text: '', color: '', changed: false, copied: null };
-        const changed = copied.tavernSource.hash !== TavernSync.wbHash(e);
-        const edited = TavernSync.wbEditedLocally(copied) === true;
+        const cs = TavernSync._wbChangeState(copied, TavernSync.copiedLink(copied, src.name, e.uid), e);
+        const changed = cs.tavernChanged;
+        const edited = cs.localChanged === true;
         const text = changed ? (edited ? '酒馆里已改，小手机里也改过' : '酒馆里已改') : (edited ? '已复制，小手机里改过' : '已复制');
         return { text, color: changed ? '#FF9800' : '#4CAF50', changed, edited, copied };
     }
@@ -4551,20 +5043,17 @@ async function showWorldBookModal(binding) {
         const selected = getSelected();
         if (!selected.length) { showToast('请先勾选条目'); return; }
         // 你在小手机里改过的条目，更新会用酒馆的版本覆盖，先问一声
-        const editedNames = selected.map(e => TavernSync.findCopiedWorldBook(binding, src.name, e.uid))
-            .filter(c => c && c.tavernSource.hash !== TavernSync.wbHash(src.entries.find(x => x.uid === c.tavernSource.uid)) && TavernSync.wbEditedLocally(c) === true)
-            .map(c => c.name || '未命名');
+        const editedNames = selected.map(e => [e, TavernSync.findCopiedWorldBook(binding, src.name, e.uid)])
+            .filter(([e, c]) => c && statusOf(src, e).edited)
+            .map(([, c]) => c.name || '未命名');
         if (editedNames.length && !confirm(`勾选的条目里有 ${editedNames.length} 条你在小手机里改过（${editedNames.slice(0, 3).map(n => `「${n}」`).join('、')}${editedNames.length > 3 ? ' 等' : ''}），更新后会换成酒馆的版本，小手机里的改动会丢失。确定更新吗？`)) return;
         let updated = 0, missing = 0;
         for (const e of selected) {
             const copied = TavernSync.findCopiedWorldBook(binding, src.name, e.uid);
             if (!copied) { missing++; continue; }
-            if (copied.tavernSource.hash === TavernSync.wbHash(e)) continue;
-            TavernSync.applyTavernEntry(copied, e, src.entries.indexOf(e), false);
-            copied.tavernSource.hash = TavernSync.wbHash(e);
-            copied.tavernSource.order = e.order;
-            copied.tavernSource.localHash = TavernSync.wbLocalHash(copied);
-            delete copied.tavernSource.keptHash;
+            const st = statusOf(src, e);
+            if (!st.changed && !st.edited) continue;           // 两边一样，不用更新
+            TavernSync.pullEntryInto(copied, e, src.entries.indexOf(e), src.name, TavernSync.copiedLink(copied, src.name, e.uid).via);
             updated++;
         }
         await saveData();
@@ -4615,6 +5104,15 @@ async function showPushPersonaModal(onDone) {
             <textarea id="pp-desc" style="${TS.input} height:120px; resize:vertical; font-size:12px; margin-bottom:8px;"></textarea>
             <label style="${TS.label}">开场白</label>
             <textarea id="pp-first" style="${TS.input} height:70px; resize:vertical; font-size:12px;" placeholder="可以不填"></textarea>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-top:8px; cursor:pointer;">
+                <input type="checkbox" id="pp-av-on" checked>
+                <img id="pp-av-prev" style="width:40px; height:60px; border-radius:6px; object-fit:cover; flex-shrink:0; background:rgba(128,128,128,0.15); visibility:hidden;">
+                <div style="flex:1; min-width:0;">
+                    <div>推送角色头像</div>
+                    <div id="pp-av-note" style="font-size:11px; color:#888; line-height:1.5;"></div>
+                </div>
+            </label>
+            <div style="font-size:12px; color:#888; line-height:1.6; margin-top:6px;">酒馆头像是竖长方形。小手机头像会完整放在正中间，上下用这张图模糊铺满，酒馆圆形头像里露出的正好是原图。</div>
         </div>
         <div style="${sep}">
             ${check('pp-user-on', '同时在酒馆新建用户人设', true)}
@@ -4627,6 +5125,14 @@ async function showPushPersonaModal(onDone) {
                 <input id="pp-user-name" type="text" style="${TS.input} margin-bottom:8px;">
                 <label style="${TS.label}">内容</label>
                 <textarea id="pp-user-desc" style="${TS.input} height:80px; resize:vertical; font-size:12px;"></textarea>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-top:8px; cursor:pointer;">
+                <input type="checkbox" id="pp-uav-on" checked>
+                <img id="pp-uav-prev" style="width:40px; height:60px; border-radius:6px; object-fit:cover; flex-shrink:0; background:rgba(128,128,128,0.15); visibility:hidden;">
+                <div style="flex:1; min-width:0;">
+                    <div>推送用户头像</div>
+                    <div id="pp-uav-note" style="font-size:11px; color:#888; line-height:1.5;"></div>
+                </div>
+            </label>
             </div>
         </div>
         <div style="${sep}">
@@ -4653,6 +5159,27 @@ async function showPushPersonaModal(onDone) {
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
     let wbData = { books: [], globals: [] };
+    // 头像：选了角色 / 换了用户人设来源就重新做一张 2:3 的，窗口里显示做好的样子
+    const avatars = { 'pp-av': null, 'pp-uav': null };     // { blob, url } 或 null（读不到 / 没有）
+    const avatarTokens = { 'pp-av': 0, 'pp-uav': 0 };
+    async function prepareAvatar(id, src) {
+        const token = ++avatarTokens[id];
+        avatars[id] = null;
+        const prev = $('#' + id + '-prev'), note = $('#' + id + '-note');
+        prev.style.visibility = 'hidden';
+        if (!src) { note.textContent = '没有头像，会用酒馆默认头像。'; return; }
+        note.textContent = '处理中...';
+        try {
+            const a = await TavernSync.avatarToTall(src);
+            if (token !== avatarTokens[id]) return;
+            avatars[id] = a;
+            prev.src = a.url; prev.style.visibility = 'visible';
+            note.textContent = '';
+        } catch (e) {
+            if (token !== avatarTokens[id]) return;
+            note.textContent = '这张头像读不到（外链图片的网站不让读），会用酒馆默认头像。';
+        }
+    }
     const curChar = () => chars.find(c => c.id === $('#pp-char').value);
     function renderWbList() {
         const withGlobal = $('#pp-wb-global').checked;
@@ -4675,6 +5202,7 @@ async function showPushPersonaModal(onDone) {
         $('#pp-desc').value = ch.persona || '';
         $('#pp-user-src').value = '__char__';
         fillUser();
+        prepareAvatar('pp-av', ch.avatar);
         wbData = TavernSync.phoneOfflineWorldBooks(ch);
         $('#pp-wb-note').textContent = wbData.offline
             ? '下面是这个角色绑定的线下世界书条目。'
@@ -4692,10 +5220,12 @@ async function showPushPersonaModal(onDone) {
         if (src === '__char__') {
             $('#pp-user-name').value = (ch && ch.myName) || '';
             $('#pp-user-desc').value = (ch && ch.myPersona) || '';
+            prepareAvatar('pp-uav', ch && ch.myAvatar);
         } else {
             const p = presets.find(x => x.id === src);
             $('#pp-user-name').value = (p && p.name) || '';
             $('#pp-user-desc').value = (p && p.persona) || '';
+            prepareAvatar('pp-uav', p && p.avatar);
         }
     }
     $('#pp-char').addEventListener('change', fillFromChar);
@@ -4731,14 +5261,15 @@ async function showPushPersonaModal(onDone) {
             }
         }
         const userOn = $('#pp-user-on').checked;
-        const userPersona = userOn ? { name: $('#pp-user-name').value.trim(), description: $('#pp-user-desc').value } : null;
+        const pick = (id) => ($('#' + id + '-on').checked && avatars[id]) ? avatars[id].blob : null;
+        const userPersona = userOn ? { name: $('#pp-user-name').value.trim(), description: $('#pp-user-desc').value, avatarBlob: pick('pp-uav') } : null;
         if (userPersona && !userPersona.name) { showToast('用户人设的名字不能空着'); return; }
         const bindEl = $('#pp-bind');
         const btn = $('#pp-save');
         btn.disabled = true; btn.textContent = '新建中...';
         try {
             const r = await TavernSync.createTavernCharacter({
-                charId: ch.id, name, description: $('#pp-desc').value, firstMes: $('#pp-first').value,
+                charId: ch.id, name, description: $('#pp-desc').value, firstMes: $('#pp-first').value, avatarBlob: pick('pp-av'),
                 userPersona, world, bind: !!(bindEl && bindEl.checked),
             });
             const parts = [`已在酒馆新建角色「${name}」`];
@@ -5110,7 +5641,9 @@ TavernSync._writeQueue = Promise.resolve();
 ['pushToTavern', 'pushSummaryToTavern', 'pullFromTavern', 'replaceRegeneratedInTavern', 'resetImportRange', 'removePushedFromTavern', 'writeBackFloorEdit', 'updatePushedMessage',
     'trimFloors', 'restoreRawFloors', 'refreshSummaries', 'removeOtherChatFloors', 'changeChatFile', 'recoverLostPushes',
     // 推送小手机人设/世界书：会改小手机世界书条目上的记录、加绑定，也排进来（里面互相调用的是不排队的版本）
-    'pushWorldBooksToTavern', 'createTavernCharacter'].forEach(name => {
+    'pushWorldBooksToTavern', 'createTavernCharacter',
+    // 双向更新人设/世界书：同步里面调的是它们本身（同步已经在排队），单独触发的这两个排进来
+    'resolvePersonaConflict', 'syncSettingsBothWays'].forEach(name => {
     const original = TavernSync[name];
     TavernSync[name] = function (...args) {
         const run = () => original.apply(TavernSync, args);

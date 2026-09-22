@@ -171,6 +171,52 @@ function addPersona(d) {
     } catch (e) { reply(false, e.message); }
 }
 
+// 小手机改了某个角色卡的描述/性格/场景或头像：重新读角色列表（酒馆生成回复时用的是它手里的这份）。
+// 这个角色正开在酒馆的编辑页里时，把页面上的三栏也换成新的——否则你在编辑页随手改一个字，
+// 酒馆会拿页面上的旧内容整份存回去，把小手机刚推过来的盖掉
+function characterUpdated(d) {
+    refreshCharacters();
+    try {
+        const ctx = getCtx();
+        const ch = ctx && Array.isArray(ctx.characters) ? ctx.characters[ctx.characterId] : null;
+        if (!ch || ch.avatar !== d.avatar || !d.fields) return;
+        const set = (id, v) => { const el = document.getElementById(id); if (el && typeof v === 'string') el.value = v; };
+        set('description_textarea', d.fields.description);
+        set('personality_textarea', d.fields.personality);
+        set('scenario_pole', d.fields.scenario);
+    } catch (e) { console.warn('[小手机] 更新编辑页失败:', e); }
+}
+
+// 小手机改了某个用户人设的内容：和新建一样，由酒馆页面自己改再存，不会被它手里的旧设置盖掉。
+// 这个人设正在用时，酒馆另外存着一份“当前人设内容”和页面上的输入框，也一起换掉
+async function updatePersona(d) {
+    const reply = (ok, error) => { try { channel.postMessage({ type: 'page-answer', id: d.id, ok, error }); } catch (e) { /* 回不了话，小手机会改用直接写文件 */ } };
+    try {
+        const ctx = getCtx();
+        const pu = ctx && ctx.powerUserSettings;
+        if (!pu || typeof ctx.saveSettingsDebounced !== 'function') { reply(false, '酒馆版本不支持'); return; }
+        if (!pu.persona_descriptions || typeof pu.persona_descriptions !== 'object') pu.persona_descriptions = {};
+        pu.persona_descriptions[d.avatarId] = Object.assign({ position: 0, depth: 2, role: 0, lorebook: '' }, pu.persona_descriptions[d.avatarId], { description: d.description || '' });
+        let current = d.activeAvatar;
+        try { const mod = await import('/scripts/personas.js'); if (mod && typeof mod.user_avatar === 'string') current = mod.user_avatar; } catch (e) { /* 用小手机读到的 */ }
+        if (current === d.avatarId) {
+            pu.persona_description = d.description || '';
+            const el = document.getElementById('persona_description');
+            if (el) el.value = d.description || '';
+        }
+        ctx.saveSettingsDebounced();
+        reply(true);
+    } catch (e) { reply(false, e.message); }
+}
+
+// 小手机换了用户人设的头像：酒馆页面上的小图可能还是旧的（浏览器缓存），刷新人设列表
+function refreshPersonaAvatar() {
+    try {
+        const ctx = getCtx();
+        if (ctx && typeof ctx.getUserAvatars === 'function') Promise.resolve(ctx.getUserAvatars()).catch(() => {});
+    } catch (e) { /* 刷新不了就等下次打开 */ }
+}
+
 try {
     if (typeof BroadcastChannel === 'function') {
         channel = new BroadcastChannel('uwu-tavern-sync');
@@ -185,6 +231,10 @@ try {
             if (d && d.type === 'character-created') { refreshCharacters(); return; }
             if (d && d.type === 'worldinfo-saved' && d.name) { refreshWorldInfo(d.name); return; }
             if (d && d.type === 'add-persona' && d.id) { addPersona(d); return; }
+            // 「双向自动更新人设」把小手机的改动推过来了
+            if (d && d.type === 'character-updated' && d.avatar) { characterUpdated(d); return; }
+            if (d && d.type === 'update-persona' && d.id) { updatePersona(d); return; }
+            if (d && d.type === 'persona-updated') { refreshPersonaAvatar(d.avatarId); return; }
             if (!d || d.type !== 'chat-saved' || !d.avatar || !d.file) return;
             const same = pendingReload && pendingReload.avatar === d.avatar && pendingReload.file === d.file;
             if (!same) pendingReload = { avatar: d.avatar, file: d.file, saves: [] };

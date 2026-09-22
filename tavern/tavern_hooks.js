@@ -9,7 +9,7 @@
 (function () {
     const TAG = '[酒馆外挂]';
     // 文件版本：界面上已不显示，排查时可以临时显示出来（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-21 l';
+    const HOOKS_VERSION = '2026-09-22 e';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js。`;
@@ -158,8 +158,9 @@
     //   - 被一起删掉的酒馆楼层先不放回 → AI 重新生成时看不到“之后才发生的”酒馆剧情；
     //   - 回复生成完，把新回复的时间设成紧跟在那条用户消息之后，再把酒馆楼层放回来 → 新回复留在原位置；
     //   - 酒馆里如果已经有旧回复（推送过），就在那一楼里原地换成新回复（位置不动、不新增楼层），
-    //     酒馆里没有旧回复（没推送过），就把新回复接在酒馆里“这轮之前最后一条小手机消息”那一楼里；
     //     成功后新回复标记 skipTavernPush，免得再推一次；
+    //     旧回复从没推送过（小手机的推送记录里查不到，TavernSync.mayBeInTavern）就完全不连酒馆，
+    //     酒馆里找不到旧回复也不动酒馆，这两种情况新回复都当成普通的未推送消息；
     //   - 生成期间旧回复记在 binding.keptIds 里，删除同步当作还在，免得在替换前就被删掉；
     //     替换失败时退回“酒馆保留旧回复、新回复不推送”，并在页面上报问题。
     // 你自己长按删掉的酒馆卡片不受影响（不是“重新生成”删的），下次同步时才会重新出现。
@@ -241,7 +242,12 @@
             const oldSet = new Set(oldIds);
             binding.keptIds = (binding.keptIds || []).filter(id => !oldSet.has(id));
         }
-        if (binding && oldIds.length && newReplies.length) {
+        if (binding && oldIds.length && newReplies.length && !window.TavernSync.mayBeInTavern(binding, oldIds)) {
+            // 旧回复从没推到过酒馆（小手机自己的推送记录里查不到）：不用去酒馆替换，也就不会因为连不上酒馆报错。
+            // 新回复当成普通的未推送消息，开了自动推送就照常推过去
+            const oldSet = new Set(oldIds);
+            binding.keptIds = (binding.keptIds || []).filter(id => !oldSet.has(id));
+        } else if (binding && oldIds.length && newReplies.length) {
             const oldSet = new Set(oldIds);
             const dropKept = () => { binding.keptIds = (binding.keptIds || []).filter(id => !oldSet.has(id)); };
             try {
