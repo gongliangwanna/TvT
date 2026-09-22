@@ -2980,7 +2980,11 @@ function setupTavernSyncScreen() {
             <div id="ts-settings-area" style="display:none; margin-top:12px;">
                 <div style="${TS.card}">
                     <span style="${TS.title}">从小手机推送到酒馆</span>
-                    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+                    <div style="display:flex; gap:8px; margin-top:12px;">
+                        <button id="ts-push-persona" style="flex:1; ${TS.btnO}">推送小手机人设</button>
+                        <button id="ts-push-wb" style="flex:1; ${TS.btnO}">推送小手机世界书</button>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:14px; padding-top:12px; border-top:1px solid #f0f0f0;">
                         <span style="font-size:13px; white-space:nowrap;">推送楼层模式</span>
                         <select id="ts-push-mode" aria-label="推送楼层模式" title="推送楼层模式" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px;">
                             <option value="new" ${(config.pushMode || 'new') === 'new' ? 'selected' : ''}>新开楼层</option>
@@ -2994,13 +2998,6 @@ function setupTavernSyncScreen() {
                             <select id="ts-push-char" aria-label="按角色设置" title="按角色设置" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px;"></select>
                         </div>
                         <div id="ts-push-per-char"></div>
-                    </div>
-                    <div style="margin-top:14px; padding-top:12px; border-top:1px solid #f0f0f0;">
-                        <div style="display:flex; gap:8px;">
-                            <button id="ts-push-persona" style="flex:1; ${TS.btnO}">推送小手机人设</button>
-                            <button id="ts-push-wb" style="flex:1; ${TS.btnO}">推送小手机世界书</button>
-                        </div>
-                        <div style="font-size:12px; color:#888; margin-top:6px; line-height:1.6;">推送小手机人设：在酒馆里新建一个角色，可以连同用户人设、世界书一起建，不会改动酒馆里已有的角色。<br>推送小手机世界书：把小手机的世界书条目加进酒馆的世界书，推过的条目以后在小手机里改了，可以再更新过去。</div>
                     </div>
                 </div>
                 <div style="${TS.card} margin-top:12px;">
@@ -4802,7 +4799,7 @@ async function showPushWorldBookModal(defaultName) {
         <div id="pw-page-note" style="display:none; font-size:12px; color:#888; line-height:1.6; margin-bottom:10px;"></div>
         <div style="display:flex; gap:8px; margin-bottom:8px;">
             <button id="pw-add" style="flex:1; ${TS.btnO} ${TS.big}">推送到酒馆世界书</button>
-            <button id="pw-update" style="flex:1; ${TS.btnO} ${TS.big}">更新酒馆里的内容</button>
+            <button id="pw-update" style="flex:1; ${TS.btnG} ${TS.big}">更新酒馆里的内容</button>
         </div>
         <button id="pw-close" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">关闭</button>`;
     overlay.appendChild(modal); document.body.appendChild(overlay);
