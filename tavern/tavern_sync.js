@@ -131,7 +131,7 @@ function tagFloorNth(list) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-22 a',
+    SYNC_VERSION: '2026-09-22 b',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -329,6 +329,12 @@ const TavernSync = {
                 if (d && d.type === 'pong' && d.id && this._pings && this._pings.has(d.id)) {
                     this._pings.get(d.id)(true);
                     this._pings.delete(d.id);
+                    return;
+                }
+                // 酒馆页面办完了小手机托它办的事（见 _askTavernPage，比如新建用户人设）
+                if (d && d.type === 'page-answer' && d.id && this._pageAsks && this._pageAsks.has(d.id)) {
+                    this._pageAsks.get(d.id)(d);
+                    this._pageAsks.delete(d.id);
                     return;
                 }
                 if (!d || d.type !== 'tavern-maybe-overwrote' || !Array.isArray(d.saveIds)) return;
@@ -2511,6 +2517,324 @@ ${transcript}`;
         return { updated, kept: kept.length };
     },
 
+    // ========== 把小手机设定推送到酒馆（2026-09-22 加）==========
+    // 设置「从小手机推送到酒馆」卡片最下面的两个按钮：
+    //   「推送小手机人设」：在酒馆里新建一个角色（可以连同用户人设、世界书一起建），每次都是新建，不动酒馆里已有的；
+    //   「推送小手机世界书」：把小手机的世界书条目加进酒馆的某一本世界书，推过的以后可以再更新过去。
+    // 推过去的世界书条目在小手机那条上记 tavernPushes[酒馆世界书名] = { uid, hash, localHash }：
+    //   hash      = 推送那一刻酒馆那一条的指纹（和 wbHash 同一套），对不上 = 酒馆里改过
+    //   localHash = 推送那一刻小手机这一条的指纹（wbPushHash，含权重），对不上 = 小手机里改过
+    // 从这本酒馆世界书导入进来的条目（tavernSource.world 是这本）也算已经在里面，只能更新，不会再加一条。
+
+    // 小手机角色的名字（推到酒馆当角色名、世界书名用）：优先真名，其次备注
+    phoneCharName(ch) {
+        return (ch && (ch.realName || ch.name || ch.remarkName)) || '';
+    },
+
+    // 小手机角色用的线下世界书条目。没设线下的，小手机线下时用线上那套，这里也跟着用（offline = false）
+    phoneOfflineWorldBooks(ch) {
+        const off = Array.isArray(ch && ch.offlineWorldBookIds) ? ch.offlineWorldBookIds : [];
+        const ids = off.length ? off : (Array.isArray(ch && ch.worldBookIds) ? ch.worldBookIds : []);
+        const books = ids.map(id => (db.worldBooks || []).find(w => w && w.id === id)).filter(Boolean);
+        const globals = (db.worldBooks || []).filter(w => w && w.isGlobal && !ids.includes(w.id));
+        return { offline: off.length > 0, books, globals };
+    },
+
+    // 小手机条目的指纹：wbLocalHash 再加上权重（权重要推到酒馆的「顺序」，改了也算改过）
+    wbPushHash(w) {
+        return this.textHash(this.wbLocalHash(w) + '\u0001' + this._phoneWeight(w));
+    },
+    _phoneWeight(w) {
+        const n = Number(w && w.weight);
+        return Number.isFinite(n) ? n : 100;      // yuan 里没填权重时按 100 算
+    },
+
+    // 酒馆世界书条目 → 和 getCharAndChatWorldBooks 一样的格式（wbHash 用的就是这个格式）
+    _normTavernEntry(e) {
+        return {
+            uid: e.uid, comment: e.comment || '未命名', content: e.content || '', key: e.key || '',
+            order: e.order ?? e.uid ?? 0, position: e.position, depth: e.depth, role: e.role, disabled: !!e.disable, constant: !!e.constant,
+        };
+    },
+
+    // 小手机条目的内容写到酒馆条目上：名字、正文、关键词、常驻、开关、顺序、位置。
+    // 位置：「前」→ 角色定义前（0）；「中」「后」→ 角色定义后（1）。
+    // 更新时如果酒馆里那条放在别的位置（比如 @深度），而小手机是「中」「后」，就不动酒馆的位置
+    // （导入时这些位置都变成了「后」，推回去不该把你在酒馆里设的位置冲掉）
+    _applyPhoneEntry(target, w) {
+        target.comment = w.name || '未命名';
+        target.content = w.content || '';
+        target.key = (Array.isArray(w.keywords) ? w.keywords : []).map(k => String(k).trim()).filter(Boolean);
+        target.constant = w.alwaysOn !== false;     // yuan 里没写 alwaysOn 就算常驻
+        target.disable = !!w.disabled;
+        target.order = this._phoneWeight(w);
+        if (w.position === 'before') target.position = 0;
+        else if (target.position === undefined || target.position === null || target.position === 0) target.position = 1;
+        return target;
+    },
+
+    // 酒馆新条目的完整格式（照酒馆自己新建条目时的默认值，缺字段酒馆有的地方会出错）
+    _newTavernEntry(uid, w) {
+        const e = {
+            uid, key: [], keysecondary: [], comment: '', content: '', constant: false, vectorized: false,
+            selective: true, selectiveLogic: 0, addMemo: true, order: 100, position: 1, disable: false,
+            ignoreBudget: false, excludeRecursion: false, preventRecursion: false,
+            matchPersonaDescription: false, matchCharacterDescription: false, matchCharacterPersonality: false,
+            matchCharacterDepthPrompt: false, matchScenario: false, matchCreatorNotes: false,
+            delayUntilRecursion: false, probability: 100, useProbability: true, depth: 4, outletName: '',
+            group: '', groupOverride: false, groupWeight: 100, scanDepth: null, caseSensitive: null,
+            matchWholeWords: null, useGroupScoring: null, automationId: '', role: null,
+            sticky: 0, cooldown: 0, delay: 0, triggers: [], displayIndex: uid,
+            characterFilter: { isExclude: false, names: [], tags: [] },
+        };
+        return this._applyPhoneEntry(e, w);
+    },
+
+    // 小手机这一条和酒馆世界书 worldName 的关系。tavernEntries：{ uid: 酒馆原始条目 }
+    // 返回 { linked, uid, via: 'push'|'import', tavernChanged, localChanged }；酒馆里那条被删了算没推过
+    wbPushStatus(w, worldName, tavernEntries) {
+        const none = { linked: false };
+        if (!w || !tavernEntries) return none;
+        const link = w.tavernPushes && w.tavernPushes[worldName];
+        if (link && tavernEntries[link.uid]) {
+            const cur = this.wbHash(this._normTavernEntry(tavernEntries[link.uid]));
+            return { linked: true, uid: link.uid, via: 'push', tavernChanged: cur !== link.hash, localChanged: this.wbPushHash(w) !== link.localHash };
+        }
+        const src = w.tavernSource;
+        if (src && src.world === worldName && tavernEntries[src.uid]) {
+            const cur = this.wbHash(this._normTavernEntry(tavernEntries[src.uid]));
+            return { linked: true, uid: src.uid, via: 'import', tavernChanged: cur !== src.hash, localChanged: this.wbEditedLocally(w) === true };
+        }
+        return none;
+    },
+
+    // 酒馆里所有世界书的名字（酒馆的设置接口顺带返回）
+    async getSTWorldNames() {
+        const resp = await this.apiCall('/api/settings/get', {});
+        return Array.isArray(resp && resp.world_names) ? resp.world_names : [];
+    },
+
+    // 通知同一个浏览器里开着的酒馆页面（st-launcher.js 在听）：刷新角色列表、世界书、人设
+    _tellTavernPage(msg) {
+        try {
+            const ch = this._getChannel();
+            if (ch) ch.postMessage(msg);
+        } catch (e) { /* 通知不了就算了，酒馆刷新页面后也能看到 */ }
+    },
+
+    // 发一个请求给酒馆页面并等它回话（用来让酒馆页面自己新建用户人设）。没回话返回 null
+    _askTavernPage(msg, timeoutMs = 5000) {
+        const ch = this._getChannel();
+        if (!ch) return Promise.resolve(null);
+        if (!this._pageAsks) this._pageAsks = new Map();
+        const id = `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        return new Promise(resolve => {
+            this._pageAsks.set(id, resolve);
+            setTimeout(() => { if (this._pageAsks.has(id)) { this._pageAsks.delete(id); resolve(null); } }, timeoutMs);
+            try { ch.postMessage(Object.assign({}, msg, { id })); } catch (e) { this._pageAsks.delete(id); resolve(null); }
+        });
+    },
+
+    // 上传用的表单请求（新建角色、上传人设头像）。和 _stFetch 一样带 CSRF，但不能写死 JSON 的 Content-Type
+    async _stFetchForm(url, form, parse) {
+        const token = await this._getCsrfToken();
+        const headers = {};
+        if (token) headers['X-CSRF-Token'] = token;
+        return this._fetchWithTimeout(url, { method: 'POST', credentials: 'same-origin', headers, body: form }, parse);
+    },
+
+    // 把小手机条目推到酒馆世界书 worldName。
+    //   opts.create：新建这本世界书（酒馆里已有同名的就报错，重名会直接盖掉原来那本）
+    //   opts.mode：'add' 只加没推过的（推过的跳过）/ 'update' 只更新推过的（没推过的跳过）
+    // 返回 { added, updated, skipped, notLinked }
+    async pushWorldBooksToTavern(worldName, entries, opts = {}) {
+        return this._pushWorldBooksToTavern(worldName, entries, opts);
+    },
+    async _pushWorldBooksToTavern(worldName, entries, opts = {}) {
+        const name = String(worldName || '').trim();
+        if (!name) throw new Error('酒馆世界书的名字不能空着');
+        let data;
+        if (opts.create) {
+            const names = await this.getSTWorldNames();
+            if (names.includes(name)) throw new Error(`酒馆里已经有叫「${name}」的世界书了，换个名字`);
+            data = { entries: {} };
+        } else {
+            data = await this.getSTWorldInfo(name);
+            if (!data || typeof data !== 'object') data = {};
+            if (!data.entries || typeof data.entries !== 'object') data.entries = {};
+        }
+        const mode = opts.mode === 'update' ? 'update' : 'add';
+        let nextUid = Object.keys(data.entries).reduce((m, k) => Math.max(m, Number(k) || 0, Number(data.entries[k] && data.entries[k].uid) || 0), -1) + 1;
+        let added = 0, updated = 0, skipped = 0, notLinked = 0;
+        const touched = [];     // [小手机条目, 酒馆 uid]：保存成功后再记下关系
+        for (const w of entries || []) {
+            const st = this.wbPushStatus(w, name, data.entries);
+            if (mode === 'add') {
+                if (st.linked) { skipped++; continue; }
+                const uid = nextUid++;
+                data.entries[uid] = this._newTavernEntry(uid, w);
+                touched.push([w, uid]);
+                added++;
+            } else {
+                if (!st.linked) { notLinked++; continue; }
+                this._applyPhoneEntry(data.entries[st.uid], w);
+                touched.push([w, st.uid]);
+                updated++;
+            }
+        }
+        if (!opts.create && !touched.length) return { added, updated, skipped, notLinked };
+        await this.apiCall('/api/worldinfo/edit', { name, data });
+        for (const [w, uid] of touched) {
+            const hash = this.wbHash(this._normTavernEntry(data.entries[uid]));
+            if (!w.tavernPushes || typeof w.tavernPushes !== 'object') w.tavernPushes = {};
+            w.tavernPushes[name] = { uid, hash, localHash: this.wbPushHash(w) };
+            // 这条原来就是从这本导入的：导入那边的记录也跟着更新，免得「导入酒馆世界书」里标成「酒馆里已改」
+            if (w.tavernSource && w.tavernSource.world === name && w.tavernSource.uid === uid) {
+                w.tavernSource.hash = hash;
+                w.tavernSource.order = data.entries[uid].order;
+                w.tavernSource.localHash = this.wbLocalHash(w);
+                delete w.tavernSource.keptHash;
+            }
+        }
+        if (touched.length && typeof saveData === 'function') await saveData();
+        this._tellTavernPage({ type: 'worldinfo-saved', name, created: !!opts.create });
+        return { added, updated, skipped, notLinked };
+    },
+
+    // 酒馆消息时间的写法（和维护者酒馆里的一样：June 5, 2026 3:27pm）
+    _stSendDate(d = new Date()) {
+        const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const h = d.getHours();
+        return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`;
+    },
+    // 酒馆聊天文件名里的时间（酒馆自己的写法：2026-9-22@15h27m03s）
+    _stFileDate(d = new Date()) {
+        const p = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}@${p(d.getHours())}h${p(d.getMinutes())}m${p(d.getSeconds())}s`;
+    },
+
+    // 人设头像：先用酒馆自带的默认头像，读不到就用一张灰色小图
+    async _defaultAvatarBlob() {
+        try {
+            const r = await this._fetchWithTimeout('/img/ai4.png', { credentials: 'same-origin' });
+            if (r && r.ok && typeof r.blob === 'function') return await r.blob();
+        } catch (e) { /* 用下面的灰色小图 */ }
+        const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mN4+P//fwAJ4gP5qIAqVAAAAABJRU5ErkJggg==';
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new Blob([bytes], { type: 'image/png' });
+    },
+
+    // 在酒馆新建用户人设。同一个浏览器开着酒馆页面时让酒馆页面自己加（它手里的设置不会把我们盖掉）；
+    // 没开时直接改酒馆的设置文件，这时返回 via: 'file'，界面上提醒先刷新酒馆页面
+    async createTavernPersona(name, description) {
+        const form = new FormData();
+        form.append('avatar', await this._defaultAvatarBlob(), 'avatar.png');
+        const up = await this._stFetchForm('/api/avatars/upload', form, (resp) => {
+            if (!resp.ok) throw new Error(`上传人设头像失败（API ${resp.status}）`);
+            return resp.json();
+        });
+        const avatarId = up && up.path;
+        if (!avatarId) throw new Error('上传人设头像失败：酒馆没有返回头像文件名');
+        const answer = await this._askTavernPage({ type: 'add-persona', avatarId, name, description });
+        if (answer && answer.ok) return { avatarId, via: 'page' };
+        const resp = await this.apiCall('/api/settings/get', {});
+        const settings = typeof resp.settings === 'string' ? JSON.parse(resp.settings) : (resp.settings || {});
+        const pu = settings.power_user || (settings.power_user = {});
+        if (!pu.personas || typeof pu.personas !== 'object') pu.personas = {};
+        if (!pu.persona_descriptions || typeof pu.persona_descriptions !== 'object') pu.persona_descriptions = {};
+        pu.personas[avatarId] = name;
+        pu.persona_descriptions[avatarId] = { description, position: 0, depth: 2, role: 0, lorebook: '' };
+        await this.apiCall('/api/settings/save', settings);
+        return { avatarId, via: 'file' };
+    },
+
+    // 「推送小手机人设」：在酒馆里新建角色。opts：
+    //   charId          小手机角色（绑定用）
+    //   name / description / firstMes   酒馆角色卡的角色名、角色描述、开场白
+    //   userPersona     { name, description } 或 null：同时新建用户人设
+    //   world           { name, entries: [小手机条目] } 或 null：同时新建世界书并设成这个角色的角色世界书
+    //   bind            建好后绑定到这个小手机角色（已经绑定过的不绑）
+    // 中途失败时，已经建好的写在报错里（done）
+    async createTavernCharacter(opts) {
+        return this._createTavernCharacter(opts);
+    },
+    async _createTavernCharacter(opts) {
+        const name = String(opts.name || '').trim();
+        if (!name) throw new Error('角色名不能空着');
+        const done = [];
+        const fail = (what, e) => {
+            const err = new Error(`${what}失败：${e.message}${done.length ? `（已经建好：${done.join('、')}）` : ''}`);
+            err.done = done;
+            return err;
+        };
+        let worldName = '';
+        const result = { avatar: null, chatFile: null, world: null, persona: null, bound: false };
+        if (opts.world && opts.world.entries && opts.world.entries.length) {
+            worldName = String(opts.world.name || '').trim();
+            if (!worldName) throw new Error('世界书名字不能空着');
+            try {
+                const r = await this._pushWorldBooksToTavern(worldName, opts.world.entries, { create: true, mode: 'add' });
+                result.world = { name: worldName, added: r.added };
+                done.push(`世界书「${worldName}」`);
+            } catch (e) { throw fail('新建世界书', e); }
+        }
+        // 角色卡（酒馆自己新建角色时发的也是表单，照着发）
+        let avatar;
+        try {
+            const form = new FormData();
+            const fields = {
+                ch_name: name, description: opts.description || '', first_mes: opts.firstMes || '',
+                personality: '', scenario: '', mes_example: '', creator_notes: '', system_prompt: '',
+                post_history_instructions: '', tags: '', creator: '', character_version: '',
+                talkativeness: '0.5', fav: 'false', world: worldName, extensions: '{}',
+                depth_prompt_prompt: '', depth_prompt_depth: '4', depth_prompt_role: 'system',
+            };
+            Object.entries(fields).forEach(([k, v]) => form.append(k, v));
+            avatar = await this._stFetchForm('/api/characters/create', form, (resp) => {
+                if (!resp.ok) throw new Error(`API ${resp.status}`);
+                return resp.text();
+            });
+            avatar = String(avatar || '').trim();
+            if (!avatar) throw new Error('酒馆没有返回角色文件名');
+            result.avatar = avatar;
+            done.push(`角色「${name}」`);
+        } catch (e) { throw fail('新建角色卡', e); }
+        this._tellTavernPage({ type: 'character-created', avatar });
+
+        if (opts.userPersona) {
+            try {
+                const p = await this.createTavernPersona(String(opts.userPersona.name || '').trim() || 'User', opts.userPersona.description || '');
+                result.persona = p;
+                done.push('用户人设');
+            } catch (e) { throw fail('新建用户人设', e); }
+        }
+
+        const cfg = this.getConfig();
+        if (opts.bind && opts.charId && !cfg.bindings.some(b => b.uwuCharId === opts.charId)) {
+            try {
+                // 酒馆新建角色时会在角色卡里写好第一个聊天文件的名字，照着建，酒馆打开这个角色时就是它
+                let file = '';
+                try {
+                    const card = await this.getSTCharacter(avatar);
+                    file = String((card && (card.chat || (card.data && card.data.chat))) || '').replace(/\.jsonl$/i, '');
+                } catch (e) { /* 读不到就自己起名 */ }
+                const now = new Date();
+                if (!file) file = `${name} - ${this._stFileDate(now)}`;
+                const userName = (opts.userPersona && String(opts.userPersona.name || '').trim()) || 'User';
+                const chat = [{ user_name: userName, character_name: name, create_date: this._stFileDate(now), chat_metadata: {} }];
+                if (opts.firstMes) chat.push({ name, is_user: false, is_system: false, send_date: this._stSendDate(now), mes: opts.firstMes, extra: {} });
+                await this.apiCall('/api/chats/save', { avatar_url: avatar, file_name: file, chat });
+                cfg.bindings.push({ uwuCharId: opts.charId, stCharAvatar: avatar, stChatFile: file });
+                await this.saveConfig(cfg);
+                result.chatFile = file;
+                result.bound = true;
+            } catch (e) { throw fail('建酒馆聊天文件并绑定', e); }
+        }
+        return result;
+    },
+
     // 一次性清理：旧版“绑定世界书/跟随”功能留下的数据（yuan 版已删掉这个功能）
     // 以前绑定的条目内容会一直作为【世界设定】发给 AI，而且没有入口能删，所以直接清掉。
     // 想要酒馆世界书内容，改用“导入酒馆世界书”复制到小手机自己的世界书里。
@@ -2655,6 +2979,31 @@ function setupTavernSyncScreen() {
             </div>
             <div id="ts-settings-area" style="display:none; margin-top:12px;">
                 <div style="${TS.card}">
+                    <span style="${TS.title}">从小手机推送到酒馆</span>
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+                        <span style="font-size:13px; white-space:nowrap;">推送楼层模式</span>
+                        <select id="ts-push-mode" aria-label="推送楼层模式" title="推送楼层模式" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px;">
+                            <option value="new" ${(config.pushMode || 'new') === 'new' ? 'selected' : ''}>新开楼层</option>
+                            <option value="append" ${config.pushMode === 'append' ? 'selected' : ''}>合并到最后一楼</option>
+                        </select>
+                    </div>
+                    <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">新开楼层：小手机消息以你的身份单独发在新的一楼中。如果酒馆最后一楼就是上次新开的这层楼，就接着写进去，不会每次都新开。<br>合并到最后一楼：不管最后一楼是谁发的，都把小手机消息接在那一楼末尾。</div>
+                    <div style="margin-top:14px; padding-top:12px; border-top:1px solid #f0f0f0;">
+                        <div style="display:flex; align-items:center; gap:8px; font-size:13px;">
+                            <span style="white-space:nowrap;">按角色设置</span>
+                            <select id="ts-push-char" aria-label="按角色设置" title="按角色设置" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px;"></select>
+                        </div>
+                        <div id="ts-push-per-char"></div>
+                    </div>
+                    <div style="margin-top:14px; padding-top:12px; border-top:1px solid #f0f0f0;">
+                        <div style="display:flex; gap:8px;">
+                            <button id="ts-push-persona" style="flex:1; ${TS.btnO}">推送小手机人设</button>
+                            <button id="ts-push-wb" style="flex:1; ${TS.btnO}">推送小手机世界书</button>
+                        </div>
+                        <div style="font-size:12px; color:#888; margin-top:6px; line-height:1.6;">推送小手机人设：在酒馆里新建一个角色，可以连同用户人设、世界书一起建，不会改动酒馆里已有的角色。<br>推送小手机世界书：把小手机的世界书条目加进酒馆的世界书，推过的条目以后在小手机里改了，可以再更新过去。</div>
+                    </div>
+                </div>
+                <div style="${TS.card} margin-top:12px;">
                     <span style="${TS.title}">发给 AI 的酒馆剧情</span>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
                         <span style="font-size:13px; flex:1;">最近几楼发原文</span>
@@ -2685,24 +3034,6 @@ function setupTavernSyncScreen() {
                         <div style="display:flex; justify-content:flex-end; margin-top:10px;">
                             <button id="ts-wrap-reset" style="${smallBtn}">恢复默认</button>
                         </div>
-                    </div>
-                </div>
-                <div style="${TS.card} margin-top:12px;">
-                    <span style="${TS.title}">从小手机推送到酒馆</span>
-                    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
-                        <span style="font-size:13px; white-space:nowrap;">推送楼层模式</span>
-                        <select id="ts-push-mode" aria-label="推送楼层模式" title="推送楼层模式" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px;">
-                            <option value="new" ${(config.pushMode || 'new') === 'new' ? 'selected' : ''}>新开楼层</option>
-                            <option value="append" ${config.pushMode === 'append' ? 'selected' : ''}>合并到最后一楼</option>
-                        </select>
-                    </div>
-                    <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">新开楼层：小手机消息以你的身份单独发在新的一楼中。如果酒馆最后一楼就是上次新开的这层楼，就接着写进去，不会每次都新开。<br>合并到最后一楼：不管最后一楼是谁发的，都把小手机消息接在那一楼末尾。</div>
-                    <div style="margin-top:14px; padding-top:12px; border-top:1px solid #f0f0f0;">
-                        <div style="display:flex; align-items:center; gap:8px; font-size:13px;">
-                            <span style="white-space:nowrap;">按角色设置</span>
-                            <select id="ts-push-char" aria-label="按角色设置" title="按角色设置" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px;"></select>
-                        </div>
-                        <div id="ts-push-per-char"></div>
                     </div>
                 </div>
             </div>
@@ -2846,6 +3177,12 @@ function setupTavernSyncScreen() {
         const cfg = TavernSync.getConfig(); cfg.pushMode = e.target.value; await TavernSync.saveConfig(cfg);
     });
     mainEl.querySelector('#ts-add-btn').addEventListener('click', () => showBindingEditor(() => renderBindings()));
+    // 推送小手机人设（建好后可能多了一个绑定，要重画绑定卡片）/ 推送小手机世界书（新建世界书时默认填「按角色设置」里选的那个角色的名字）
+    mainEl.querySelector('#ts-push-persona').addEventListener('click', () => showPushPersonaModal(() => renderBindings()));
+    mainEl.querySelector('#ts-push-wb').addEventListener('click', () => {
+        const ch = db.characters.find(c => c.id === pushCharSelect.dataset.charId);
+        showPushWorldBookModal(ch ? TavernSync.phoneCharName(ch) : '');
+    });
     mainEl.querySelector('#ts-add-rule-btn').addEventListener('click', () => showRuleEditor(null, () => renderRules()));
 
     // 酒馆剧情包裹提示词（用 JS 赋值，避免 HTML 转义把 {{ }} 或尖括号弄乱）
@@ -4242,6 +4579,354 @@ async function showWorldBookModal(binding) {
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 }
 
+// 小手机世界书条目列表里的一行字：位置 · 常驻或关键词 · 正文开头
+function phoneWbLine(w) {
+    const pos = { before: '前', middle: '中', after: '后' }[w.position] || '后';
+    const trig = w.alwaysOn !== false ? '常驻' : ('关键词：' + ((w.keywords || []).join('、') || '（没有）'));
+    const preview = String(w.content || '').replace(/\s+/g, ' ').trim();
+    return `位置：${pos} · ${esc(trig)} · ${preview ? esc(preview.slice(0, 60)) : '（空条目）'}`;
+}
+
+// ========== 推送小手机人设（在酒馆里新建角色）==========
+// 每次都是新建：角色卡、用户人设、世界书都新建，不改动酒馆里已有的东西。
+async function showPushPersonaModal(onDone) {
+    const chars = (db.characters || []).filter(c => c && c.id);
+    if (!chars.length) { showToast('小手机里还没有角色'); return; }
+    const cfg = TavernSync.getConfig();
+    const presets = Array.isArray(db.myPersonaPresets) ? db.myPersonaPresets.filter(p => p && p.id) : [];
+    const firstBound = cfg.bindings.map(b => chars.find(c => c.id === b.uwuCharId)).find(Boolean);
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:420px; max-height:85vh; overflow-y:auto;';
+    const sep = 'margin-top:14px; padding-top:12px; border-top:1px solid #f0f0f0;';
+    const check = (id, text, on) => `<label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${text}</label>`;
+    modal.innerHTML = `
+        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">推送小手机人设</h3>
+        <div style="font-size:12px; color:#888; margin-bottom:12px; line-height:1.6;">在酒馆里新建一个角色，不会改动酒馆里已有的角色、人设和世界书。</div>
+        <label style="${TS.label}">小手机角色</label>
+        <select id="pp-char" aria-label="小手机角色" title="小手机角色" style="${TS.input}">
+            ${chars.map(c => `<option value="${esc(c.id)}" ${firstBound && c.id === firstBound.id ? 'selected' : ''}>${esc(c.remarkName || c.name || TavernSync.phoneCharName(c))}</option>`).join('')}
+        </select>
+        <div style="${sep}">
+            <div style="font-size:13px; font-weight:600; margin-bottom:8px;">酒馆角色卡</div>
+            <label style="${TS.label}">角色名</label>
+            <input id="pp-name" type="text" style="${TS.input} margin-bottom:8px;">
+            <label style="${TS.label}">角色描述</label>
+            <textarea id="pp-desc" style="${TS.input} height:120px; resize:vertical; font-size:12px; margin-bottom:8px;"></textarea>
+            <label style="${TS.label}">开场白</label>
+            <textarea id="pp-first" style="${TS.input} height:70px; resize:vertical; font-size:12px;" placeholder="可以不填"></textarea>
+        </div>
+        <div style="${sep}">
+            ${check('pp-user-on', '同时在酒馆新建用户人设', true)}
+            <div id="pp-user-body" style="margin-top:8px;">
+                <select id="pp-user-src" aria-label="用户人设来源" title="用户人设来源" style="${TS.input} margin-bottom:8px;">
+                    <option value="__char__">这个角色卡里填的人设</option>
+                    ${presets.map(p => `<option value="${esc(p.id)}">人设预设：${esc(p.name || '未命名')}</option>`).join('')}
+                </select>
+                <label style="${TS.label}">名字</label>
+                <input id="pp-user-name" type="text" style="${TS.input} margin-bottom:8px;">
+                <label style="${TS.label}">内容</label>
+                <textarea id="pp-user-desc" style="${TS.input} height:80px; resize:vertical; font-size:12px;"></textarea>
+            </div>
+        </div>
+        <div style="${sep}">
+            ${check('pp-wb-on', '同时推送世界书', true)}
+            <div id="pp-wb-body" style="margin-top:8px;">
+                <div id="pp-wb-note" style="font-size:12px; color:#888; line-height:1.6; margin-bottom:6px;"></div>
+                ${check('pp-wb-global', '带上全局条目', false)}
+                <div id="pp-wb-list" style="max-height:30vh; overflow-y:auto; margin-top:8px;"></div>
+                <label style="${TS.label} margin-top:8px;">酒馆世界书名字</label>
+                <input id="pp-wb-name" type="text" style="${TS.input}">
+                <div style="font-size:12px; color:#888; line-height:1.6; margin-top:4px;">新建这本世界书，并设成新角色的角色世界书。注入位置「前」放到角色定义前，「中」「后」放到角色定义后；关键词、常驻、开关、权重都一起带过去。</div>
+            </div>
+        </div>
+        <div id="pp-bind-box" style="${sep}"></div>
+        <div id="pp-page-note" style="display:none; font-size:12px; color:#888; line-height:1.6; margin-top:12px;"></div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+            <button id="pp-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
+            <button id="pp-save" style="flex:1; ${TS.btnO} ${TS.big}">在酒馆新建</button>
+        </div>`;
+    overlay.appendChild(modal); document.body.appendChild(overlay);
+    const $ = (sel) => modal.querySelector(sel);
+    const close = () => overlay.remove();
+    $('#pp-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    let wbData = { books: [], globals: [] };
+    const curChar = () => chars.find(c => c.id === $('#pp-char').value);
+    function renderWbList() {
+        const withGlobal = $('#pp-wb-global').checked;
+        const list = [...wbData.books.map(w => ({ w, g: false })), ...(withGlobal ? wbData.globals.map(w => ({ w, g: true })) : [])];
+        $('#pp-wb-list').innerHTML = list.length ? list.map(({ w, g }) => `
+            <label style="display:flex; align-items:center; gap:10px; padding:8px 10px; background:rgba(128,128,128,0.08); border-radius:8px; margin-bottom:6px; cursor:pointer; ${w.disabled ? 'opacity:0.55;' : ''}">
+                <input type="checkbox" data-wb="${esc(w.id)}" checked style="flex-shrink:0; margin:0;">
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:13px; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(w.name || '未命名')}${g ? '（全局）' : ''}${w.disabled ? '（已关闭）' : ''}</div>
+                    <div style="font-size:11px; color:#888; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${phoneWbLine(w)}</div>
+                </div>
+            </label>`).join('') : '<div style="font-size:12px; color:#888; line-height:1.6;">没有可以推送的条目。</div>';
+    }
+    // 换了小手机角色：下面的内容全部按这个角色重新填
+    function fillFromChar() {
+        const ch = curChar();
+        if (!ch) return;
+        const nm = TavernSync.phoneCharName(ch);
+        $('#pp-name').value = nm;
+        $('#pp-desc').value = ch.persona || '';
+        $('#pp-user-src').value = '__char__';
+        fillUser();
+        wbData = TavernSync.phoneOfflineWorldBooks(ch);
+        $('#pp-wb-note').textContent = wbData.offline
+            ? '下面是这个角色绑定的线下世界书条目。'
+            : '这个角色没有设线下世界书，小手机线下时会用线上那套，这里也列线上的。';
+        $('#pp-wb-name').value = nm;
+        renderWbList();
+        const bound = cfg.bindings.some(b => b.uwuCharId === ch.id);
+        $('#pp-bind-box').innerHTML = bound
+            ? '<div style="font-size:12px; color:#888; line-height:1.6;">这个小手机角色已经绑定过酒馆角色，不会再绑定到新角色。</div>'
+            : `${check('pp-bind', '建好后绑定到这个小手机角色', true)}<div style="font-size:12px; color:#888; line-height:1.6; margin-top:4px;">会一起建好新角色的第一个酒馆聊天文件（开头是开场白），不用再手动添加绑定。</div>`;
+    }
+    function fillUser() {
+        const ch = curChar();
+        const src = $('#pp-user-src').value;
+        if (src === '__char__') {
+            $('#pp-user-name').value = (ch && ch.myName) || '';
+            $('#pp-user-desc').value = (ch && ch.myPersona) || '';
+        } else {
+            const p = presets.find(x => x.id === src);
+            $('#pp-user-name').value = (p && p.name) || '';
+            $('#pp-user-desc').value = (p && p.persona) || '';
+        }
+    }
+    $('#pp-char').addEventListener('change', fillFromChar);
+    $('#pp-user-src').addEventListener('change', fillUser);
+    $('#pp-wb-global').addEventListener('change', renderWbList);
+    $('#pp-user-on').addEventListener('change', (e) => { $('#pp-user-body').style.display = e.target.checked ? 'block' : 'none'; renderPageNote(); });
+    $('#pp-wb-on').addEventListener('change', (e) => { $('#pp-wb-body').style.display = e.target.checked ? 'block' : 'none'; });
+    fillFromChar();
+
+    // 用户人设存在酒馆设置里：没开酒馆页面时只能直接写设置文件，要提醒先刷新酒馆
+    let pageOpen = null;
+    function renderPageNote() {
+        const el = $('#pp-page-note');
+        if (pageOpen === null || pageOpen || !$('#pp-user-on').checked) { el.style.display = 'none'; return; }
+        el.style.display = 'block';
+        el.textContent = '没有检测到同一个浏览器里开着的酒馆页面，用户人设会直接写进酒馆的设置文件。如果你在别的设备或浏览器里开着酒馆，建好后请先刷新那边的酒馆页面，否则酒馆保存设置时会把新人设盖掉。';
+    }
+    TavernSync.pingTavernPage().then(found => { pageOpen = found; if (modal.isConnected) renderPageNote(); });
+
+    $('#pp-save').addEventListener('click', async () => {
+        const ch = curChar();
+        const name = $('#pp-name').value.trim();
+        if (!ch) { showToast('请选择小手机角色'); return; }
+        if (!name) { showToast('角色名不能空着'); return; }
+        let world = null;
+        if ($('#pp-wb-on').checked) {
+            const ids = new Set([...modal.querySelectorAll('#pp-wb-list input[data-wb]')].filter(cb => cb.checked).map(cb => cb.dataset.wb));
+            const entries = [...wbData.books, ...wbData.globals].filter(w => ids.has(w.id));
+            if (entries.length) {
+                const wn = $('#pp-wb-name').value.trim();
+                if (!wn) { showToast('世界书名字不能空着'); return; }
+                world = { name: wn, entries };
+            }
+        }
+        const userOn = $('#pp-user-on').checked;
+        const userPersona = userOn ? { name: $('#pp-user-name').value.trim(), description: $('#pp-user-desc').value } : null;
+        if (userPersona && !userPersona.name) { showToast('用户人设的名字不能空着'); return; }
+        const bindEl = $('#pp-bind');
+        const btn = $('#pp-save');
+        btn.disabled = true; btn.textContent = '新建中...';
+        try {
+            const r = await TavernSync.createTavernCharacter({
+                charId: ch.id, name, description: $('#pp-desc').value, firstMes: $('#pp-first').value,
+                userPersona, world, bind: !!(bindEl && bindEl.checked),
+            });
+            const parts = [`已在酒馆新建角色「${name}」`];
+            if (r.world) parts.push(`世界书「${r.world.name}」（${r.world.added} 条）`);
+            if (r.persona) parts.push('用户人设');
+            if (r.bound) parts.push('并绑定好了');
+            showToast(parts.join('、'));
+            if (r.persona && r.persona.via === 'file') {
+                TavernSync.reportIssue(`用户人设「${userPersona.name}」是直接写进酒馆设置文件的（当时同一个浏览器里没有开着的酒馆页面）。如果别的设备或浏览器里开着酒馆，请先刷新那边的酒馆页面再操作，否则酒馆保存设置时会把它盖掉。`);
+            }
+            close();
+            if (onDone) onDone();
+        } catch (e) {
+            btn.disabled = false; btn.textContent = '在酒馆新建';
+            showToast(e.message);
+            if (e.done && e.done.length) TavernSync.reportIssue(`推送小手机人设时${e.message}`);
+        }
+    });
+}
+
+// ========== 推送小手机世界书 ==========
+// 先选小手机世界书的分组，再勾条目，推到酒馆里已有的世界书或新建一本。
+// 推过的会记下来（tavernPushes），以后能标出「已推送」「小手机里改过」，并用「更新酒馆里的内容」再推一次。
+async function showPushWorldBookModal(defaultName) {
+    const all = (db.worldBooks || []).filter(w => w && w.id);
+    if (!all.length) { showToast('小手机里还没有世界书'); return; }
+    const catOf = (w) => (w.category || '').trim() || '未分类';
+    const cats = [...new Set(all.map(catOf))].sort();
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:420px; max-height:85vh; display:flex; flex-direction:column;';
+    const selStyle = 'flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px;';
+    modal.innerHTML = `
+        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">推送小手机世界书</h3>
+        <div style="font-size:12px; color:#888; margin-bottom:10px; line-height:1.6;">把小手机的世界书条目加进酒馆的世界书。只会新加条目、或者更新以前推过去的条目，不会改动那本世界书里原来的其他条目。</div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:13px;">
+            <span style="white-space:nowrap;">小手机分组</span>
+            <select id="pw-cat" aria-label="小手机分组" title="小手机分组" style="${selStyle}">
+                ${cats.map(c => `<option value="${esc(c)}">${esc(c)}（${all.filter(w => catOf(w) === c).length}）</option>`).join('')}
+            </select>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:13px;">
+            <span style="white-space:nowrap;">推到酒馆的</span>
+            <select id="pw-target" aria-label="推到酒馆的世界书" title="推到酒馆的世界书" style="${selStyle}"><option value="__new__">新建世界书</option></select>
+        </div>
+        <div id="pw-new-row" style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:13px;">
+            <span style="white-space:nowrap;">新世界书名字</span>
+            <input id="pw-new-name" type="text" style="${selStyle}" value="${esc(defaultName || '')}">
+        </div>
+        <div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+            <button id="pw-all" style="${TS.btnS}">全选</button>
+            <button id="pw-changed" style="${TS.btnS}">只选有改动的</button>
+        </div>
+        <div id="pw-list" style="flex:1; overflow-y:auto; margin-bottom:10px; min-height:60px;"></div>
+        <div id="pw-page-note" style="display:none; font-size:12px; color:#888; line-height:1.6; margin-bottom:10px;"></div>
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <button id="pw-add" style="flex:1; ${TS.btnO} ${TS.big}">推送到酒馆世界书</button>
+            <button id="pw-update" style="flex:1; ${TS.btnO} ${TS.big}">更新酒馆里的内容</button>
+        </div>
+        <button id="pw-close" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">关闭</button>`;
+    overlay.appendChild(modal); document.body.appendChild(overlay);
+    const $ = (sel) => modal.querySelector(sel);
+    const close = () => overlay.remove();
+    $('#pw-close').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    const target = $('#pw-target');
+    let tavernEntries = null;     // 选中的那本酒馆世界书的条目（新建时是 null）
+    const curList = () => all.filter(w => catOf(w) === $('#pw-cat').value).sort((a, b) => TavernSync._phoneWeight(a) - TavernSync._phoneWeight(b));
+    const statusOf = (w) => (target.value === '__new__' || !tavernEntries) ? { linked: false } : TavernSync.wbPushStatus(w, target.value, tavernEntries);
+    function statusLabel(st) {
+        if (!st.linked) return '';
+        if (st.localChanged && st.tavernChanged) return '<span style="font-size:11px; color:#FF9800; margin-left:6px;">两边都改过</span>';
+        if (st.localChanged) return '<span style="font-size:11px; color:#FF9800; margin-left:6px;">小手机里改过</span>';
+        if (st.tavernChanged) return '<span style="font-size:11px; color:#FF9800; margin-left:6px;">酒馆里改过</span>';
+        return '<span style="font-size:11px; color:#4CAF50; margin-left:6px;">已推送</span>';
+    }
+    function renderList() {
+        const list = curList();
+        $('#pw-list').innerHTML = list.map((w, i) => `
+            <label style="display:flex; align-items:center; gap:10px; padding:10px; background:rgba(128,128,128,0.08); border-radius:8px; margin-bottom:6px; cursor:pointer; ${w.disabled ? 'opacity:0.55;' : ''}">
+                <input type="checkbox" data-idx="${i}" style="flex-shrink:0; margin:0;">
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:13px; font-weight:500; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(w.name || '未命名')}${w.isGlobal ? '（全局）' : ''}${w.disabled ? '（已关闭）' : ''}${statusLabel(statusOf(w))}</div>
+                    <div style="font-size:11px; color:#888; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${phoneWbLine(w)}</div>
+                </div>
+            </label>`).join('') || '<div style="font-size:12px; color:#888; line-height:1.6;">这个分组里没有条目。</div>';
+        activeFilter = null; paintFilters();
+    }
+    // 筛选按钮：点一下按条件选中并高亮，再点一下取消（和「导入酒馆世界书」一样）
+    const boxes = () => [...modal.querySelectorAll('#pw-list input[type=checkbox]')];
+    const filterBtns = [$('#pw-all'), $('#pw-changed')];
+    let activeFilter = null;
+    function paintFilters() {
+        filterBtns.forEach(btn => {
+            const on = btn === activeFilter;
+            btn.style.background = on ? 'rgba(33,150,243,0.18)' : 'transparent';
+            btn.style.color = on ? '#2196F3' : '#999';
+            btn.style.borderColor = on ? 'rgba(33,150,243,0.5)' : 'rgba(128,128,128,0.35)';
+        });
+    }
+    function applyFilter(btn, pick) {
+        const list = curList();
+        if (activeFilter === btn) { boxes().forEach(cb => { cb.checked = false; }); activeFilter = null; }
+        else { boxes().forEach(cb => { cb.checked = pick(list[parseInt(cb.dataset.idx, 10)]); }); activeFilter = btn; }
+        paintFilters();
+    }
+    filterBtns[0].addEventListener('click', () => applyFilter(filterBtns[0], () => true));
+    filterBtns[1].addEventListener('click', () => applyFilter(filterBtns[1], (w) => { const st = statusOf(w); return st.linked && (st.localChanged || st.tavernChanged); }));
+    $('#pw-list').addEventListener('change', () => { activeFilter = null; paintFilters(); });
+    const getSelected = () => { const list = curList(); return boxes().filter(cb => cb.checked).map(cb => list[parseInt(cb.dataset.idx, 10)]).filter(Boolean); };
+
+    async function loadTarget() {
+        $('#pw-new-row').style.display = target.value === '__new__' ? 'flex' : 'none';
+        tavernEntries = null;
+        if (target.value !== '__new__') {
+            const want = target.value;
+            $('#pw-list').innerHTML = '<div style="font-size:12px; color:#888; line-height:1.6;">读取酒馆世界书中...</div>';
+            try {
+                const data = await TavernSync.getSTWorldInfo(want);
+                if (target.value !== want) return;     // 读的时候又换了别的
+                tavernEntries = (data && data.entries) || {};
+            } catch (e) { showToast(`读取酒馆世界书失败：${e.message}`); }
+        }
+        renderList();
+    }
+    async function loadTargets(selectName) {
+        let names = [];
+        try { names = await TavernSync.getSTWorldNames(); } catch (e) { showToast(`读取酒馆世界书列表失败：${e.message}`); }
+        target.innerHTML = '<option value="__new__">新建世界书</option>' + names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+        if (selectName && names.includes(selectName)) target.value = selectName;
+        await loadTarget();
+    }
+    $('#pw-cat').addEventListener('change', renderList);
+    target.addEventListener('change', loadTarget);
+    renderList();
+    loadTargets();
+
+    TavernSync.pingTavernPage().then(found => {
+        if (!modal.isConnected || found) return;
+        const el = $('#pw-page-note');
+        el.style.display = 'block';
+        el.textContent = '没有检测到同一个浏览器里开着的酒馆页面。如果你在别的设备或浏览器里开着酒馆，推送后请先刷新那边的酒馆页面再编辑这本世界书，否则酒馆会用它手里的旧版本把推过去的条目盖掉。';
+    });
+
+    const busy = (on) => { ['#pw-add', '#pw-update'].forEach(s => { $(s).disabled = on; }); };
+    $('#pw-add').addEventListener('click', async () => {
+        const selected = getSelected();
+        if (!selected.length) { showToast('请先勾选条目'); return; }
+        const creating = target.value === '__new__';
+        const name = creating ? $('#pw-new-name').value.trim() : target.value;
+        if (!name) { showToast('请填新世界书的名字'); return; }
+        busy(true);
+        try {
+            const r = await TavernSync.pushWorldBooksToTavern(name, selected, { create: creating, mode: 'add' });
+            showToast(r.added
+                ? `已推送 ${r.added} 条到酒馆世界书「${name}」${r.skipped ? `，${r.skipped} 条之前推过（可以用「更新酒馆里的内容」）` : ''}`
+                : '勾选的条目之前都推过了，可以用「更新酒馆里的内容」');
+            await loadTargets(name);
+        } catch (e) { showToast(e.message); }
+        busy(false);
+    });
+    $('#pw-update').addEventListener('click', async () => {
+        const selected = getSelected();
+        if (!selected.length) { showToast('请先勾选条目'); return; }
+        if (target.value === '__new__') { showToast('新建的世界书里还没有条目，先点「推送到酒馆世界书」'); return; }
+        const name = target.value;
+        const sts = selected.map(w => [w, statusOf(w)]);
+        const changedInTavern = sts.filter(([, st]) => st.linked && st.tavernChanged).map(([w]) => w.name || '未命名');
+        if (changedInTavern.length && !confirm(`勾选的条目里有 ${changedInTavern.length} 条在酒馆里改过（${changedInTavern.slice(0, 3).map(n => `「${n}」`).join('、')}${changedInTavern.length > 3 ? ' 等' : ''}），更新后会换成小手机的版本，酒馆里的改动会丢失。确定更新吗？`)) return;
+        busy(true);
+        try {
+            const r = await TavernSync.pushWorldBooksToTavern(name, selected, { mode: 'update' });
+            showToast(r.updated
+                ? `已更新酒馆里的 ${r.updated} 条${r.notLinked ? `，${r.notLinked} 条还没推过` : ''}`
+                : '勾选的条目还没推到这本世界书，先点「推送到酒馆世界书」');
+            await loadTarget();
+        } catch (e) { showToast(e.message); }
+        busy(false);
+    });
+}
+
 // ========== 提示词预览弹窗 ==========
 // 显示 AI 实际会收到的酒馆相关内容（不截断，可滚动）：
 //   - 系统提示词里的：线下剧情说明
@@ -4426,7 +5111,9 @@ TavernSync._writeQueue = Promise.resolve();
 // 精简、取回原文、只补摘要也会改同一份聊天记录，一起排队，免得和后台自动同步同时进行时互相覆盖。
 // （同步里面要精简时调的是不排队的 _trimFloors，否则会自己等自己）
 ['pushToTavern', 'pushSummaryToTavern', 'pullFromTavern', 'replaceRegeneratedInTavern', 'resetImportRange', 'removePushedFromTavern', 'writeBackFloorEdit', 'updatePushedMessage',
-    'trimFloors', 'restoreRawFloors', 'refreshSummaries', 'removeOtherChatFloors', 'changeChatFile', 'recoverLostPushes'].forEach(name => {
+    'trimFloors', 'restoreRawFloors', 'refreshSummaries', 'removeOtherChatFloors', 'changeChatFile', 'recoverLostPushes',
+    // 推送小手机人设/世界书：会改小手机世界书条目上的记录、加绑定，也排进来（里面互相调用的是不排队的版本）
+    'pushWorldBooksToTavern', 'createTavernCharacter'].forEach(name => {
     const original = TavernSync[name];
     TavernSync[name] = function (...args) {
         const run = () => original.apply(TavernSync, args);

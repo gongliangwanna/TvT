@@ -4,6 +4,7 @@
 //   1. 在酒馆的“扩展菜单 (wand menu / #extensionsMenu)”加一个入口按钮，点击后新标签打开小手机
 //   2. 小手机改了酒馆的聊天文件（推送、删除、写回修改）时，如果酒馆页面正开着同一个聊天，就让酒馆重新读一遍。
 //      酒馆页面手里拿着的是改之前的聊天，不重新读的话，它下次保存（你发消息、扩展写摘要）会把小手机写进去的内容盖掉。
+//   3. 小手机「推送小手机人设」「推送小手机世界书」之后：刷新角色列表和世界书、替小手机新建用户人设。
 //
 // 小手机地址按本文件自己的位置推算（本文件在 tavern/ 里，小手机主页在上一层），
 // 所以仓库叫什么名字、装在酒馆的哪个文件夹都不用改这里。
@@ -124,6 +125,52 @@ function tryReload() {
     }
 }
 
+// ===== 小手机往酒馆里新建了角色、世界书、用户人设 =====
+function getCtx() {
+    return globalThis.SillyTavern && typeof globalThis.SillyTavern.getContext === 'function'
+        ? globalThis.SillyTavern.getContext() : null;
+}
+
+// 新建了角色：让酒馆重新读一遍角色列表，不用刷新页面就能看到
+function refreshCharacters() {
+    const ctx = getCtx();
+    if (ctx && typeof ctx.getCharacters === 'function') {
+        Promise.resolve(ctx.getCharacters()).catch(e => console.warn('[小手机] 刷新角色列表失败:', e));
+    }
+}
+
+// 小手机改了某一本世界书：酒馆手里有这本的旧副本（缓存），不丢掉的话，你在酒馆里编辑这本世界书时
+// 会拿旧副本存回去，把小手机加的条目盖掉。所以丢掉缓存，再刷新世界书列表和编辑器
+async function refreshWorldInfo(name) {
+    try {
+        let wi = null;
+        try { wi = await import('/scripts/world-info.js'); } catch (e) { wi = null; }
+        const ctx = getCtx() || {};
+        if (wi && wi.worldInfoCache && typeof wi.worldInfoCache.delete === 'function') wi.worldInfoCache.delete(name);
+        const updateList = (wi && wi.updateWorldInfoList) || ctx.updateWorldInfoList;
+        if (typeof updateList === 'function') await updateList();
+        const reload = (wi && wi.reloadEditor) || ctx.reloadWorldInfoEditor;
+        if (typeof reload === 'function') await reload(name, false);
+    } catch (e) { console.warn('[小手机] 刷新世界书失败:', e); }
+}
+
+// 新建用户人设：酒馆的人设存在设置里，酒馆页面随时会把它手里的整份设置存回去，
+// 所以由酒馆页面自己加进去再存，不会被盖掉。头像小手机已经传好了（avatarId 是头像文件名）
+function addPersona(d) {
+    const reply = (ok, error) => { try { channel.postMessage({ type: 'page-answer', id: d.id, ok, error }); } catch (e) { /* 回不了话，小手机会改用直接写文件 */ } };
+    try {
+        const ctx = getCtx();
+        const pu = ctx && ctx.powerUserSettings;
+        if (!pu || typeof ctx.saveSettingsDebounced !== 'function') { reply(false, '酒馆版本不支持'); return; }
+        if (!pu.personas || typeof pu.personas !== 'object') pu.personas = {};
+        if (!pu.persona_descriptions || typeof pu.persona_descriptions !== 'object') pu.persona_descriptions = {};
+        pu.personas[d.avatarId] = d.name;
+        pu.persona_descriptions[d.avatarId] = { description: d.description || '', position: 0, depth: 2, role: 0, lorebook: '' };
+        ctx.saveSettingsDebounced();
+        reply(true);
+    } catch (e) { reply(false, e.message); }
+}
+
 try {
     if (typeof BroadcastChannel === 'function') {
         channel = new BroadcastChannel('uwu-tavern-sync');
@@ -134,6 +181,10 @@ try {
                 try { channel.postMessage({ type: 'pong', id: d.id }); } catch (err) { /* 回答不了就算了 */ }
                 return;
             }
+            // 「推送小手机人设」「推送小手机世界书」之后：酒馆页面刷新角色列表 / 世界书、新建用户人设
+            if (d && d.type === 'character-created') { refreshCharacters(); return; }
+            if (d && d.type === 'worldinfo-saved' && d.name) { refreshWorldInfo(d.name); return; }
+            if (d && d.type === 'add-persona' && d.id) { addPersona(d); return; }
             if (!d || d.type !== 'chat-saved' || !d.avatar || !d.file) return;
             const same = pendingReload && pendingReload.avatar === d.avatar && pendingReload.file === d.file;
             if (!same) pendingReload = { avatar: d.avatar, file: d.file, saves: [] };
