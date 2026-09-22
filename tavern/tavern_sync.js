@@ -3061,7 +3061,7 @@ ${transcript}`;
     // ========== 头像（2026-09-22 加）==========
     // 酒馆的角色头像、用户头像都是竖长方形（2:3，400×600），列表里显示成圆形，只露出正中间；
     // 小手机头像保持上传时的比例，显示时也只露出正中间。所以：
-    //   酒馆 → 小手机：从正中间截一个正方形（就是酒馆圆形头像里看到的那块）
+    //   酒馆 → 小手机：从正中间截一个正方形（就是酒馆圆形/方形头像里看到的那块）
     //   小手机 → 酒馆：把整张图放在 2:3 画布正中间，上下空的地方用这张图模糊放大铺满（圆形里露出的正好是原图）
     TALL_W: 400,
     TALL_H: 600,
@@ -4748,7 +4748,7 @@ async function showImportCharModal(binding) {
         ${userPersonaHTML}
         <div style="margin-bottom:12px;">
             <label style="${TS.label}">头像</label>
-            <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:6px;">从酒馆头像的正中间截一个正方形，就是酒馆圆形头像里看到的那块。</div>
+            <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:6px;">从酒馆头像的正中间截一个正方形，就是酒馆圆形/方形头像里看到的那块。</div>
             <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:6px; cursor:pointer;">
                 <input type="checkbox" id="ic-avatar-check" checked>
                 <img id="ic-avatar-prev" src="${esc(TavernSync.tavernCharAvatarUrl(result.charAvatar))}" style="width:40px; height:40px; border-radius:50%; object-fit:cover; flex-shrink:0; background:rgba(128,128,128,0.15);">
@@ -5112,7 +5112,7 @@ async function showPushPersonaModal(onDone) {
                     <div id="pp-av-note" style="font-size:11px; color:#888; line-height:1.5;"></div>
                 </div>
             </label>
-            <div style="font-size:12px; color:#888; line-height:1.6; margin-top:6px;">酒馆头像是竖长方形。小手机头像会完整放在正中间，上下用这张图模糊铺满，酒馆圆形头像里露出的正好是原图。</div>
+            <div style="font-size:12px; color:#888; line-height:1.6; margin-top:6px;">酒馆头像是竖长方形。小手机头像会完整放在正中间，上下用这张图模糊铺满，酒馆圆形/方形头像里露出的正好是原图。</div>
         </div>
         <div style="${sep}">
             ${check('pp-user-on', '同时在酒馆新建用户人设', true)}
