@@ -131,7 +131,7 @@ function tagFloorNth(list) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-22 d',
+    SYNC_VERSION: '2026-09-22 e',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -547,10 +547,97 @@ const TavernSync = {
     // direction：'pull' = 从酒馆同步进小手机，'push' = 从小手机推送到酒馆。
     // 每条规则的 scope 决定用在哪一头（'pull' / 'push' / 'both'，老规则没有这一项就当 'both'）。
     // 旧版的“生效深度”（minDepth/maxDepth）在 yuan 补丁里从来没起过作用，已经删掉。
+    // 规则可以分组（rule.group，空 = 不分组）。整组关掉（config.ruleGroupsOff 里有组名）时组里的规则都不起作用。
+    // 起作用的顺序和页面上显示的一样：不分组的在最前，然后各组按第一次出现的先后，组内按原来的先后。
+    orderedCleanRules(config) {
+        const rules = (config || this.getConfig()).cleanRules || [];
+        const groups = [];
+        rules.forEach(r => { const g = r.group || ''; if (g && !groups.includes(g)) groups.push(g); });
+        return [...rules.filter(r => !r.group), ...groups.flatMap(g => rules.filter(r => r.group === g))];
+    },
+
+    ruleGroupsOf(config) {
+        const groups = [];
+        ((config || this.getConfig()).cleanRules || []).forEach(r => { if (r.group && !groups.includes(r.group)) groups.push(r.group); });
+        return groups;
+    },
+
+    // 两条规则算重复：正则、模式、用在哪头都一样
+    sameCleanRule(a, b) {
+        return a.regex === b.regex && (a.mode || 'exclude') === (b.mode || 'exclude') && (a.scope || 'both') === (b.scope || 'both');
+    },
+
+    // 导出：group = null 导出全部，'' 只导不分组的，其余只导这个分组
+    exportCleanRules(group) {
+        const cfg = this.getConfig();
+        const rules = this.orderedCleanRules(cfg).filter(r => group == null || (r.group || '') === group);
+        const groups = [...new Set(rules.map(r => r.group).filter(Boolean))];
+        return {
+            type: 'uwu-tavern-clean-rules', version: 1,
+            rules: rules.map(r => {
+                const o = { name: r.name || '未命名', regex: r.regex, mode: r.mode || 'exclude', scope: r.scope || 'both', enabled: r.enabled !== false };
+                if (r.group) o.group = r.group;
+                return o;
+            }),
+            groupsOff: (cfg.ruleGroupsOff || []).filter(g => groups.includes(g)),
+        };
+    },
+
+    // 读导入文件。只认小手机（酒馆互联）自己导出的文件，别的抛错。
+    parseCleanRulesFile(text) {
+        let data;
+        try { data = JSON.parse(text); } catch (e) { throw new Error('文件不是有效的 JSON'); }
+        if (!data || data.type !== 'uwu-tavern-clean-rules' || !Array.isArray(data.rules)) throw new Error('不是酒馆互联导出的正则文件');
+        const rules = data.rules.filter(r => r && typeof r.regex === 'string' && r.regex).map(r => {
+            const o = {
+                name: String(r.name || '未命名'), regex: r.regex,
+                mode: r.mode === 'extract' ? 'extract' : 'exclude',
+                scope: ['pull', 'push', 'both'].includes(r.scope) ? r.scope : 'both',
+                enabled: r.enabled !== false,
+            };
+            if (typeof r.group === 'string' && r.group.trim()) o.group = r.group.trim();
+            try { new RegExp(o.regex); } catch (e) { o.invalid = true; }
+            return o;
+        });
+        return { rules, groupsOff: Array.isArray(data.groupsOff) ? data.groupsOff.filter(g => typeof g === 'string') : [] };
+    },
+
+    // 每条是不是重复：和现有规则一样，或者和文件里前面某条一样
+    markDuplicateRules(list) {
+        const existing = this.getConfig().cleanRules || [];
+        return list.map((r, i) => existing.some(e => this.sameCleanRule(e, r)) || list.slice(0, i).some(p => this.sameCleanRule(p, r)));
+    },
+
+    // 把选中的规则加进来。target：'__file__' = 照文件里的分组（同名分组已有就放进去），'' = 不分组，其余 = 放进这个分组。
+    // 文件里关着的分组，只在这次新建出来时才关；已有的分组开关不动。重复的跳过。
+    async importCleanRules(list, target, fileGroupsOff) {
+        const cfg = this.getConfig();
+        if (!Array.isArray(cfg.cleanRules)) cfg.cleanRules = [];
+        const before = new Set(this.ruleGroupsOf(cfg));
+        let added = 0, skipped = 0;
+        list.forEach((r, i) => {
+            if (r.invalid) return;
+            if (cfg.cleanRules.some(e => this.sameCleanRule(e, r))) { skipped++; return; }
+            const rule = { id: `rule_${Date.now()}_${i}`, name: r.name, regex: r.regex, mode: r.mode, scope: r.scope, enabled: r.enabled };
+            const g = target === '__file__' ? (r.group || '') : (target || '');
+            if (g) rule.group = g;
+            cfg.cleanRules.push(rule);
+            added++;
+        });
+        if (target === '__file__') {
+            const off = new Set(cfg.ruleGroupsOff || []);
+            (fileGroupsOff || []).forEach(g => { if (!before.has(g) && this.ruleGroupsOf(cfg).includes(g)) off.add(g); });
+            cfg.ruleGroupsOff = [...off];
+        }
+        await this.saveConfig(cfg);
+        return { added, skipped };
+    },
+
     applyCleanRules(text, direction) {
         if (!text || typeof text !== 'string') return '';
         const config = this.getConfig();
-        const rules = (config.cleanRules || []).filter(r => r.enabled
+        const off = new Set(config.ruleGroupsOff || []);
+        const rules = this.orderedCleanRules(config).filter(r => r.enabled && !(r.group && off.has(r.group))
             && (!r.scope || r.scope === 'both' || !direction || r.scope === direction));
         let result = text;
         for (const rule of rules) {
@@ -3282,7 +3369,7 @@ function esc(v) {
 
 // 自己的小输入框弹窗。不用浏览器自带的 prompt：手机上点下拉选项弹出 prompt 时，
 // 下拉列表会一直开着不关，看不到新建出来的分组，容易以为没建成功。
-function askText(title, placeholder) {
+function askText(title, placeholder, value) {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center; padding:20px;';
@@ -3299,6 +3386,7 @@ function askText(title, placeholder) {
         overlay.appendChild(box);
         document.body.appendChild(overlay);
         const input = box.querySelector('#ask-input');
+        if (value) input.value = value;
         const done = (v) => { overlay.remove(); resolve(v); };
         box.querySelector('#ask-cancel').addEventListener('click', () => done(null));
         box.querySelector('#ask-ok').addEventListener('click', () => done(input.value.trim()));
@@ -3306,6 +3394,44 @@ function askText(title, placeholder) {
         overlay.addEventListener('click', e => { if (e.target === overlay) done(null); });
         setTimeout(() => { try { input.focus(); } catch (e) { /* 聚焦失败不影响输入 */ } }, 50);
     });
+}
+
+// 自己的多选一小弹窗（浏览器的 confirm 只有两个按钮）。buttons = [{ label, value, style }]，点外面或「取消」返回 null。
+function askChoice(title, text, buttons) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.classList.add('ts-overlay');
+        const box = document.createElement('div');
+        box.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:320px;';
+        box.innerHTML = `
+            <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">${esc(title)}</h3>
+            ${text ? `<div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:14px;">${esc(text)}</div>` : ''}
+            <div style="display:flex; flex-direction:column; gap:8px;">
+                ${buttons.map((b, i) => `<button data-choice="${i}" style="${b.style || TS.btnP}">${esc(b.label)}</button>`).join('')}
+                <button data-choice="cancel" style="padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
+            </div>`;
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        const done = (v) => { overlay.remove(); resolve(v); };
+        box.querySelectorAll('[data-choice]').forEach(btn => btn.addEventListener('click', () => {
+            done(btn.dataset.choice === 'cancel' ? null : buttons[parseInt(btn.dataset.choice)].value);
+        }));
+        overlay.addEventListener('click', e => { if (e.target === overlay) done(null); });
+    });
+}
+
+// 下载一个文字文件（导出用）
+function downloadText(fileName, text) {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // 输入框、下拉框、文本框统一照 yuan「思维链」设置页：
@@ -3456,10 +3582,15 @@ function setupTavernSyncScreen() {
             </div>
             <div id="ts-rules-area" style="display:none; margin-top:12px;">
                 <div style="${TS.card}">
-                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-                        <span style="${TS.title}">正则清洗规则</span>
-                        <button id="ts-add-rule-btn" style="${TS.btnAdd}">+ 添加规则</button>
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:10px;">
+                        <span style="${TS.title} white-space:nowrap;">正则清洗规则</span>
+                        <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                            <button id="ts-import-rules-btn" style="${TS.btnS}">导入</button>
+                            <button id="ts-export-rules-btn" style="${TS.btnS}">导出</button>
+                            <button id="ts-add-rule-btn" style="${TS.btnAdd}">+ 添加规则</button>
+                        </div>
                     </div>
+                    <input type="file" id="ts-import-rules-file" accept=".json,application/json" style="display:none;">
                     <div style="font-size:12px; color:#888; margin-bottom:10px; line-height:1.6;">用正则把文字里不想要的部分删掉，或者只挑出想要的部分，比如删掉酒馆 AI 回复里的思考过程。每条规则可以选用在同步（酒馆剧情进小手机时）、推送（小手机消息进酒馆时），还是两头都用；多条规则按列表顺序依次处理。</div>
                     <div id="ts-rules-list"></div>
                 </div>
@@ -3601,6 +3732,18 @@ function setupTavernSyncScreen() {
         showPushWorldBookModal(ch ? TavernSync.phoneCharName(ch) : '');
     });
     mainEl.querySelector('#ts-add-rule-btn').addEventListener('click', () => showRuleEditor(null, () => renderRules()));
+    mainEl.querySelector('#ts-export-rules-btn').addEventListener('click', () => showExportRulesModal());
+    const importFile = mainEl.querySelector('#ts-import-rules-file');
+    mainEl.querySelector('#ts-import-rules-btn').addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', () => {
+        const file = importFile.files && importFile.files[0];
+        importFile.value = '';
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => showImportRulesModal(String(reader.result || ''), () => renderRules());
+        reader.onerror = () => showToast('读不了这个文件');
+        reader.readAsText(file);
+    });
 
     // 酒馆剧情包裹提示词（用 JS 赋值，避免 HTML 转义把 {{ }} 或尖括号弄乱）
     const wrapFields = [
@@ -3723,7 +3866,13 @@ function setupTavernSyncScreen() {
         const cfg = TavernSync.getConfig();
         const rules = cfg.cleanRules || [];
         if (!rules.length) { rulesList.innerHTML = '<div style="text-align:center; color:#888; font-size:12px; padding:10px;">暂无规则，文字原样同步和推送。</div>'; return; }
-        rulesList.innerHTML = rules.map((r, i) => `
+        // 哪些分组收起来了：只是看着方便，记在这个浏览器里就行
+        let collapsed = [];
+        try { collapsed = JSON.parse(localStorage.getItem('tavernSyncRuleGroupsCollapsed') || '[]') || []; } catch (e) { collapsed = []; }
+        const off = new Set(cfg.ruleGroupsOff || []);
+        const ruleRow = (r) => {
+            const i = rules.indexOf(r);
+            return `
             <div style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(128,128,128,0.08); border-radius:8px; margin-bottom:6px;">
                 <div style="flex:1; min-width:0; cursor:pointer;" data-edit="${i}">
                     <div style="font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.name || '未命名')}</div>
@@ -3731,7 +3880,72 @@ function setupTavernSyncScreen() {
                 </div>
                 <label class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-toggle="${i}" ${r.enabled ? 'checked' : ''}><span class="kkt-slider"></span></label>
                 <button data-delrule="${i}" style="${TS.btnD} font-size:14px;">✕</button>
-            </div>`).join('');
+            </div>`;
+        };
+        const groups = TavernSync.ruleGroupsOf(cfg);
+        rulesList.innerHTML = rules.filter(r => !r.group).map(ruleRow).join('') + groups.map((g, gi) => {
+            const inGroup = rules.filter(r => r.group === g);
+            const isCollapsed = collapsed.includes(g);
+            return `
+            <div style="border:1px solid #eee; border-radius:10px; padding:8px 8px 2px; margin-bottom:8px;">
+                <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                    <div data-fold="${gi}" style="flex:1; min-width:0; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(g)}</span>
+                        <span style="font-size:11px; color:#888; white-space:nowrap; flex-shrink:0;">${inGroup.length} 条 · ${isCollapsed ? '展开' : '收起'}</span>
+                    </div>
+                    <button data-rename="${gi}" style="${TS.btnS} flex-shrink:0;">改名</button>
+                    <button data-delgroup="${gi}" style="${TS.btnS} flex-shrink:0;">删除</button>
+                    <label class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-gtoggle="${gi}" ${off.has(g) ? '' : 'checked'}><span class="kkt-slider"></span></label>
+                </div>
+                <div style="${isCollapsed ? 'display:none;' : ''} padding-left:8px;">${inGroup.map(ruleRow).join('')}</div>
+            </div>`;
+        }).join('');
+        rulesList.querySelectorAll('[data-fold]').forEach(el => el.addEventListener('click', () => {
+            const g = groups[parseInt(el.dataset.fold)];
+            collapsed = collapsed.includes(g) ? collapsed.filter(x => x !== g) : [...collapsed, g];
+            try { localStorage.setItem('tavernSyncRuleGroupsCollapsed', JSON.stringify(collapsed)); } catch (e) { /* 记不住也不影响 */ }
+            renderRules();
+        }));
+        rulesList.querySelectorAll('[data-gtoggle]').forEach(cb => cb.addEventListener('change', async () => {
+            const g = groups[parseInt(cb.dataset.gtoggle)];
+            const cfg = TavernSync.getConfig();
+            const list = (cfg.ruleGroupsOff || []).filter(x => x !== g);
+            if (!cb.checked) list.push(g);
+            cfg.ruleGroupsOff = list;
+            await TavernSync.saveConfig(cfg);
+        }));
+        rulesList.querySelectorAll('[data-rename]').forEach(btn => btn.addEventListener('click', async () => {
+            const g = groups[parseInt(btn.dataset.rename)];
+            const name = ((await askText('分组改名', '新名字', g)) || '').trim();
+            if (!name || name === g) return;
+            const cfg = TavernSync.getConfig();
+            if (TavernSync.ruleGroupsOf(cfg).includes(name)) { showToast('已经有叫这个名字的分组'); return; }
+            (cfg.cleanRules || []).forEach(r => { if (r.group === g) r.group = name; });
+            cfg.ruleGroupsOff = (cfg.ruleGroupsOff || []).map(x => x === g ? name : x);
+            if (cfg.lastRuleGroup === g) cfg.lastRuleGroup = name;
+            await TavernSync.saveConfig(cfg);
+            if (collapsed.includes(g)) {
+                collapsed = collapsed.map(x => x === g ? name : x);
+                try { localStorage.setItem('tavernSyncRuleGroupsCollapsed', JSON.stringify(collapsed)); } catch (e) { /* 记不住也不影响 */ }
+            }
+            renderRules();
+        }));
+        rulesList.querySelectorAll('[data-delgroup]').forEach(btn => btn.addEventListener('click', async () => {
+            const g = groups[parseInt(btn.dataset.delgroup)];
+            const n = rules.filter(r => r.group === g).length;
+            const how = await askChoice(`删除分组「${g}」`, `这个分组里有 ${n} 条规则。`, [
+                { label: '只删分组，规则留着', value: 'keep', style: TS.btnP },
+                { label: '连规则一起删', value: 'all', style: TS.btnR },
+            ]);
+            if (!how) return;
+            const cfg = TavernSync.getConfig();
+            if (how === 'all') cfg.cleanRules = (cfg.cleanRules || []).filter(r => r.group !== g);
+            else (cfg.cleanRules || []).forEach(r => { if (r.group === g) delete r.group; });
+            cfg.ruleGroupsOff = (cfg.ruleGroupsOff || []).filter(x => x !== g);
+            if (cfg.lastRuleGroup === g) cfg.lastRuleGroup = '';
+            await TavernSync.saveConfig(cfg);
+            renderRules();
+        }));
         rulesList.querySelectorAll('[data-toggle]').forEach(cb => cb.addEventListener('change', async () => { const cfg = TavernSync.getConfig(); cfg.cleanRules[parseInt(cb.dataset.toggle)].enabled = cb.checked; await TavernSync.saveConfig(cfg); }));
         rulesList.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => showRuleEditor(parseInt(el.dataset.edit), () => renderRules())));
         rulesList.querySelectorAll('[data-delrule]').forEach(btn => btn.addEventListener('click', async () => {
@@ -3741,6 +3955,9 @@ function setupTavernSyncScreen() {
             if (!rule) return;
             if (!confirm(`删除清洗规则「${rule.name || '未命名'}」？`)) return;
             cfg.cleanRules.splice(idx, 1);
+            // 分组里最后一条删掉后分组就没了，它的开关记录也一起去掉，免得以后新建同名分组时一上来就是关着的
+            const left = TavernSync.ruleGroupsOf(cfg);
+            cfg.ruleGroupsOff = (cfg.ruleGroupsOff || []).filter(x => left.includes(x));
             await TavernSync.saveConfig(cfg);
             renderRules();
         }));
@@ -3859,7 +4076,7 @@ function setupTavernSyncScreen() {
                     <span>双向自动更新复制过的世界书</span>
                     <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-wbauto="${i}" ${b.autoUpdateWorldBooks ? 'checked' : ''}><span class="kkt-slider"></span></span>
                 </label>
-                <div style="font-size:11px; color:#888; margin:4px 0 0 12px;">酒馆里改了就更新到小手机，小手机里改了就推送到酒馆；两边都改过的不动，页面顶部会提示。只管从酒馆复制过来的、和推送到这个角色世界书里的条目，新条目要在「导入酒馆世界书」「推送小手机世界书」里手动加。</div>
+                <div style="font-size:11px; color:#888; margin:4px 0 0 12px;">酒馆里改了就更新到小手机，小手机里改了就推送到酒馆；两边都改过的不动，页面顶部会提示。只管两边已经互通过的条目：从这个角色的酒馆世界书导入到小手机的，和从小手机推送到这个角色的酒馆世界书里的。以后新加的条目不会自动过去，要在「导入酒馆世界书」或「推送小手机世界书」里手动加。</div>
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <span>自动精简旧楼层</span>
                     <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-trimauto="${i}" ${b.autoTrim ? 'checked' : ''}><span class="kkt-slider"></span></span>
@@ -4650,6 +4867,7 @@ function showRuleEditor(ruleIndex, onSave) {
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">${existing ? '编辑' : '添加'}清洗规则</h3>
         <div style="margin-bottom:12px;"><label style="${TS.label}">规则名称</label><input id="rr-name" placeholder="去除思考过程" style="${TS.input}"></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">正则表达式</label><input id="rr-regex" placeholder="<thinking>[\\s\\S]*?</thinking>" style="${TS.input} font-family:monospace;"></div>
+        <div style="margin-bottom:12px;"><label style="${TS.label}">分组</label><select id="rr-group" aria-label="规则分组" title="规则分组" style="${TS.input}"></select></div>
         <div style="margin-bottom:12px;"><label style="${TS.label}">用在</label><select id="rr-scope" aria-label="规则用在" title="规则用在" style="${TS.input}">
             <option value="pull" ${existing?.scope === 'pull' ? 'selected' : ''}>同步（酒馆剧情进小手机时）</option>
             <option value="push" ${existing?.scope === 'push' ? 'selected' : ''}>推送（小手机消息进酒馆时）</option>
@@ -4672,6 +4890,30 @@ function showRuleEditor(ruleIndex, onSave) {
         modal.querySelector('#rr-regex').value = existing.regex || '';
     }
 
+    // 分组下拉：不分组 + 现有的分组 + 新建。新规则默认放进上次选的分组。
+    const groupSelect = modal.querySelector('#rr-group');
+    let pendingGroup = '';
+    function renderGroups(selected) {
+        const groups = TavernSync.ruleGroupsOf(TavernSync.getConfig());
+        if (pendingGroup && !groups.includes(pendingGroup)) groups.push(pendingGroup);
+        groupSelect.innerHTML = '<option value="">不分组</option>'
+            + groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('')
+            + '<option value="__new__">＋ 新建分组…</option>';
+        groupSelect.value = groups.includes(selected) ? selected : '';
+    }
+    const lastGroup = TavernSync.getConfig().lastRuleGroup || '';
+    renderGroups(existing ? (existing.group || '') : lastGroup);
+    let groupValue = groupSelect.value;
+    groupSelect.addEventListener('change', async () => {
+        if (groupSelect.value !== '__new__') { groupValue = groupSelect.value; return; }
+        // 先把下拉收起来、选项复原，再弹输入框；否则手机上列表会一直开着
+        try { groupSelect.blur(); } catch (e) { /* 收不起来也不影响 */ }
+        groupSelect.value = groupValue;
+        const name = ((await askText('新分组的名字', '例如：删状态栏')) || '').trim();
+        if (name) { pendingGroup = name; groupValue = name; }
+        renderGroups(groupValue);
+    });
+
     function updateTest() {
         const regex = modal.querySelector('#rr-regex').value, mode = modal.querySelector('#rr-mode').value, text = modal.querySelector('#rr-test').value, res = modal.querySelector('#rr-result');
         if (!regex || !text) { res.textContent = ''; return; }
@@ -4688,9 +4930,133 @@ function showRuleEditor(ruleIndex, onSave) {
         const regex = modal.querySelector('#rr-regex').value; if (!regex) { showToast('请填写正则'); return; }
         try { new RegExp(regex); } catch { showToast('正则无效'); return; }
         const rule = { id: existing?.id || `rule_${Date.now()}`, name: modal.querySelector('#rr-name').value.trim() || '未命名', regex, mode: modal.querySelector('#rr-mode').value, scope: modal.querySelector('#rr-scope').value, enabled: existing?.enabled ?? true };
+        if (groupValue) rule.group = groupValue;
         const cfg = TavernSync.getConfig(); if (!cfg.cleanRules) cfg.cleanRules = [];
-        if (ruleIndex !== null) cfg.cleanRules[ruleIndex] = rule; else cfg.cleanRules.push(rule);
+        // 换了分组的规则挪到末尾，这样它排在新分组的最后
+        if (ruleIndex !== null && (existing.group || '') === groupValue) cfg.cleanRules[ruleIndex] = rule;
+        else { if (ruleIndex !== null) cfg.cleanRules.splice(ruleIndex, 1); cfg.cleanRules.push(rule); }
+        if (!existing) cfg.lastRuleGroup = groupValue;
+        const left = TavernSync.ruleGroupsOf(cfg);
+        cfg.ruleGroupsOff = (cfg.ruleGroupsOff || []).filter(x => left.includes(x));
         await TavernSync.saveConfig(cfg); overlay.remove(); showToast('规则已保存'); if (onSave) onSave();
+    });
+}
+
+// ========== 正则规则导出 / 导入弹窗 ==========
+function showExportRulesModal() {
+    const cfg = TavernSync.getConfig();
+    const rules = cfg.cleanRules || [];
+    if (!rules.length) { showToast('还没有规则可以导出'); return; }
+    const groups = TavernSync.ruleGroupsOf(cfg);
+    const ungrouped = rules.filter(r => !r.group).length;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:360px;';
+    modal.innerHTML = `
+        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">导出正则</h3>
+        <div style="margin-bottom:16px;"><label style="${TS.label}">导出哪些</label><select id="re-which" aria-label="导出哪些正则" title="导出哪些正则" style="${TS.input}">
+            <option value="__all__">全部（${rules.length} 条）</option>
+            ${ungrouped && groups.length ? `<option value="__none__">不分组的（${ungrouped} 条）</option>` : ''}
+            ${groups.map((g, i) => `<option value="${i}">分组「${esc(g)}」（${rules.filter(r => r.group === g).length} 条）</option>`).join('')}
+        </select></div>
+        <div style="display:flex; gap:10px;">
+            <button id="re-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
+            <button id="re-ok" style="flex:1; ${TS.btnP}">导出</button></div>`;
+    overlay.appendChild(modal); document.body.appendChild(overlay);
+    modal.querySelector('#re-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    modal.querySelector('#re-ok').addEventListener('click', () => {
+        const v = modal.querySelector('#re-which').value;
+        const group = v === '__all__' ? null : v === '__none__' ? '' : groups[parseInt(v)];
+        const data = TavernSync.exportCleanRules(group);
+        const label = group == null ? '全部' : group === '' ? '不分组' : group;
+        downloadText(`酒馆互联正则_${label.replace(/[\\/:*?"<>|]/g, '_')}.json`, JSON.stringify(data, null, 2));
+        overlay.remove();
+        showToast(`已导出 ${data.rules.length} 条正则`);
+    });
+}
+
+function showImportRulesModal(text, onDone) {
+    let parsed;
+    try { parsed = TavernSync.parseCleanRulesFile(text); } catch (e) { showToast(`导入失败：${e.message}`); return; }
+    const list = parsed.rules;
+    if (!list.length) { showToast('文件里没有正则'); return; }
+    const dup = TavernSync.markDuplicateRules(list);
+    const dupCount = dup.filter(Boolean).length;
+    const invalidCount = list.filter((r, i) => r.invalid && !dup[i]).length;
+    const selectable = (i) => !dup[i] && !list[i].invalid;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.classList.add('ts-overlay');
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:380px; max-height:85vh; display:flex; flex-direction:column;';
+    const scopeText = (s) => s === 'pull' ? '同步' : s === 'push' ? '推送' : '同步和推送';
+    const notes = [];
+    if (dupCount) notes.push(`其中 ${dupCount} 条和现有的正则重复，会跳过`);
+    if (invalidCount) notes.push(`${invalidCount} 条正则写法有错，不能导入`);
+    modal.innerHTML = `
+        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">导入正则</h3>
+        <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:10px;">文件里有 ${list.length} 条正则${notes.length ? '，' + notes.join('，') : ''}。</div>
+        <div style="margin-bottom:10px;"><label style="${TS.label}">放进哪个分组</label><select id="ri-group" aria-label="导入的正则放进哪个分组" title="导入的正则放进哪个分组" style="${TS.input}"></select></div>
+        <div style="display:flex; justify-content:flex-end; margin-bottom:6px;"><button id="ri-all" style="${TS.btnS}">取消全选</button></div>
+        <div id="ri-list" style="flex:1; min-height:0; overflow:auto; margin-bottom:14px;">
+            ${list.map((r, i) => `
+            <label style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(128,128,128,0.08); border-radius:8px; margin-bottom:6px; ${selectable(i) ? 'cursor:pointer;' : 'opacity:0.5;'}">
+                <input type="checkbox" data-i="${i}" ${selectable(i) ? 'checked' : 'disabled'} style="flex-shrink:0;">
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.name)}${dup[i] ? '（已有）' : r.invalid ? '（写法有错）' : ''}</div>
+                    <div style="font-size:11px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.group ? `${esc(r.group)} · ` : ''}${r.mode === 'extract' ? '提取' : '排除'} · ${scopeText(r.scope)} · /${esc(r.regex)}/</div>
+                </div>
+            </label>`).join('')}
+        </div>
+        <div style="display:flex; gap:10px;">
+            <button id="ri-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
+            <button id="ri-ok" style="flex:1; ${TS.btnP}">导入</button></div>`;
+    overlay.appendChild(modal); document.body.appendChild(overlay);
+
+    // 分组下拉：照文件里的分组（文件里有分组时才有这一项）/ 不分组 / 现有分组 / 新建
+    const fileHasGroups = list.some(r => r.group);
+    const groupSelect = modal.querySelector('#ri-group');
+    let pendingGroup = '';
+    let groupValue = fileHasGroups ? '__file__' : '';
+    function renderGroups() {
+        const groups = TavernSync.ruleGroupsOf(TavernSync.getConfig());
+        if (pendingGroup && !groups.includes(pendingGroup)) groups.push(pendingGroup);
+        groupSelect.innerHTML = (fileHasGroups ? '<option value="__file__">照文件里的分组</option>' : '')
+            + '<option value="">不分组</option>'
+            + groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('')
+            + '<option value="__new__">＋ 新建分组…</option>';
+        groupSelect.value = groupValue;
+    }
+    renderGroups();
+    groupSelect.addEventListener('change', async () => {
+        if (groupSelect.value !== '__new__') { groupValue = groupSelect.value; return; }
+        try { groupSelect.blur(); } catch (e) { /* 收不起来也不影响 */ }
+        groupSelect.value = groupValue;
+        const name = ((await askText('新分组的名字', '例如：删状态栏')) || '').trim();
+        if (name) { pendingGroup = name; groupValue = name; }
+        renderGroups();
+    });
+
+    const boxes = () => [...modal.querySelectorAll('#ri-list input[type=checkbox]:not(:disabled)')];
+    const allBtn = modal.querySelector('#ri-all');
+    const paintAll = () => { allBtn.textContent = boxes().length && boxes().every(b => b.checked) ? '取消全选' : '全选'; };
+    paintAll();
+    allBtn.addEventListener('click', () => { const on = !boxes().every(b => b.checked); boxes().forEach(b => { b.checked = on; }); paintAll(); });
+    modal.querySelector('#ri-list').addEventListener('change', paintAll);
+
+    modal.querySelector('#ri-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    modal.querySelector('#ri-ok').addEventListener('click', async () => {
+        const picked = boxes().filter(b => b.checked).map(b => list[parseInt(b.dataset.i)]);
+        if (!picked.length && !dupCount) { showToast('没有选中要导入的正则'); return; }
+        const r = await TavernSync.importCleanRules(picked, groupValue, parsed.groupsOff);
+        overlay.remove();
+        const skipped = dupCount + r.skipped;
+        showToast(`导入了 ${r.added} 条正则${skipped ? `，跳过了 ${skipped} 条重复的正则` : ''}`);
+        if (onDone) onDone();
     });
 }
 
