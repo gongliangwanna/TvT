@@ -131,7 +131,7 @@ function tagFloorNth(list) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-22 f',
+    SYNC_VERSION: '2026-09-22 g',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -653,6 +653,16 @@ const TavernSync = {
         return { added, skipped };
     },
 
+    // 同步那一头现在起作用的规则的指纹。卡片上记着清洗时用的指纹（tavern.rulesHash），
+    // 和现在的对不上 = 你后来改过规则，同步时按现在的规则重新清洗（见 pullFromTavern 第 2.5 步）
+    pullRulesHash() {
+        const cfg = this.getConfig();
+        const off = new Set(cfg.ruleGroupsOff || []);
+        const eff = this.orderedCleanRules(cfg).filter(r => r.enabled && !(r.group && off.has(r.group))
+            && (!r.scope || r.scope === 'both' || r.scope === 'pull')).map(r => [r.regex, r.mode === 'extract' ? 'extract' : 'exclude']);
+        return this.textHash(JSON.stringify(eff));
+    },
+
     applyCleanRules(text, direction) {
         if (!text || typeof text !== 'string') return '';
         const config = this.getConfig();
@@ -843,6 +853,7 @@ const TavernSync = {
 
         let now = Date.now();
         let importedCount = 0;
+        const rulesHash = this.pullRulesHash();
         for (const c of newOnes) {
             const { m, floor, time } = c;
             // 合并到这一楼的小手机内容（最后那段 <phone_chat>）去掉，只保留酒馆原本的内容
@@ -872,6 +883,7 @@ const TavernSync = {
                     //   localHash 写进小手机的内容（和现在的对不上 = 你在小手机里改过）
                     rawHash: this.textHash(body),
                     localHash: this.textHash(cleaned),
+                    rulesHash,           // 清洗时用的规则（改了规则后同步时会重新清洗）
                 },
             });
             importedCount++;
@@ -880,8 +892,9 @@ const TavernSync = {
         // 2. 柏宝书的摘要通常比回复晚一步写好：把之前导入、当时还没有摘要（或摘要已更新）的楼层补上；
         //    柏宝书把摘要撤掉了（或属于另一个抽卡版本）的，小手机里也清掉，免得发给 AI 的是作废的摘要。
         //    顺便更新楼层号（酒馆里删了楼之后，后面的楼层号会往前挪）和所属回合
-        let summariesFilled = 0, summariesCleared = 0, contentUpdated = 0;
+        let summariesFilled = 0, summariesCleared = 0, contentUpdated = 0, recleaned = 0;
         const editedBoth = [];    // 酒馆里改了、你在小手机里也改过的楼层号（不覆盖，提示一次）
+        const editedRules = [];   // 改了规则、但你在小手机里改过字的楼层号（不覆盖，提示一次）
         for (const h of char.history) {
             if (!ofThisChat(h)) continue;
             const found = findCandidate(h.tavern);
@@ -905,6 +918,7 @@ const TavernSync = {
                     if (cleaned && cleaned !== h.content) { h.content = cleaned; h.parts = []; contentUpdated++; }
                     h.tavern.rawHash = bh;
                     h.tavern.localHash = this.textHash(h.content || '');
+                    h.tavern.rulesHash = rulesHash;
                 } else if (h.tavern.rawHash !== bh) {
                     const cleaned = this.applyCleanRules(body, 'pull');
                     const phoneUnchanged = this.textHash(h.content || '') === h.tavern.localHash;
@@ -914,11 +928,28 @@ const TavernSync = {
                         if (h.content !== cleaned) { h.content = cleaned; h.parts = []; contentUpdated++; }
                         h.tavern.rawHash = bh;
                         h.tavern.localHash = this.textHash(cleaned);
+                        h.tavern.rulesHash = rulesHash;
                         delete h.tavern.keptHash;
                     } else if (h.tavern.keptHash !== bh) {
                         h.tavern.keptHash = bh;             // 同一次改动只提示一次
                         editedBoth.push(h.tavern.floor);
                     }
+                } else if (h.tavern.rulesHash !== rulesHash) {
+                    // 酒馆里没改，但你后来改过清洗规则（没有记录的旧卡片也算）：按现在的规则重新清洗。
+                    // 在小手机里改过字的不覆盖、提示一次；清洗后是空的不动（和上面酒馆改字时一样）。
+                    // 不管哪种情况都记下现在的规则，同一次改动只处理一次。
+                    const cleaned = this.applyCleanRules(body, 'pull');
+                    const phoneUnchanged = this.textHash(h.content || '') === h.tavern.localHash;
+                    if (cleaned && cleaned !== h.content) {
+                        if (phoneUnchanged) {
+                            h.content = cleaned; h.parts = [];
+                            h.tavern.localHash = this.textHash(cleaned);
+                            recleaned++;
+                        } else if (h.tavern.rulesHash !== undefined) {
+                            editedRules.push(h.tavern.floor);   // 旧卡片第一次补记录时不提示（说不准是不是规则改过）
+                        }
+                    }
+                    h.tavern.rulesHash = rulesHash;
                 }
             }
             const summary = readBaibaiSummary(found.m);
@@ -936,6 +967,11 @@ const TavernSync = {
             const ch = db.characters.find(c => c.id === binding.uwuCharId);
             const nums = editedBoth.slice(0, 5).join('、') + (editedBoth.length > 5 ? ` 等 ${editedBoth.length} 楼` : '');
             this.reportIssue(`「${ch ? (ch.remarkName || ch.name) : '这个角色'}」的酒馆第 ${nums} 楼在酒馆里改过字，但你在小手机里也改过这几楼，没有自动更新；如果想用酒馆的版本，在小手机里长按删掉这几张卡片，再点「同步酒馆剧情」重新导入。`);
+        }
+        if (editedRules.length) {
+            const ch = db.characters.find(c => c.id === binding.uwuCharId);
+            const nums = editedRules.slice(0, 5).join('、') + (editedRules.length > 5 ? ` 等 ${editedRules.length} 楼` : '');
+            this.reportIssue(`正则清洗规则改过了，但「${ch ? (ch.remarkName || ch.name) : '这个角色'}」的酒馆第 ${nums} 楼你在小手机里改过字，没有按新规则重新清洗；如果想按新规则来，在小手机里长按删掉这几张卡片，再点「同步酒馆剧情」重新导入。`);
         }
 
         // 3. 按真实时间把酒馆楼层排进小手机聊天记录（包括以前导入时排错位置的）
@@ -976,13 +1012,13 @@ const TavernSync = {
         this.resolveIssues('pull');   // 这次同步成功了，之前“同步失败”的记录就不用留着了
         await saveData();
         // 正在看这个角色的聊天 → 重新画一遍，新卡片立刻出现
-        if (importedCount > 0 || reordered || removedGone > 0 || summariesFilled > 0 || summariesCleared > 0 || contentUpdated > 0) {
+        if (importedCount > 0 || reordered || removedGone > 0 || summariesFilled > 0 || summariesCleared > 0 || contentUpdated > 0 || recleaned > 0) {
             this._rerender(char);
         }
         // 顺便看看酒馆里是不是开了新聊天（出错不影响这次同步）
         try { await this._checkNewerChat(binding); } catch (e) { console.warn('[TavernSync] 检查酒馆新聊天失败:', e.message); }
         this._notifyData();
-        return { imported: importedCount, summariesFilled, summariesCleared, reordered, worldUpdated, personaUpdated, autoTrimmed, removedGone, contentUpdated, editedBoth: editedBoth.length };
+        return { imported: importedCount, summariesFilled, summariesCleared, reordered, worldUpdated, personaUpdated, autoTrimmed, removedGone, contentUpdated, recleaned, editedBoth: editedBoth.length };
     },
 
     // 给还没记来源聊天的旧卡片补上：算作上次同步的那个聊天（没同步记录时算作现在绑定的聊天）
@@ -1339,6 +1375,7 @@ const TavernSync = {
             m.tavern.trimmed = false;
             m.tavern.rawHash = this.textHash(floorBody(found));   // 取回的是酒馆现在的版本，指纹重新记
             m.tavern.localHash = this.textHash(cleaned);
+            m.tavern.rulesHash = this.pullRulesHash();
             delete m.tavern.keptHash;
             restored++;
 
@@ -1383,6 +1420,7 @@ const TavernSync = {
                         summary: null,
                         rawHash: this.textHash(floorBody(hit)),
                         localHash: this.textHash(text),
+                        rulesHash: this.pullRulesHash(),
                     },
                 });
                 restoredUsers++;
@@ -1457,6 +1495,7 @@ const TavernSync = {
         // 两边现在一致了：指纹重新记，下次同步不会把这次改动当成“两边都改过”
         t.rawHash = this.textHash(floorBody(stMsg));
         t.localHash = this.textHash(message.content || '');
+        t.rulesHash = this.pullRulesHash();
         delete t.keptHash;
         await saveData();
         return { ok: true, floor: t.floor, what: 'text' };
@@ -3607,7 +3646,30 @@ function setupTavernSyncScreen() {
                         <button id="ts-add-rule-btn" style="${TS.btnAdd}">+ 添加规则</button>
                     </div>
                     <input type="file" id="ts-import-rules-file" accept=".json,application/json" style="display:none;">
-                    <div style="font-size:12px; color:#888; margin-bottom:10px; line-height:1.6;">用正则把文字里不想要的部分删掉，或者只挑出想要的部分，比如删掉酒馆 AI 回复里的思考过程。每条规则可以选用在同步（酒馆剧情进小手机时）、推送（小手机消息进酒馆时），还是两头都用；多条规则按列表顺序依次处理。</div>
+                    <div style="font-size:12px; color:#888; line-height:1.6;">同步和推送时，文字会复制一份到另一边。这里的规则在复制的那一刻先把文字处理一遍，删掉不想要的部分，原来那边的内容不动。</div>
+                    <div id="ts-rules-help-toggle" style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; margin:10px 0; padding:8px 0; border-top:1px solid #f0f0f0; border-bottom:1px solid #f0f0f0;">
+                        <span style="font-size:13px; white-space:nowrap;">正则清洗怎么用</span>
+                        <span id="ts-rules-help-arrow" style="font-size:12px; color:#888; white-space:nowrap; flex-shrink:0;">点击展开</span>
+                    </div>
+                    <div id="ts-rules-help-body" style="display:none; font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
+                        <div style="font-size:13px; color:inherit; margin-bottom:2px;">什么时候起作用</div>
+                        <div>同步：酒馆剧情复制进小手机之前。小手机里的酒馆剧情卡片、发给小手机 AI 的内容，都是处理后的文字；酒馆里的原文不变。一楼处理完什么都不剩时，这一楼不会同步进来。</div>
+                        <div>推送：小手机消息复制进酒馆之前。酒馆里收到的是处理后的文字；小手机里的原文不变。</div>
+                        <div>每条规则在「用在」里选同步、推送，还是两头都用。</div>
+                        <div style="font-size:13px; color:inherit; margin:10px 0 2px;">为什么需要</div>
+                        <div>酒馆自己的正则大多只改显示出来的样子，酒馆存着的原文不变，而小手机读到的是原文。所以在酒馆里被藏起来的思考过程、状态栏、前端卡片代码，同步时会原样进小手机，既占地方，又会发给小手机的 AI。在这里加一条「排除」规则就能去掉。</div>
+                        <div style="font-size:13px; color:inherit; margin:10px 0 2px;">两种模式</div>
+                        <div>排除：删掉匹配到的部分，其余留着。例如 <code>&lt;status&gt;[\\s\\S]*?&lt;/status&gt;</code> 会删掉状态栏那一段。</div>
+                        <div>提取：只留匹配到的部分，其余全部去掉。例如正文写在 &lt;content&gt; 标签里，就用 <code>&lt;content&gt;([\\s\\S]*?)&lt;/content&gt;</code> 只留标签里面那段（写了小括号时，只留第一对小括号圈住的部分）。一处都没匹配到时，整段原样不动。</div>
+                        <div style="font-size:13px; color:inherit; margin:10px 0 2px;">顺序和分组</div>
+                        <div>多条规则按列表从上往下依次处理，上一条处理完的结果交给下一条。分组只是为了整理，关掉分组的开关，组里的规则就都不起作用。</div>
+                        <div style="font-size:13px; color:inherit; margin:10px 0 2px;">新加或修改规则以后</div>
+                        <div>同步：下次同步时，已经在小手机里的酒馆剧情也会按新规则重新处理。这几种不动：你在小手机里改过字的楼层（页面顶部会提示）、精简过的楼层（正文是柏宝书摘要）、按新规则处理完什么都不剩的楼层。</div>
+                        <div>推送：只对以后推送的消息起作用，已经推到酒馆的不会变。想换掉，用「推送/清理消息」里的「清理酒馆」删掉再重新推。</div>
+                        <div style="font-size:13px; color:inherit; margin:10px 0 2px;">其他</div>
+                        <div>被规则改过的酒馆剧情，在小手机里编辑后不能写回酒馆，因为写回会把被删掉的那部分从酒馆原文里一起弄丢。</div>
+                        <div>这里和 yuan 自带的「正则过滤」不是一回事：那个是在小手机 AI 的回复存进小手机之前处理，删掉的内容在小手机里也看不到了。</div>
+                    </div>
                     <div id="ts-rules-tools" style="margin-bottom:10px;"></div>
                     <div id="ts-rules-list"></div>
                 </div>
@@ -3788,6 +3850,12 @@ function setupTavernSyncScreen() {
         const open = body.style.display === 'none';
         body.style.display = open ? 'block' : 'none';
         mainEl.querySelector('#ts-wrap-arrow').textContent = open ? '点击收起' : '点击展开';
+    });
+    mainEl.querySelector('#ts-rules-help-toggle').addEventListener('click', () => {
+        const body = mainEl.querySelector('#ts-rules-help-body');
+        const open = body.style.display === 'none';
+        body.style.display = open ? 'block' : 'none';
+        mainEl.querySelector('#ts-rules-help-arrow').textContent = open ? '点击收起' : '点击展开';
     });
     mainEl.querySelector('#ts-wrap-reset').addEventListener('click', async () => {
         if (!confirm('把三段包裹提示词恢复成默认内容？')) return;
@@ -4410,6 +4478,7 @@ function setupTavernSyncScreen() {
                 r.imported ? `同步了 ${r.imported} 楼新剧情` : '',
                 r.removedGone ? `酒馆里删掉的 ${r.removedGone} 楼也删掉了` : '',
                 r.contentUpdated ? `更新了 ${r.contentUpdated} 楼在酒馆里改过的内容` : '',
+                r.recleaned ? `按新的正则重新清洗了 ${r.recleaned} 楼` : '',
                 r.summariesFilled ? `补上 ${r.summariesFilled} 段摘要` : '',
                 r.summariesCleared ? `清掉 ${r.summariesCleared} 段柏宝书已作废的摘要` : '',
                 r.reordered ? '已按时间重新排好位置' : '',
@@ -5008,7 +5077,7 @@ function showRuleEditor(ruleIndex, onSave) {
         <div style="margin-bottom:12px;"><label style="${TS.label}">模式</label><select id="rr-mode" aria-label="规则模式" title="规则模式" style="${TS.input}">
             <option value="exclude" ${(!existing || existing.mode === 'exclude') ? 'selected' : ''}>排除</option>
             <option value="extract" ${existing?.mode === 'extract' ? 'selected' : ''}>提取</option></select>
-            <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">排除：删掉匹配到的内容，其余保留。<br>提取：只保留匹配到的内容，其余全部去掉；一处都没匹配到就原样不动。</div></div>
+            <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">排除：删掉匹配到的内容，其余保留。例如 <code>&lt;status&gt;[\\s\\S]*?&lt;/status&gt;</code> 删掉状态栏那一段。<br>提取：只保留匹配到的内容，其余全部去掉。例如 <code>&lt;content&gt;([\\s\\S]*?)&lt;/content&gt;</code> 只留 &lt;content&gt; 标签里面那段；写了小括号时只留第一对小括号圈住的部分，一处都没匹配到就原样不动。<br>可以在下面的「测试」里粘一段文字，看处理完是什么样。</div></div>
         <div style="margin-bottom:16px;"><label style="${TS.label}">测试</label>
             <textarea id="rr-test" placeholder="粘贴消息文本测试..." style="${TS.input} height:60px; resize:vertical;"></textarea>
             <div id="rr-result" style="margin-top:6px; font-size:12px; color:#888; background:rgba(128,128,128,0.08); border-radius:8px; padding:8px; white-space:pre-wrap; max-height:80px; overflow:auto;"></div></div>
