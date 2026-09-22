@@ -131,7 +131,7 @@ function tagFloorNth(list) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-22 e',
+    SYNC_VERSION: '2026-09-22 f',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -567,10 +567,11 @@ const TavernSync = {
         return a.regex === b.regex && (a.mode || 'exclude') === (b.mode || 'exclude') && (a.scope || 'both') === (b.scope || 'both');
     },
 
-    // 导出：group = null 导出全部，'' 只导不分组的，其余只导这个分组
-    exportCleanRules(group) {
+    // 导出：ids = 要导出的规则编号（null 导出全部），按页面上的顺序
+    exportCleanRules(ids) {
         const cfg = this.getConfig();
-        const rules = this.orderedCleanRules(cfg).filter(r => group == null || (r.group || '') === group);
+        const pick = ids ? new Set(ids) : null;
+        const rules = this.orderedCleanRules(cfg).filter(r => !pick || pick.has(r.id));
         const groups = [...new Set(rules.map(r => r.group).filter(Boolean))];
         return {
             type: 'uwu-tavern-clean-rules', version: 1,
@@ -581,6 +582,25 @@ const TavernSync = {
             }),
             groupsOff: (cfg.ruleGroupsOff || []).filter(g => groups.includes(g)),
         };
+    },
+
+    // 多选后的批量操作：action = 'enable' / 'disable' / 'move'（group：'' = 不分组）/ 'delete'，返回处理了几条。
+    // 移动时按页面上的先后挪到末尾，排在目标分组最后。
+    async batchCleanRules(ids, action, group) {
+        const cfg = this.getConfig();
+        if (!Array.isArray(cfg.cleanRules)) cfg.cleanRules = [];
+        const pick = new Set(ids);
+        const hit = this.orderedCleanRules(cfg).filter(r => pick.has(r.id));
+        if (action === 'enable' || action === 'disable') hit.forEach(r => { r.enabled = action === 'enable'; });
+        else if (action === 'delete') cfg.cleanRules = cfg.cleanRules.filter(r => !pick.has(r.id));
+        else if (action === 'move') {
+            cfg.cleanRules = cfg.cleanRules.filter(r => !pick.has(r.id));
+            hit.forEach(r => { if (group) r.group = group; else delete r.group; cfg.cleanRules.push(r); });
+        } else return 0;
+        const left = this.ruleGroupsOf(cfg);
+        cfg.ruleGroupsOff = (cfg.ruleGroupsOff || []).filter(x => left.includes(x));
+        await this.saveConfig(cfg);
+        return hit.length;
     },
 
     // 读导入文件。只认小手机（酒馆互联）自己导出的文件，别的抛错。
@@ -3582,16 +3602,13 @@ function setupTavernSyncScreen() {
             </div>
             <div id="ts-rules-area" style="display:none; margin-top:12px;">
                 <div style="${TS.card}">
-                    <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:10px;">
-                        <span style="${TS.title} white-space:nowrap;">正则清洗规则</span>
-                        <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-                            <button id="ts-import-rules-btn" style="${TS.btnS}">导入</button>
-                            <button id="ts-export-rules-btn" style="${TS.btnS}">导出</button>
-                            <button id="ts-add-rule-btn" style="${TS.btnAdd}">+ 添加规则</button>
-                        </div>
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                        <span style="${TS.title}">正则清洗规则</span>
+                        <button id="ts-add-rule-btn" style="${TS.btnAdd}">+ 添加规则</button>
                     </div>
                     <input type="file" id="ts-import-rules-file" accept=".json,application/json" style="display:none;">
                     <div style="font-size:12px; color:#888; margin-bottom:10px; line-height:1.6;">用正则把文字里不想要的部分删掉，或者只挑出想要的部分，比如删掉酒馆 AI 回复里的思考过程。每条规则可以选用在同步（酒馆剧情进小手机时）、推送（小手机消息进酒馆时），还是两头都用；多条规则按列表顺序依次处理。</div>
+                    <div id="ts-rules-tools" style="margin-bottom:10px;"></div>
                     <div id="ts-rules-list"></div>
                 </div>
             </div>
@@ -3732,9 +3749,7 @@ function setupTavernSyncScreen() {
         showPushWorldBookModal(ch ? TavernSync.phoneCharName(ch) : '');
     });
     mainEl.querySelector('#ts-add-rule-btn').addEventListener('click', () => showRuleEditor(null, () => renderRules()));
-    mainEl.querySelector('#ts-export-rules-btn').addEventListener('click', () => showExportRulesModal());
     const importFile = mainEl.querySelector('#ts-import-rules-file');
-    mainEl.querySelector('#ts-import-rules-btn').addEventListener('click', () => importFile.click());
     importFile.addEventListener('change', () => {
         const file = importFile.files && importFile.files[0];
         importFile.value = '';
@@ -3862,44 +3877,153 @@ function setupTavernSyncScreen() {
     }
 
     // ===== 正则规则 =====
+    // 多选：rulesSelected 不是 null 时处在多选状态，里面是勾上的规则编号（rule.id）
+    let rulesSelected = null;
+    let rulesExportHint = false;
+    const rulesTools = mainEl.querySelector('#ts-rules-tools');
+    const smallDisabled = (on) => on ? '' : 'disabled';
+
+    function renderRuleTools(rules) {
+        if (!rulesSelected) {
+            rulesTools.innerHTML = `<div style="display:flex; gap:6px;">
+                <button id="ts-rules-multi" style="${TS.btnS}">多选</button>
+                <button id="ts-rules-import" style="${TS.btnS}">导入</button>
+                <button id="ts-rules-export" style="${TS.btnS}">导出</button>
+            </div>`;
+            rulesTools.querySelector('#ts-rules-multi').addEventListener('click', () => {
+                if (!rules.length) { showToast('还没有规则'); return; }
+                rulesSelected = new Set(); rulesExportHint = false; renderRules();
+            });
+            rulesTools.querySelector('#ts-rules-import').addEventListener('click', () => mainEl.querySelector('#ts-import-rules-file').click());
+            // 导出也走多选：先全部勾上，把不要的取消掉再点「导出」
+            rulesTools.querySelector('#ts-rules-export').addEventListener('click', () => {
+                if (!rules.length) { showToast('还没有规则可以导出'); return; }
+                rulesSelected = new Set(rules.map(r => r.id)); rulesExportHint = true; renderRules();
+            });
+            return;
+        }
+        const n = rules.filter(r => rulesSelected.has(r.id)).length;
+        const any = n > 0;
+        const allOn = any && n === rules.length;
+        const dim = any ? '' : 'opacity:0.5; cursor:default;';
+        const btnRs = 'padding:8px; border-radius:8px; border:none; background:rgba(244,67,54,0.15); color:#f66; font-size:13px; font-weight:500; cursor:pointer;';
+        rulesTools.innerHTML = `
+            <div style="border:1px solid #eee; border-radius:10px; padding:10px;">
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="flex:1; font-size:12px; color:#888;">已选 ${n} 条</span>
+                    <button id="ts-rules-all" style="${TS.btnS}">${allOn ? '取消全选' : '全选'}</button>
+                    <button id="ts-rules-done" style="${TS.btnS}">完成</button>
+                </div>
+                ${rulesExportHint ? '<div style="font-size:12px; color:#888; line-height:1.6; margin-top:6px;">已经全部勾上，把不想导出的取消掉，再点「导出」。</div>' : ''}
+                <div style="display:flex; gap:6px; margin-top:8px;">
+                    <button data-batch="enable" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">开启</button>
+                    <button data-batch="disable" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">关闭</button>
+                    <button data-batch="move" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">移动分组</button>
+                </div>
+                <div style="display:flex; gap:6px; margin-top:6px;">
+                    <button data-batch="export" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">导出</button>
+                    <button data-batch="delete" ${smallDisabled(any)} style="flex:1; ${btnRs} ${dim}">删除</button>
+                </div>
+            </div>`;
+        rulesTools.querySelector('#ts-rules-all').addEventListener('click', () => {
+            rulesSelected = allOn ? new Set() : new Set(rules.map(r => r.id)); renderRules();
+        });
+        rulesTools.querySelector('#ts-rules-done').addEventListener('click', () => { rulesSelected = null; rulesExportHint = false; renderRules(); });
+        rulesTools.querySelectorAll('[data-batch]').forEach(btn => btn.addEventListener('click', async () => {
+            const ids = rules.filter(r => rulesSelected.has(r.id)).map(r => r.id);
+            if (!ids.length) return;
+            const action = btn.dataset.batch;
+            if (action === 'export') {
+                const data = TavernSync.exportCleanRules(ids);
+                const groups = [...new Set(data.rules.map(r => r.group || ''))];
+                const label = data.rules.length === rules.length ? '全部'
+                    : (groups.length === 1 && groups[0]) ? groups[0] : `${data.rules.length}条`;
+                downloadText(`酒馆互联正则_${label.replace(/[\\/:*?"<>|]/g, '_')}.json`, JSON.stringify(data, null, 2));
+                showToast(`已导出 ${data.rules.length} 条正则`);
+                rulesSelected = new Set(); rulesExportHint = false; renderRules();
+                return;
+            }
+            let group;
+            if (action === 'move') {
+                group = await askRuleGroup(`把选中的 ${ids.length} 条规则移到`);
+                if (group == null) return;
+            }
+            if (action === 'delete' && !confirm(`删除选中的 ${ids.length} 条规则？`)) return;
+            const done = await TavernSync.batchCleanRules(ids, action, group);
+            const verb = { enable: '开启了', disable: '关闭了', move: '移动了', delete: '删除了' }[action];
+            showToast(`${verb} ${done} 条规则`);
+            rulesSelected = new Set(); rulesExportHint = false; renderRules();
+        }));
+    }
+
     function renderRules() {
         const cfg = TavernSync.getConfig();
         const rules = cfg.cleanRules || [];
+        // 很老的规则可能没有编号，多选要靠编号认规则，补上
+        if (rules.some(r => !r.id)) {
+            rules.forEach((r, i) => { if (!r.id) r.id = `rule_${Date.now()}_${i}`; });
+            TavernSync.saveConfig(cfg);
+        }
+        if (!rules.length) rulesSelected = null;
+        if (rulesSelected) rulesSelected = new Set([...rulesSelected].filter(id => rules.some(r => r.id === id)));
+        renderRuleTools(rules);
         if (!rules.length) { rulesList.innerHTML = '<div style="text-align:center; color:#888; font-size:12px; padding:10px;">暂无规则，文字原样同步和推送。</div>'; return; }
+        const multi = !!rulesSelected;
         // 哪些分组收起来了：只是看着方便，记在这个浏览器里就行
         let collapsed = [];
         try { collapsed = JSON.parse(localStorage.getItem('tavernSyncRuleGroupsCollapsed') || '[]') || []; } catch (e) { collapsed = []; }
         const off = new Set(cfg.ruleGroupsOff || []);
         const ruleRow = (r) => {
             const i = rules.indexOf(r);
+            const picked = multi && rulesSelected.has(r.id);
             return `
-            <div style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(128,128,128,0.08); border-radius:8px; margin-bottom:6px;">
-                <div style="flex:1; min-width:0; cursor:pointer;" data-edit="${i}">
-                    <div style="font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.name || '未命名')}</div>
+            <div ${multi ? `data-pick="${i}"` : ''} style="display:flex; align-items:center; gap:8px; padding:8px; background:${picked ? 'rgba(33,150,243,0.12)' : 'rgba(128,128,128,0.08)'}; border-radius:8px; margin-bottom:6px; ${multi ? 'cursor:pointer;' : ''}">
+                ${multi ? `<input type="checkbox" ${picked ? 'checked' : ''} style="flex-shrink:0; pointer-events:none;">` : ''}
+                <div style="flex:1; min-width:0; ${multi ? '' : 'cursor:pointer;'}" ${multi ? '' : `data-edit="${i}"`}>
+                    <div style="font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.name || '未命名')}${multi && !r.enabled ? '<span style="font-size:11px; color:#888; font-weight:normal;">（关着）</span>' : ''}</div>
                     <div style="font-size:11px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.mode === 'extract' ? '提取' : '排除'} · ${r.scope === 'pull' ? '同步' : r.scope === 'push' ? '推送' : '同步和推送'} · /${esc(r.regex)}/</div>
                 </div>
-                <label class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-toggle="${i}" ${r.enabled ? 'checked' : ''}><span class="kkt-slider"></span></label>
-                <button data-delrule="${i}" style="${TS.btnD} font-size:14px;">✕</button>
+                ${multi ? '' : `<label class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-toggle="${i}" ${r.enabled ? 'checked' : ''}><span class="kkt-slider"></span></label>
+                <button data-delrule="${i}" style="${TS.btnD} font-size:14px;">✕</button>`}
             </div>`;
         };
         const groups = TavernSync.ruleGroupsOf(cfg);
         rulesList.innerHTML = rules.filter(r => !r.group).map(ruleRow).join('') + groups.map((g, gi) => {
             const inGroup = rules.filter(r => r.group === g);
             const isCollapsed = collapsed.includes(g);
+            const nPicked = multi ? inGroup.filter(r => rulesSelected.has(r.id)).length : 0;
             return `
             <div style="border:1px solid #eee; border-radius:10px; padding:8px 8px 2px; margin-bottom:8px;">
                 <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                    ${multi ? `<input type="checkbox" data-gpick="${gi}" ${nPicked === inGroup.length ? 'checked' : ''} style="flex-shrink:0;">` : ''}
                     <div data-fold="${gi}" style="flex:1; min-width:0; cursor:pointer; display:flex; align-items:center; gap:6px;">
                         <span style="font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(g)}</span>
-                        <span style="font-size:11px; color:#888; white-space:nowrap; flex-shrink:0;">${inGroup.length} 条 · ${isCollapsed ? '展开' : '收起'}</span>
+                        <span style="font-size:11px; color:#888; white-space:nowrap; flex-shrink:0;">${multi && nPicked ? `选了 ${nPicked} / ${inGroup.length} 条` : `${inGroup.length} 条`} · ${isCollapsed ? '展开' : '收起'}</span>
                     </div>
-                    <button data-rename="${gi}" style="${TS.btnS} flex-shrink:0;">改名</button>
+                    ${multi ? '' : `<button data-rename="${gi}" style="${TS.btnS} flex-shrink:0;">改名</button>
                     <button data-delgroup="${gi}" style="${TS.btnS} flex-shrink:0;">删除</button>
-                    <label class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-gtoggle="${gi}" ${off.has(g) ? '' : 'checked'}><span class="kkt-slider"></span></label>
+                    <label class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-gtoggle="${gi}" ${off.has(g) ? '' : 'checked'}><span class="kkt-slider"></span></label>`}
                 </div>
                 <div style="${isCollapsed ? 'display:none;' : ''} padding-left:8px;">${inGroup.map(ruleRow).join('')}</div>
             </div>`;
         }).join('');
+        // 一部分勾上的分组，勾选框显示成“半选”
+        if (multi) rulesList.querySelectorAll('[data-gpick]').forEach(cb => {
+            const inGroup = rules.filter(r => r.group === groups[parseInt(cb.dataset.gpick)]);
+            const k = inGroup.filter(r => rulesSelected.has(r.id)).length;
+            cb.indeterminate = k > 0 && k < inGroup.length;
+        });
+        rulesList.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => {
+            const r = rules[parseInt(el.dataset.pick)];
+            if (rulesSelected.has(r.id)) rulesSelected.delete(r.id); else rulesSelected.add(r.id);
+            renderRules();
+        }));
+        rulesList.querySelectorAll('[data-gpick]').forEach(cb => cb.addEventListener('change', () => {
+            const inGroup = rules.filter(r => r.group === groups[parseInt(cb.dataset.gpick)]);
+            const allOn = inGroup.every(r => rulesSelected.has(r.id));
+            inGroup.forEach(r => { if (allOn) rulesSelected.delete(r.id); else rulesSelected.add(r.id); });
+            renderRules();
+        }));
         rulesList.querySelectorAll('[data-fold]').forEach(el => el.addEventListener('click', () => {
             const g = groups[parseInt(el.dataset.fold)];
             collapsed = collapsed.includes(g) ? collapsed.filter(x => x !== g) : [...collapsed, g];
@@ -4943,38 +5067,46 @@ function showRuleEditor(ruleIndex, onSave) {
 }
 
 // ========== 正则规则导出 / 导入弹窗 ==========
-function showExportRulesModal() {
-    const cfg = TavernSync.getConfig();
-    const rules = cfg.cleanRules || [];
-    if (!rules.length) { showToast('还没有规则可以导出'); return; }
-    const groups = TavernSync.ruleGroupsOf(cfg);
-    const ungrouped = rules.filter(r => !r.group).length;
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
-    overlay.classList.add('ts-overlay');
-    const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:360px;';
-    modal.innerHTML = `
-        <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">导出正则</h3>
-        <div style="margin-bottom:16px;"><label style="${TS.label}">导出哪些</label><select id="re-which" aria-label="导出哪些正则" title="导出哪些正则" style="${TS.input}">
-            <option value="__all__">全部（${rules.length} 条）</option>
-            ${ungrouped && groups.length ? `<option value="__none__">不分组的（${ungrouped} 条）</option>` : ''}
-            ${groups.map((g, i) => `<option value="${i}">分组「${esc(g)}」（${rules.filter(r => r.group === g).length} 条）</option>`).join('')}
-        </select></div>
-        <div style="display:flex; gap:10px;">
-            <button id="re-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
-            <button id="re-ok" style="flex:1; ${TS.btnP}">导出</button></div>`;
-    overlay.appendChild(modal); document.body.appendChild(overlay);
-    modal.querySelector('#re-cancel').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-    modal.querySelector('#re-ok').addEventListener('click', () => {
-        const v = modal.querySelector('#re-which').value;
-        const group = v === '__all__' ? null : v === '__none__' ? '' : groups[parseInt(v)];
-        const data = TavernSync.exportCleanRules(group);
-        const label = group == null ? '全部' : group === '' ? '不分组' : group;
-        downloadText(`酒馆互联正则_${label.replace(/[\\/:*?"<>|]/g, '_')}.json`, JSON.stringify(data, null, 2));
-        overlay.remove();
-        showToast(`已导出 ${data.rules.length} 条正则`);
+// 选一个规则分组（多选后「移动分组」用）：返回组名，'' = 不分组，点「取消」或外面返回 null
+function askRuleGroup(title) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.classList.add('ts-overlay');
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background:var(--bg-color, #1a1a2e); border-radius:16px; padding:20px; width:100%; max-width:320px;';
+        modal.innerHTML = `
+            <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">${esc(title)}</h3>
+            <select id="rg-group" aria-label="移到哪个分组" title="移到哪个分组" style="${TS.input} margin-bottom:14px;"></select>
+            <div style="display:flex; gap:10px;">
+                <button id="rg-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
+                <button id="rg-ok" style="flex:1; ${TS.btnP}">移动</button></div>`;
+        overlay.appendChild(modal); document.body.appendChild(overlay);
+        const select = modal.querySelector('#rg-group');
+        let pending = '';
+        let value = '';
+        function render() {
+            const groups = TavernSync.ruleGroupsOf(TavernSync.getConfig());
+            if (pending && !groups.includes(pending)) groups.push(pending);
+            select.innerHTML = '<option value="">不分组</option>'
+                + groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('')
+                + '<option value="__new__">＋ 新建分组…</option>';
+            select.value = value;
+        }
+        render();
+        select.addEventListener('change', async () => {
+            if (select.value !== '__new__') { value = select.value; return; }
+            // 先把下拉收起来、选项复原，再弹输入框；否则手机上列表会一直开着
+            try { select.blur(); } catch (e) { /* 收不起来也不影响 */ }
+            select.value = value;
+            const name = ((await askText('新分组的名字', '例如：删状态栏')) || '').trim();
+            if (name) { pending = name; value = name; }
+            render();
+        });
+        const done = (v) => { overlay.remove(); resolve(v); };
+        modal.querySelector('#rg-cancel').addEventListener('click', () => done(null));
+        modal.querySelector('#rg-ok').addEventListener('click', () => done(value));
+        overlay.addEventListener('click', e => { if (e.target === overlay) done(null); });
     });
 }
 
