@@ -3879,10 +3879,21 @@ function setupTavernSyncScreen() {
     // ===== 正则规则 =====
     // 多选：rulesSelected 不是 null 时处在多选状态，里面是勾上的规则编号（rule.id）
     let rulesSelected = null;
-    let rulesExportHint = false;
+    let rulesMode = 'multi';
     const rulesTools = mainEl.querySelector('#ts-rules-tools');
     const smallDisabled = (on) => on ? '' : 'disabled';
 
+    function exportRules(ids, total) {
+        const data = TavernSync.exportCleanRules(ids);
+        const groups = [...new Set(data.rules.map(r => r.group || ''))];
+        const label = data.rules.length === total ? '全部'
+            : (groups.length === 1 && groups[0]) ? groups[0] : `${data.rules.length}条`;
+        downloadText(`酒馆互联正则_${label.replace(/[\\/:*?"<>|]/g, '_')}.json`, JSON.stringify(data, null, 2));
+        showToast(`已导出 ${data.rules.length} 条正则`);
+    }
+
+    // 两种勾选状态：rulesMode = 'multi'（多选：开启、关闭、移动分组、删除，做完留在多选里）
+    //                         'export'（导出：一进来全部勾上，只有「导出」，导完就退出）
     function renderRuleTools(rules) {
         if (!rulesSelected) {
             rulesTools.innerHTML = `<div style="display:flex; gap:6px;">
@@ -3892,13 +3903,12 @@ function setupTavernSyncScreen() {
             </div>`;
             rulesTools.querySelector('#ts-rules-multi').addEventListener('click', () => {
                 if (!rules.length) { showToast('还没有规则'); return; }
-                rulesSelected = new Set(); rulesExportHint = false; renderRules();
+                rulesSelected = new Set(); rulesMode = 'multi'; renderRules();
             });
             rulesTools.querySelector('#ts-rules-import').addEventListener('click', () => mainEl.querySelector('#ts-import-rules-file').click());
-            // 导出也走多选：先全部勾上，把不要的取消掉再点「导出」
             rulesTools.querySelector('#ts-rules-export').addEventListener('click', () => {
                 if (!rules.length) { showToast('还没有规则可以导出'); return; }
-                rulesSelected = new Set(rules.map(r => r.id)); rulesExportHint = true; renderRules();
+                rulesSelected = new Set(rules.map(r => r.id)); rulesMode = 'export'; renderRules();
             });
             return;
         }
@@ -3906,41 +3916,40 @@ function setupTavernSyncScreen() {
         const any = n > 0;
         const allOn = any && n === rules.length;
         const dim = any ? '' : 'opacity:0.5; cursor:default;';
+        const exporting = rulesMode === 'export';
         const btnRs = 'padding:8px; border-radius:8px; border:none; background:rgba(244,67,54,0.15); color:#f66; font-size:13px; font-weight:500; cursor:pointer;';
-        rulesTools.innerHTML = `
-            <div style="border:1px solid #eee; border-radius:10px; padding:10px;">
-                <div style="display:flex; align-items:center; gap:6px;">
-                    <span style="flex:1; font-size:12px; color:#888;">已选 ${n} 条</span>
-                    <button id="ts-rules-all" style="${TS.btnS}">${allOn ? '取消全选' : '全选'}</button>
-                    <button id="ts-rules-done" style="${TS.btnS}">完成</button>
-                </div>
-                ${rulesExportHint ? '<div style="font-size:12px; color:#888; line-height:1.6; margin-top:6px;">已经全部勾上，把不想导出的取消掉，再点「导出」。</div>' : ''}
+        const actions = exporting ? `
+                <div style="font-size:12px; color:#888; line-height:1.6; margin-top:6px;">勾上要导出的规则，再点下面的「导出」。</div>
+                <div style="display:flex; margin-top:8px;">
+                    <button data-batch="export" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">导出</button>
+                </div>` : `
                 <div style="display:flex; gap:6px; margin-top:8px;">
                     <button data-batch="enable" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">开启</button>
                     <button data-batch="disable" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">关闭</button>
-                    <button data-batch="move" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">移动分组</button>
                 </div>
                 <div style="display:flex; gap:6px; margin-top:6px;">
-                    <button data-batch="export" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">导出</button>
+                    <button data-batch="move" ${smallDisabled(any)} style="flex:1; ${TS.btnG} ${dim}">移动分组</button>
                     <button data-batch="delete" ${smallDisabled(any)} style="flex:1; ${btnRs} ${dim}">删除</button>
-                </div>
+                </div>`;
+        rulesTools.innerHTML = `
+            <div style="border:1px solid #eee; border-radius:10px; padding:10px;">
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="flex:1; font-size:12px; color:#888;">${exporting ? '导出' : '多选'} · 已选 ${n} 条</span>
+                    <button id="ts-rules-all" style="${TS.btnS}">${allOn ? '取消全选' : '全选'}</button>
+                    <button id="ts-rules-done" style="${TS.btnS}">${exporting ? '取消' : '完成'}</button>
+                </div>${actions}
             </div>`;
         rulesTools.querySelector('#ts-rules-all').addEventListener('click', () => {
             rulesSelected = allOn ? new Set() : new Set(rules.map(r => r.id)); renderRules();
         });
-        rulesTools.querySelector('#ts-rules-done').addEventListener('click', () => { rulesSelected = null; rulesExportHint = false; renderRules(); });
+        rulesTools.querySelector('#ts-rules-done').addEventListener('click', () => { rulesSelected = null; renderRules(); });
         rulesTools.querySelectorAll('[data-batch]').forEach(btn => btn.addEventListener('click', async () => {
             const ids = rules.filter(r => rulesSelected.has(r.id)).map(r => r.id);
             if (!ids.length) return;
             const action = btn.dataset.batch;
             if (action === 'export') {
-                const data = TavernSync.exportCleanRules(ids);
-                const groups = [...new Set(data.rules.map(r => r.group || ''))];
-                const label = data.rules.length === rules.length ? '全部'
-                    : (groups.length === 1 && groups[0]) ? groups[0] : `${data.rules.length}条`;
-                downloadText(`酒馆互联正则_${label.replace(/[\\/:*?"<>|]/g, '_')}.json`, JSON.stringify(data, null, 2));
-                showToast(`已导出 ${data.rules.length} 条正则`);
-                rulesSelected = new Set(); rulesExportHint = false; renderRules();
+                exportRules(ids, rules.length);
+                rulesSelected = null; renderRules();
                 return;
             }
             let group;
@@ -3952,7 +3961,7 @@ function setupTavernSyncScreen() {
             const done = await TavernSync.batchCleanRules(ids, action, group);
             const verb = { enable: '开启了', disable: '关闭了', move: '移动了', delete: '删除了' }[action];
             showToast(`${verb} ${done} 条规则`);
-            rulesSelected = new Set(); rulesExportHint = false; renderRules();
+            rulesSelected = new Set(); renderRules();
         }));
     }
 
