@@ -3668,7 +3668,7 @@ function setupTavernSyncScreen() {
                         <div>推送：只对以后推送的消息起作用，已经推到酒馆的不会变。想换掉，用「推送/清理消息」里的「清理酒馆」删掉再重新推。</div>
                         <div style="font-size:13px; color:inherit; margin:10px 0 2px;">其他</div>
                         <div>被规则改过的酒馆剧情，在小手机里编辑后不能写回酒馆，因为写回会把被删掉的那部分从酒馆原文里一起弄丢。</div>
-                        <div>这里和 yuan 自带的「正则过滤」不是一回事：那个是在小手机 AI 的回复存进小手机之前处理，删掉的内容在小手机里也看不到了。</div>
+                        <div>这里和小手机自带的「正则过滤」不是一回事：那个是在小手机 AI 的回复存进小手机之前处理，删掉的内容在小手机里也看不到了。</div>
                     </div>
                     <div id="ts-rules-tools" style="margin-bottom:10px;"></div>
                     <div id="ts-rules-list"></div>
@@ -3763,7 +3763,7 @@ function setupTavernSyncScreen() {
                     <option value="none" ${callMode === 'none' ? 'selected' : ''}>不推送</option>
                 </select>
             </label>
-            <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">总结 = yuan 自动写的那段通话总结；记录 = 通话过程中的每一句话。前三种都带“打了多久”。</div>
+            <div style="font-size:12px; color:#888; margin-top:4px; line-height:1.6;">总结 = 小手机自动写的那段通话总结；记录 = 通话过程中的每一句话。前三种都带“打了多久”。</div>
             <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; font-size:13px; cursor:pointer;">
                 <div>
                     <div>推送状态栏到酒馆</div>

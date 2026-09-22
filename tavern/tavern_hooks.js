@@ -12,7 +12,7 @@
     const HOOKS_VERSION = '2026-09-22 e';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
-        const text = `挂载失败：${what}。可能是 yuan 更新后改了结构，需要调整 tavern/tavern_hooks.js。`;
+        const text = `挂载失败：${what}。可能是小手机更新后改了结构，需要调整 tavern/tavern_hooks.js。`;
         // 记到“酒馆互联”页面顶部的问题记录里（手机上看控制台不方便）
         if (window.TavernSync && typeof window.TavernSync.reportIssue === 'function') window.TavernSync.reportIssue(text);
         else console.error(`${TAG} ${text}`);
@@ -53,7 +53,7 @@
             <span class="menu-item-label">酒馆互联</span>`;
         item.addEventListener('click', () => {
             if (typeof window.setupTavernSyncScreen !== 'function') return fail('tavern_sync.js 没有加载成功');
-            if (typeof switchScreen !== 'function') return fail('找不到 yuan 的页面切换函数 switchScreen');
+            if (typeof switchScreen !== 'function') return fail('找不到小手机的页面切换函数 switchScreen');
             window.setupTavernSyncScreen();
             switchScreen('tavern-sync-screen');
         });
@@ -113,7 +113,7 @@
     // yuan 用 showPanel('function') 打开“+”面板。在它外面套一层：打开前先决定按钮显不显示
     function hookShowPanel() {
         if (typeof window.showPanel !== 'function') {
-            return fail('找不到 yuan 的面板函数 showPanel，聊天页的「推送酒馆」按钮不会显示');
+            return fail('找不到小手机的面板函数 showPanel，聊天页的「推送酒馆」按钮不会显示');
         }
         const originalShowPanel = window.showPanel;
         window.showPanel = function (type) {
@@ -139,7 +139,7 @@
 
     function hookSystemPrompt() {
         if (typeof window.generatePrivateSystemPrompt !== 'function') {
-            return fail('找不到 yuan 的提示词函数 generatePrivateSystemPrompt，AI 将看不到酒馆剧情');
+            return fail('找不到小手机的提示词函数 generatePrivateSystemPrompt，AI 将看不到酒馆剧情');
         }
         const originalGenerate = window.generatePrivateSystemPrompt;
         window.generatePrivateSystemPrompt = function (character) {
@@ -168,7 +168,7 @@
 
     function hookRegenerate() {
         if (typeof window.handleRegenerate !== 'function') {
-            return fail('找不到 yuan 的重新生成函数 handleRegenerate，「重新生成」会删掉后面的酒馆剧情（下次同步会恢复），旧回复也会从酒馆删掉');
+            return fail('找不到小手机的重新生成函数 handleRegenerate，「重新生成」会删掉后面的酒馆剧情（下次同步会恢复），旧回复也会从酒馆删掉');
         }
         const originalRegenerate = window.handleRegenerate;
         window.handleRegenerate = function () {
@@ -284,7 +284,7 @@
     // 在它外面套一层：处理“重新生成”（见上面），私聊回复成功后按“自动推送”设置推到酒馆。
     function hookAiReply() {
         if (typeof window.getAiReply !== 'function') {
-            return fail('找不到 yuan 的回复函数 getAiReply，“AI 回复后自动推送”将不起作用');
+            return fail('找不到小手机的回复函数 getAiReply，“AI 回复后自动推送”将不起作用');
         }
         const originalGetAiReply = window.getAiReply;
         window.getAiReply = async function (chatId, chatType) {
@@ -329,7 +329,7 @@
 
     function hookSendMessage() {
         if (typeof window.sendMessage !== 'function') {
-            return fail('找不到 yuan 的发送消息函数 sendMessage，你自己发的消息要等 AI 回复后才会推到酒馆');
+            return fail('找不到小手机的发送消息函数 sendMessage，你自己发的消息要等 AI 回复后才会推到酒馆');
         }
         const originalSend = window.sendMessage;
         window.sendMessage = async function () {
@@ -477,7 +477,7 @@
 
     function hookBubbleRender() {
         if (typeof window.createMessageBubbleElement !== 'function') {
-            return fail('找不到 yuan 画消息的函数 createMessageBubbleElement，酒馆楼层会显示成普通消息');
+            return fail('找不到小手机画消息的函数 createMessageBubbleElement，酒馆楼层会显示成普通消息');
         }
         const originalCreate = window.createMessageBubbleElement;
         window.createMessageBubbleElement = function (message) {
@@ -659,7 +659,7 @@
     // 在它外面套一层：整理完之后，把酒馆楼层换成“包裹后的原文”或“柏宝书摘要”（规则见 TavernSync.prepareHistoryForAI）。
     function hookHistoryFilter() {
         if (typeof window.filterHistoryForAI !== 'function') {
-            return fail('找不到 yuan 整理聊天记录的函数 filterHistoryForAI，酒馆楼层会以未处理的原文发给 AI');
+            return fail('找不到小手机整理聊天记录的函数 filterHistoryForAI，酒馆楼层会以未处理的原文发给 AI');
         }
         const originalFilter = window.filterHistoryForAI;
         window.filterHistoryForAI = function (chat) {
@@ -711,7 +711,7 @@
     function hookMsgVersion() {
         const mv = (typeof MsgVersion !== 'undefined') ? MsgVersion : null;
         if (!mv || typeof mv.restoreVersion !== 'function') {
-            return fail('找不到 yuan 的消息版本功能 MsgVersion.restoreVersion，切换旧版本后酒馆剧情可能会重复');
+            return fail('找不到小手机的消息版本功能 MsgVersion.restoreVersion，切换旧版本后酒馆剧情可能会重复');
         }
         const originalRestore = mv.restoreVersion.bind(mv);
         mv.restoreVersion = async function (userMsgId, versionIndex) {
@@ -747,7 +747,7 @@
     // 做法：画列表的时候临时把酒馆剧情从聊天记录里拿掉，画完立刻放回去——只影响这一次画面，不动数据。
     function hookChatList() {
         if (typeof window.renderChatList !== 'function') {
-            return fail('找不到 yuan 画角色列表的函数 renderChatList，酒馆剧情会被当成列表里的最新消息');
+            return fail('找不到小手机画角色列表的函数 renderChatList，酒馆剧情会被当成列表里的最新消息');
         }
         const originalRenderChatList = window.renderChatList;
         window.renderChatList = function () {
@@ -781,7 +781,7 @@
     // 能不能安全写回由 TavernSync.writeBackFloorEdit 判断（已精简、酒馆那边也改过、被清洗规则改过等情况都不写）。
     function hookMessageEdit() {
         if (typeof window.saveMessageEdit !== 'function') {
-            return fail('找不到 yuan 的保存编辑函数 saveMessageEdit，在调试里改了酒馆剧情不会写回酒馆');
+            return fail('找不到小手机的保存编辑函数 saveMessageEdit，在调试里改了酒馆剧情不会写回酒馆');
         }
         const originalSaveEdit = window.saveMessageEdit;
         window.saveMessageEdit = async function () {
@@ -846,7 +846,7 @@
 
     function hookCallSummary() {
         if (typeof window.generateCallSummary !== 'function') {
-            return fail('找不到 yuan 的通话总结函数 generateCallSummary，通话总结生成后不会补进酒馆里那条记录');
+            return fail('找不到小手机的通话总结函数 generateCallSummary，通话总结生成后不会补进酒馆里那条记录');
         }
         const originalCallSummary = window.generateCallSummary;
         window.generateCallSummary = async function (chat) {
@@ -873,7 +873,7 @@
     // 这个监听比 main.js 的注册得早，所以会赶在 yuan 读取数据（loadData）之前执行。
     function registerSettingKey() {
         if (typeof globalSettingKeys === 'undefined' || !Array.isArray(globalSettingKeys)) {
-            return fail('找不到 yuan 的设置名单 globalSettingKeys，酒馆互联设置将无法保存');
+            return fail('找不到小手机的设置名单 globalSettingKeys，酒馆互联设置将无法保存');
         }
         if (!globalSettingKeys.includes('tavernSync')) globalSettingKeys.push('tavernSync');
     }
