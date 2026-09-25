@@ -393,6 +393,7 @@ const loadData = async () => {
             imageRecognitionApiPresets: [],
             stickerRecognitionApiPresets: [],
             bubbleCssPresets: [],
+            chatAppearancePresets: [],
             myPersonaPresets: [],
             fontPresets: [],
             globalCss: '',

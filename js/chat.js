@@ -359,9 +359,27 @@ function setupChatRoom() {
 
     const abortReplyBtn = document.getElementById('abort-reply-btn');
     if (abortReplyBtn) {
-        abortReplyBtn.addEventListener('click', () => {
-            if (typeof currentReplyAbortController !== 'undefined' && currentReplyAbortController) {
+        abortReplyBtn.addEventListener('click', async () => {
+            const hadLiveController = typeof currentReplyAbortController !== 'undefined' && !!currentReplyAbortController;
+            if (hadLiveController) {
                 currentReplyAbortController.abort();
+            }
+            let clearedPersistedTask = false;
+            if (window.ReplyResilience && typeof window.ReplyResilience.cancelForChat === 'function') {
+                try {
+                    clearedPersistedTask = await window.ReplyResilience.cancelForChat(currentChatId, currentChatType);
+                } catch (error) {
+                    console.warn('[ReplyResilience] could not cancel persisted reply:', error);
+                }
+            }
+            if (hadLiveController || clearedPersistedTask) {
+                isGenerating = false;
+                getReplyBtn.disabled = false;
+                regenerateBtn.disabled = false;
+                if (typingIndicator && typingIndicator.getAttribute('data-theater-generating') !== 'true') {
+                    typingIndicator.style.display = 'none';
+                }
+                if (!hadLiveController && typeof showToast === 'function') showToast('已暂停调用');
             }
         });
     }

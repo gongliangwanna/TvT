@@ -92,8 +92,7 @@ const defaultIcons = {
     'magic-room-screen': {name: '魔法屋', url: 'https://i.postimg.cc/hPCcZG3v/png-(143).png'},
     'appearance-settings-screen': {name: '外观设置', url: 'https://i.postimg.cc/KcgT1wzQ/DF424409FC54EDFF74D78ECB1311E1D7.png'},
     'theater-screen': {name: '小剧场', url: 'https://i.postimg.cc/t4gXjG8P/7632D362A35EC703E7A81F6FF0F8AE34.png'},
-    'biekan-app': {name: 'MCP', url: 'https://i.postimg.cc/5y6G7fn4/5A615115038157EA857BB5D4D8E54EC7.png'},
-    'xiaowu-app': {name: '小屋', url: 'https://i.postimg.cc/T1pS7TCw/9679677EBE50220F4B5BFE21575E096E.png'}
+    'biekan-app': {name: 'MCP', url: 'https://i.postimg.cc/5y6G7fn4/5A615115038157EA857BB5D4D8E54EC7.png'}
 };
 
 const peekScreenApps = {
@@ -163,7 +162,7 @@ const DEFAULT_COT_PRESETS = [
 
 const globalSettingKeys = [
     'apiSettings', 'summaryApiSettings', 'backgroundApiSettings', 'supplementPersonaApiSettings', 'peekApiSettings', 'vectorApiSettings', 'apiNodes', 'apiNodeRoutes', 'imageRecognitionEnabled', 'imageRecognitionApiSettings', 'stickerRecognitionApiSettings', 'wallpaper', 'globalChatWallpaper', 'globalCallWallpaper', 'homeScreenMode', 'fontUrl', 'localFontName', 'customIcons', 'customAppNames', 'namePresets',
-    'apiPresets', 'summaryApiPresets', 'backgroundApiPresets', 'supplementPersonaApiPresets', 'peekApiPresets', 'vectorApiPresets', 'imageRecognitionApiPresets', 'stickerRecognitionApiPresets', 'bubbleCssPresets', 'myPersonaPresets', 'globalCss',
+    'apiPresets', 'summaryApiPresets', 'backgroundApiPresets', 'supplementPersonaApiPresets', 'peekApiPresets', 'vectorApiPresets', 'imageRecognitionApiPresets', 'stickerRecognitionApiPresets', 'bubbleCssPresets', 'chatAppearancePresets', 'myPersonaPresets', 'globalCss',
     'globalCssPresets', 'fontPresets', 'homeSignature', 'forumPosts', 'forumBindings', 'forumUserProfile', 'forumSettings', 'forumApiSettings', 'forumMessages', 'forumStrangerProfiles', 'forumFriendRequests', 'forumPendingRequestFromUser', 'forumAltAccounts', 'forumActiveAccountId', 'forumAccountStates', 'forumRelationships', 'forumKnowledge', 'forumSocialEdges', 'forumStoryThreads', 'forumEvents', 'forumNotifications', 'forumDrafts', 'forumSchemaVersion', 'pomodoroTasks', 'pomodoroSettings', 'insWidgetSettings', 'homeWidgetSettings',
     'chatFolders', 'fontSizeScale', 'activePersonaId', 'moreProfileCardBg', 'statusBarPresets', 'regexFilterPresets', 'themeSettings', 'themePresets', 'savedKeyboardHeight',
     'globalSendSound', 'globalReceiveSound', 'globalMessageSentSound', 'globalIncomingCallSound', 'multiMsgSoundEnabled', 'soundPresets', 'galleryPresets', 'iconPresets', 'homeWidgetPresets', 'widgetWallpaperPresets', 'voicePresets', 'fontBuffer',
@@ -177,14 +176,25 @@ const globalSettingKeys = [
     'imageAtmosphereGroups', 'activeImageAtmosphereId', 'novelAiVibeSettings', 'novelAiPreciseReferenceSettings',
     'avatarRecognitionDetailLevel', 'autoCompressImage', 'imageGenTimeout',
     'phoneControlRecycleBin', 'nodeTemplates', 'nodeSummaryText', 'memoryTableTemplates', 'vectorMemoryTemplates',
-    'nightModeSettings', 'homeStatusBarSettings', 'stickerCategories', 'magicRoom',
+    'nightModeSettings', 'homeStatusBarSettings', 'homeLayoutMode', 'freeHomeLayout', 'freeHomeWidgetPresets', 'stickerCategories', 'magicRoom',
     'keepAliveCodeEnabled', 'keepAliveAutoWakeEnabled', 'keepAliveAudioEnabled', 'keepAliveAudioSrc', 'keepAliveAudioName', 'keepAliveAudioLibrary',
     'ttsPresets', 'weatherApiSettings'
 ];
 if (typeof window !== 'undefined') window.globalSettingKeysForBackup = globalSettingKeys;
 
-const appVersion = "6.9.0";
+const appVersion = "6.9.1";
 const updateLog = [
+    {
+        version: "6.9.1",
+        date: "2026-09-23",
+        notes: [
+            "修复偶尔卡在“输入中”的问题。",
+            "修复私聊中表情包显示不正确的问题。",
+            "修复刷新后未返回首页的问题。",
+            "新增“清除聊天 CSS”功能。",
+            "新增自由模式和自定义小组件，使用方式更灵活。"
+        ]
+    },
     {
         version: "6.9.0",
         date: "2026-09-18",
@@ -787,6 +797,7 @@ var db = {
     peekApiPresets: [],
     vectorApiPresets: [],
     bubbleCssPresets: [],
+    chatAppearancePresets: [],
     myPersonaPresets: [],
     fontPresets: [],
     forumPosts: [],

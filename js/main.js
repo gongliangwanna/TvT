@@ -281,7 +281,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-// === 全局救援手势 (三击清空全局CSS) ===
+// === 全局救援手势 (五击打开样式救援) ===
 // 将变量提升到顶层，防止混淆器错误处理闭包作用域
 let globalRescueClickCount = 0;
 let globalRescueLastClickTime = 0;
@@ -310,10 +310,65 @@ function setupGlobalRescueGesture() {
     }, true); // 使用捕获阶段，确保尽早触发
 }
 
+function getRescueChatTarget() {
+    if (typeof currentChatId === 'undefined' || typeof currentChatType === 'undefined') return null;
+    const type = currentChatType;
+    if (type !== 'private' && type !== 'group') return null;
+    const chat = (type === 'private' ? db.characters : db.groups).find(item => item.id === currentChatId);
+    return chat ? { chat, type } : null;
+}
+
+async function clearRescueCss(target = null) {
+    const label = target ? '当前聊天美化' : '全局 CSS';
+    if (!confirm(`确定要清空${label}吗？此操作不可撤销。`)) return false;
+
+    // 先解除页面样式，存储缓慢或失败也不应阻止用户脱困。
+    if (target) {
+        target.chat.customBubbleCss = '';
+        target.chat.useCustomBubbleCss = false;
+        updateCustomBubbleStyle(target.chat.id, '', false);
+        const prefix = target.type === 'private' ? 'setting-' : 'setting-group-';
+        const textarea = document.getElementById(`${prefix}custom-bubble-css`);
+        const checkbox = document.getElementById(`${prefix}use-custom-css`);
+        if (textarea) {
+            textarea.value = '';
+            textarea.disabled = true;
+        }
+        if (checkbox) checkbox.checked = false;
+        // 设置页中的预览也可能包含导致页面错乱的 CSS。
+        const preview = document.getElementById(`${target.type === 'private' ? 'private' : 'group'}-bubble-css-preview`);
+        if (preview) preview.innerHTML = '';
+    } else {
+        db.globalCss = '';
+        applyGlobalCss('');
+        const textarea = document.getElementById('global-beautification-css');
+        if (textarea) textarea.value = '';
+    }
+
+    showToast(`${label}已在当前页面清除，正在保存…`);
+    try {
+        // 只更新救援涉及的字段，保留聊天内容、其他会话和预设。
+        if (target) {
+            const table = target.type === 'private' ? dexieDB.characters : dexieDB.groups;
+            const updated = await table.update(target.chat.id, { customBubbleCss: '', useCustomBubbleCss: false });
+            if (!updated) throw new Error('聊天记录不存在');
+        } else {
+            await dexieDB.globalSettings.put({ key: 'globalCss', value: '' });
+        }
+        showToast(`${label}已清空并保存。`);
+        return true;
+    } catch (error) {
+        console.error('[StyleRescue] 保存失败:', error);
+        showToast(`${label}已在当前页面清除，但保存失败；刷新后可能恢复，请重试。`, 6000);
+        return false;
+    }
+}
+
 function showGlobalRescuePanel() {
     // 防止重复创建
     if (document.getElementById('global-rescue-panel')) return;
 
+    const target = getRescueChatTarget();
     const panel = document.createElement('div');
     panel.id = 'global-rescue-panel';
     panel.style.cssText = `
@@ -329,33 +384,35 @@ function showGlobalRescuePanel() {
             <div style="width: 60px; height: 60px; background: #ffebee; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 15px;">
                 <svg style="width: 32px; height: 32px; color: #d32f2f;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
             </div>
-            <h3 style="margin: 0 0 10px; color: #333; font-size: 18px;">全局样式救援</h3>
+            <h3 style="margin: 0 0 10px; color: #333; font-size: 18px;">样式救援</h3>
             <p style="margin: 0 0 20px; color: #666; font-size: 14px; line-height: 1.5;">
                 检测到您快速点击了五次屏幕。<br>
-                如果因为错误的全局 CSS 导致界面错乱，您可以在这里一键清空。
+                全局 CSS 与聊天美化独立生效，请清空导致界面错乱的样式。若两者都有问题，可分别清空。
             </p>
             <div style="display: flex; flex-direction: column; gap: 10px;">
-                <button id="rescue-clear-btn" style="background: #d32f2f; color: #fff; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">清空全局 CSS</button>
-                <button id="rescue-cancel-btn" style="background: #f5f5f5; color: #666; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">取消</button>
+                <button id="rescue-clear-btn" style="background: #d32f2f; color: #fff; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">仅清空全局 CSS</button>
+                ${target ? '<button id="rescue-clear-chat-btn" style="background: #d32f2f; color: #fff; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">清空当前聊天美化</button>' : ''}
+                <button id="rescue-cancel-btn" style="background: #f5f5f5; color: #666; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">关闭</button>
             </div>
         </div>
     `;
 
     document.body.appendChild(panel);
 
-    document.getElementById('rescue-clear-btn').onclick = async () => {
-        if (confirm('确定要清空全局 CSS 吗？此操作不可撤销。')) {
-            db.globalCss = '';
-            await saveData();
-            applyGlobalCss('');
-            // 更新设置页面的文本框（如果存在）
-            const textarea = document.getElementById('global-beautification-css');
-            if (textarea) textarea.value = '';
-            
-            showToast('全局 CSS 已清空，界面应已恢复正常。');
-            panel.remove();
-        }
+    const bindClearButton = (id, chatTarget) => {
+        const button = document.getElementById(id);
+        if (!button) return;
+        button.onclick = async () => {
+            button.disabled = true;
+            try {
+                await clearRescueCss(chatTarget);
+            } finally {
+                button.disabled = false;
+            }
+        };
     };
+    bindClearButton('rescue-clear-btn', null);
+    bindClearButton('rescue-clear-chat-btn', target);
 
     document.getElementById('rescue-cancel-btn').onclick = () => {
         panel.remove();

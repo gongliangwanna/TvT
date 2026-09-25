@@ -16,6 +16,21 @@ function setupCustomizeApp() {
     customizeForm.addEventListener('click', async (e) => {
         const target = e.target;
 
+        if (target.closest('[data-home-layout-mode]')) {
+            freeHomeSwitchMode(target.closest('[data-home-layout-mode]').dataset.homeLayoutMode);
+            return;
+        }
+        if (target.closest('#free-home-open-editor')) {
+            freeHomeEditing = true;
+            switchScreen('home-screen');
+            setupHomeScreen();
+            return;
+        }
+        if (target.closest('#free-home-copy-classic')) {
+            freeHomeCopyClassicWidgets();
+            return;
+        }
+
         // 分段标签页切换
         const tabBtn = target.closest('.cust-tab-btn');
         if (tabBtn) {
@@ -697,7 +712,7 @@ function renderCustomizeForm() {
     const iconOrder = [
         'chat-list-screen', 'api-settings-screen', 'wallpaper-screen',
         'world-book-screen', 'customize-screen', 'tutorial-screen',
-        'day-mode-btn', 'night-mode-btn', 'forum-screen', 'music-screen', 'diary-screen', 'piggy-bank-screen', 'pomodoro-screen', 'storage-analysis-screen', 'appearance-settings-screen', 'theater-screen', 'biekan-app', 'xiaowu-app', 'magic-room-screen'
+        'day-mode-btn', 'night-mode-btn', 'forum-screen', 'music-screen', 'diary-screen', 'piggy-bank-screen', 'pomodoro-screen', 'storage-analysis-screen', 'appearance-settings-screen', 'theater-screen', 'biekan-app', 'magic-room-screen'
     ];
 
     // 1. 顶部纯白分段控制器 Segmented Tab Bar
@@ -789,6 +804,17 @@ function renderCustomizeForm() {
     // 3. 标签页 2：桌面方案与小部件
     const paneDesktopHTML = `
     <div class="cust-tab-pane" id="cust-pane-desktop">
+        <div class="cust-card">
+            <div class="cust-card-header"><div>
+                <h3 class="cust-card-title">主屏布局</h3>
+                <p class="cust-card-subtitle">经典布局保留现有作品；自由布局可拖动 APP、小组件并管理页面。</p>
+            </div></div>
+            <div class="cust-btn-group home-layout-choices">
+                <button type="button" class="cust-btn ${db.homeLayoutMode !== 'free' ? 'cust-btn-primary' : ''}" data-home-layout-mode="classic">经典布局</button>
+                <button type="button" class="cust-btn ${db.homeLayoutMode === 'free' ? 'cust-btn-primary' : ''}" data-home-layout-mode="free">自由布局</button>
+            </div>
+            ${db.homeLayoutMode === 'free' ? '<div class="cust-btn-group"><button type="button" id="free-home-open-editor" class="cust-btn">前往编辑主屏</button><button type="button" id="free-home-copy-classic" class="cust-btn">加入经典小组件</button></div>' : ''}
+        </div>
         <div class="cust-card">
             <div class="cust-card-header">
                 <div>

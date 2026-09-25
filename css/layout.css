@@ -851,6 +851,125 @@ body.night-mode-active code {
     font-weight: 500;
 }
 
+/* 自由主屏幕仅在选中该布局时生效，经典布局样式保持原样。 */
+#home-screen.free-home-active { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+.free-home-toolbar { display: flex; justify-content: space-between; align-items: center; min-height: 34px; padding: 0 13px; flex-shrink: 0; }
+.free-home-toolbar:empty { display: none; }
+.free-home-toolbar-btn, .free-home-pages-btn { appearance: none; border: 0; border-radius: 15px; background: rgba(255,255,255,.36); color: var(--text-color); backdrop-filter: blur(12px); font: inherit; font-size: 12px; padding: 6px 11px; cursor: pointer; }
+.free-home-toolbar-btn:disabled { opacity: .4; }
+.free-home-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: pan-y; }
+.free-home-track { display: flex; height: 100%; transition: transform .32s cubic-bezier(.22,.8,.25,1); will-change: transform; }
+.free-home-page { flex: 0 0 100%; width: 100%; height: 100%; padding: 12px 12px 0; box-sizing: border-box; overflow: hidden; }
+.free-home-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); grid-template-rows: repeat(4,minmax(0,1fr)); grid-auto-flow: row dense; gap: clamp(5px,2vw,12px); width: 100%; height: 100%; }
+.free-home-tile { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 4px; box-sizing: border-box; user-select: none; -webkit-user-select: none; touch-action: none; cursor: pointer; transition: transform .18s ease, opacity .18s ease; }
+.free-home-tile .icon-img { width: min(54px,100%); height: auto; aspect-ratio: 1; margin: 0 0 5px; pointer-events: none; }
+.free-home-tile .app-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; color: var(--text-color); font-size: clamp(10px,2.8vw,12px); text-shadow: 0 1px 3px rgba(0,0,0,.25); pointer-events: none; }
+.free-home-widget-square { grid-column: span 2; grid-row: span 2; }
+.free-home-widget-wide { grid-column: span 4; grid-row: span 2; }
+.free-home-widget-content { width: 100%; height: 100%; min-height: 0; border-radius: 19px; overflow: hidden; background: rgba(255,255,255,.48); backdrop-filter: blur(14px); box-shadow: 0 5px 16px rgba(0,0,0,.11); box-sizing: border-box; padding: 13px; display: flex; flex-direction: column; justify-content: center; gap: 5px; color: var(--text-color); }
+.free-home-classic-widget { justify-content: center; padding: 0; overflow: visible; }
+.free-home-memory-stage { position: absolute; left: 50%; top: 50%; width: 354px; height: 230px; transform: translate(-50%, -50%) scale(var(--free-home-memory-scale, 1)); transform-origin: center; pointer-events: none; }
+.free-home-memory-stage .home-widget-container { position: absolute; left: 62px; top: 16px; width: 230px; height: 150px; margin: 0; }
+.free-home-memory-stage .central-circle:hover, .free-home-memory-stage .satellite-oval:hover { transform: none; }
+.free-home-kind-ins .app-grid-widget { width: 85%; height: 85%; }
+.free-home-kind-photo .heart-photo-widget { grid-column: auto; grid-row: auto; width: 60%; height: auto; margin: 0; align-self: center; justify-self: center; }
+.free-home-kind-photo .heart-photo-widget::after { background-image: var(--free-home-photo-image); }
+.free-home-clock { font-size: clamp(31px,9vw,48px); line-height: 1.1; }
+.free-home-date { font-size: 12px; }
+.free-home-photo, .free-home-memory-image { flex: 1; min-height: 0; background-size: cover; background-position: center; border-radius: 12px; }
+.free-home-memory-image { border-radius: 50%; width: 60px; max-height: 60px; aspect-ratio: 1; flex: none; }
+.free-home-note { font-size: 14px; line-height: 1.4; overflow: hidden; overflow-wrap: anywhere; }
+.free-home-folder-preview { display: grid; grid-template-columns: repeat(2,1fr); grid-template-rows: repeat(2,1fr); gap: 3px; width: min(54px,100%); aspect-ratio: 1; padding: 5px; box-sizing: border-box; border-radius: 15px; background: rgba(255,255,255,.45); backdrop-filter: blur(10px); margin-bottom: 5px; pointer-events: none; }
+.free-home-folder-preview img { width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: cover; border-radius: 5px; }
+.free-home-tile-manage { display: none; position: absolute; top: 4px; right: 4px; border: 0; border-radius: 50%; width: 26px; height: 26px; background: rgba(255,255,255,.9); color: #333; font-size: 16px; z-index: 2; }
+.free-home-editing .free-home-tile-manage { display: block; }
+.free-home-editing .free-home-tile:not(.free-home-origin) { animation: free-home-wiggle 180ms ease-in-out infinite alternate; }
+.free-home-placing .free-home-tile { animation: none !important; }
+@keyframes free-home-wiggle { from { transform: rotate(-1deg); } to { transform: rotate(1deg); } }
+.free-home-origin { opacity: .35; }
+.free-home-swap-target, .free-home-folder-pending { outline: 2px solid rgba(255,255,255,.9); outline-offset: 2px; border-radius: 16px; }
+.free-home-folder-pending::after, .free-home-folder-ready::after { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); padding: 2px 5px; border-radius: 7px; background: rgba(35,35,35,.82); color: #fff; font-size: 9px; white-space: nowrap; pointer-events: none; }
+.free-home-folder-pending::after { content: '换位 · 停留建夹'; }
+.free-home-folder-ready { outline: 3px solid #fff; outline-offset: 2px; border-radius: 16px; transform: scale(1.07); }
+.free-home-editing .free-home-folder-ready { animation: none; }
+.free-home-folder-ready::after { content: '松手建夹'; }
+.free-home-insert-before { border-left: 3px solid #fff; }
+.free-home-insert-after { border-right: 3px solid #fff; }
+.free-home-drag-ghost { position: fixed; top: 0; left: 0; z-index: 20000; pointer-events: none; opacity: .92; filter: drop-shadow(0 13px 14px rgba(0,0,0,.28)); transition: none; }
+.free-home-placement-preview { z-index: 3; pointer-events: none; opacity: 1; transition: grid-row .15s ease, grid-column .15s ease, opacity .15s ease; }
+.free-home-placement-preview::before { content: '✓'; position: absolute; top: 2px; left: 2px; z-index: 5; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: rgba(255,255,255,.9); color: #333; font-size: 11px; box-shadow: 0 1px 5px rgba(0,0,0,.15); }
+.free-home-placement-preview .free-home-tile-manage { display: none; }
+.free-home-placement-invalid { opacity: .55; }
+.free-home-placement-invalid::before { content: '×'; background: #f16475; color: #fff; }
+.free-home-drop-cell { pointer-events: none; z-index: 2; border: 2px dashed rgba(255,255,255,.94); border-radius: 15px; background: rgba(255,255,255,.13); box-sizing: border-box; }
+.free-home-drop-cell-invalid { border-color: #f16475; background: rgba(241,100,117,.13); }
+.free-home-page-controls { display: flex; flex-direction: column; align-items: center; gap: 7px; min-height: 26px; flex-shrink: 0; }
+.free-home-edit-actions { display: flex; align-items: center; justify-content: center; gap: 8px; max-width: 100%; }
+.free-home-dots { display: flex; align-items: center; gap: 7px; min-height: 15px; }
+.free-home-placement-bar { width: min(100%, 390px); display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 1px 9px; box-sizing: border-box; }
+.free-home-placement-hint { min-width: 0; flex: 1; text-align: center; font-size: 11px; color: var(--text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.free-home-placement-bar .free-home-pages-btn { flex: none; }
+.free-home-placement-bar .free-home-pages-btn:disabled { opacity: .45; }
+.free-home-dot { appearance: none; border: 0; border-radius: 50%; width: 7px; height: 7px; padding: 0; background: rgba(255,255,255,.48); }
+.free-home-dot.active { width: 9px; height: 9px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+#home-screen .free-home-dock { min-height: 68px; margin: 0 12px; gap: clamp(8px,4vw,20px); justify-content: space-around; }
+#home-screen .free-home-dock .icon-img { width: min(54px,13vw); height: auto; aspect-ratio: 1; }
+#home-screen.free-home-active.day-mode .free-home-tile .app-name { color: #fff; }
+.free-home-sheet-overlay { position: fixed; inset: 0; z-index: 18000; background: rgba(0,0,0,.38); display: flex; align-items: flex-end; justify-content: center; }
+.free-home-sheet-overlay.free-home-sheet-centered { align-items: center; padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); box-sizing: border-box; }
+.free-home-sheet { width: min(100%,480px); max-height: min(78vh,650px); overflow-y: auto; box-sizing: border-box; border-radius: 22px 22px 0 0; padding: 14px 16px calc(18px + env(safe-area-inset-bottom)); background: #fff; color: #222; box-shadow: 0 -8px 30px rgba(0,0,0,.14); }
+.free-home-sheet-centered .free-home-sheet { width: min(100%, 360px); max-height: min(76dvh, 590px); border-radius: 20px; padding: 15px 16px; box-shadow: 0 12px 34px rgba(0,0,0,.19); }
+.free-home-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 0 11px; font-size: 16px; }
+.free-home-sheet-close { appearance: none; border: 0; background: #f2f2f2; border-radius: 12px; padding: 6px 11px; font: inherit; font-size: 12px; }
+.free-home-sheet-row { appearance: none; border: 0; border-top: 1px solid #eee; width: 100%; background: transparent; display: flex; align-items: center; justify-content: space-between; gap: 9px; min-height: 44px; padding: 9px 2px; color: #222; font: inherit; font-size: 14px; text-align: left; }
+.free-home-sheet-row > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.free-home-sheet-row small { flex: none; max-width: 45%; font-size: 11px; color: #777; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.free-home-sheet-row.selected { color: #9b5367; background: #fff4f7; }
+.free-home-sheet-row:disabled { opacity: .4; }
+.free-home-sheet-subtitle { display: block; margin: 13px 0 5px; font-size: 13px; }
+.free-home-widget-choice { appearance: none; border: 0; border-top: 1px solid #eee; background: transparent; color: #222; width: 100%; min-width: 0; display: grid; grid-template-columns: 114px minmax(0,1fr); grid-template-rows: auto auto; align-items: center; gap: 2px 11px; padding: 8px 2px; font: inherit; font-size: 14px; text-align: left; }
+.free-home-widget-choice > .free-home-tile { grid-row: 1 / 3; grid-column: 1; width: 110px; height: 82px; padding: 0; pointer-events: none; animation: none; }
+.free-home-widget-choice .free-home-widget-content { border-radius: 12px; padding: 6px; }
+.free-home-widget-choice .free-home-clock { font-size: 18px; }
+.free-home-widget-choice .free-home-date { font-size: 8px; }
+.free-home-widget-choice .free-home-tile-manage { display: none; }
+.free-home-widget-choice > .free-home-tile { overflow: hidden; isolation: isolate; }
+.free-home-widget-choice > .free-home-kind-ins .app-grid-widget { position: absolute; left: 50%; top: 50%; width: 220px; height: 164px; margin: 0; transform: translate(-50%, -50%) scale(.48); transform-origin: center; }
+.free-home-widget-choice .ins-widget-bubble { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.free-home-widget-choice > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.free-home-widget-choice > small { grid-column: 2; color: #777; font-size: 11px; }
+.free-home-preset-row { display: flex; align-items: center; min-width: 0; border-top: 1px solid #eee; }
+.free-home-preset-row .free-home-widget-choice { min-width: 0; flex: 1; border-top: 0; }
+.free-home-legacy-preset-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.free-home-folder-app-icon { width: 27px; height: 27px; object-fit: cover; flex: none; border-radius: 7px; }
+.free-home-sheet-help { font-size: 12px; line-height: 1.5; color: #666; }
+.free-home-field-label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; margin: 8px 0; }
+.free-home-field { appearance: none; border: 1px solid #ddd; border-radius: 12px; background: #f8f8f8; color: #222; font: inherit; font-size: 14px; padding: 10px; min-height: 42px; box-sizing: border-box; width: 100%; }
+.free-home-upload-btn { display: block; border-radius: 12px; background: #f4f4f4; padding: 10px; text-align: center; font-size: 12px; margin: 8px 0; cursor: pointer; }
+.free-home-hidden-file { display: none; }
+textarea.free-home-field { min-height: 84px; resize: vertical; }
+.free-home-page-row { display: flex; align-items: center; gap: 7px; padding: 8px 0; border-top: 1px solid #eee; font-size: 13px; }
+.free-home-page-preview { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); gap: 2px; flex: 0 0 35px; height: 35px; padding: 3px; border-radius: 7px; background: #eee; box-sizing: border-box; }
+.free-home-page-preview span { border-radius: 2px; background: #aaa; }
+.free-home-page-preview .is-widget { background: #d28d9e; }
+.free-home-page-row span { flex: 1; min-width: 0; }
+.free-home-mini-btn { appearance: none; border: 0; border-radius: 9px; background: #f1f1f1; color: #333; padding: 6px 9px; font: inherit; font-size: 12px; }
+.free-home-mini-btn:disabled { opacity: .35; }
+@media (max-width: 350px) { .free-home-page { padding-inline: 7px; } .free-home-grid { gap: 5px; } .free-home-widget-content { padding: 9px; border-radius: 15px; } }
+@media (prefers-reduced-motion: reduce) { .free-home-track, .free-home-tile { transition: none; } .free-home-editing .free-home-tile { animation: none !important; } }
+
+.free-home-custom-frame { display:block; width:100%; height:100%; min-width:0; min-height:0; border:0; border-radius:12px; background:#fff; }
+.free-home-kind-custom { padding:4px; box-sizing:border-box; }
+.free-home-editing .free-home-custom-frame, .free-home-placing .free-home-custom-frame { pointer-events:none; }
+.free-home-code-examples { display:flex; flex-wrap:wrap; gap:6px; }
+.free-home-code-examples .free-home-mini-btn { max-width:100%; }
+textarea.free-home-code-field { min-height:105px; font:12px/1.5 monospace; tab-size:2; }
+.free-home-code-preview { width:100%; height:170px; min-width:0; border-radius:12px; overflow:hidden; }
+.free-home-code-preview:empty { display:none; }
+.free-home-code-cover { display:grid; place-items:center; background:#f4f4f4; border-radius:12px; font-size:11px; color:#777; }
+.free-home-sheet-head > strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.free-home-sheet-close { flex-shrink:0; }
+
 /* 底部导航栏 */
 .bottom-nav {
     display: flex;

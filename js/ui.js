@@ -358,6 +358,10 @@ function updateBubbleCssPreview(previewContainer, css, useDefault, theme) {
 let currentPageIndex = 0;
 
 function setupHomeScreen() {
+    if (db.homeLayoutMode === 'free' && typeof renderFreeHomeScreen === 'function') {
+        renderFreeHomeScreen();
+        return;
+    }
     const getIcon = (id) => db.customIcons[id] || defaultIcons[id].url;
     const getName = (id) => (db.customAppNames && db.customAppNames[id]) || defaultIcons[id].name;
     if (!db.insWidgetSettings) {
@@ -461,10 +465,6 @@ function setupHomeScreen() {
                     <img src="${getIcon('biekan-app')}" alt="MCP" class="icon-img">
                     <span class="app-name">${getName('biekan-app')}</span>
                 </a>
-                <a href="#" class="app-icon" data-action="xiaowu-app">
-                    <img src="${getIcon('xiaowu-app')}" alt="小屋" class="icon-img">
-                    <span class="app-name">${getName('xiaowu-app')}</span>
-                </a>
              </div>
         </div>
 
@@ -520,7 +520,6 @@ function setupHomeScreen() {
         }
     });
     document.querySelector('[data-action="biekan-app"]')?.addEventListener('click', (e) => { e.preventDefault(); if (window.McpManager) window.McpManager.open(); });
-    document.querySelector('[data-action="xiaowu-app"]')?.addEventListener('click', (e) => { e.preventDefault(); showToast('小屋APP正在开发中…'); });
     document.querySelector('[data-action="magic-room-app"]')?.addEventListener('click', (e) => { 
         e.preventDefault(); 
         if (typeof setupMagicRoomApp === 'function') setupMagicRoomApp();

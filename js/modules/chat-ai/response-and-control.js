@@ -317,7 +317,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
 
         for (const item of messages) {
             // 自动剔除不存在的表情包
-            const stickerRegex = /\[(?:.*?的)?表情包：(.+?)\]/i;
+            const stickerRegex = /\[(?:.*?的)?表情包[：:](.+?)\]/i;
             const stickerMatch = item.content.match(stickerRegex);
             if (stickerMatch) {
                 let stickerName = stickerMatch[1].trim();
@@ -340,17 +340,16 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                     stickerName = stickerName.substring(0, descIndexFull3).trim();
                 }
 
-                const groups = (chat.stickerGroups || '').split(/[,，]/).map(s => s.trim()).filter(Boolean);
                 let targetSticker = null;
-                
-                // 1. 优先在绑定分组中查找
-                if (groups.length > 0) {
-                    targetSticker = db.myStickers.find(s => groups.includes(s.group) && s.name === stickerName);
-                }
-                
-                // 2. 兜底在所有表情包中查找
-                if (!targetSticker) {
-                    targetSticker = db.myStickers.find(s => s.name === stickerName);
+                if (targetChatType === 'private') {
+                    targetSticker = getAvailablePrivateStickers(chat).find(s => s.name === stickerName);
+                } else {
+                    const groups = (chat.stickerGroups || '').split(/[,，]/).map(s => s.trim()).filter(Boolean);
+                    if (groups.length > 0) {
+                        targetSticker = db.myStickers.find(s => groups.includes(s.group) && s.name === stickerName);
+                    }
+                    // 群聊保留原有的全库兜底。
+                    if (!targetSticker) targetSticker = db.myStickers.find(s => s.name === stickerName);
                 }
                 
                 // 3. 如果完全找不到，则剔除该消息
@@ -358,6 +357,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                     console.log(`[Auto-Filter] 剔除不存在的表情包: ${stickerName}`);
                     continue; 
                 }
+                if (targetChatType === 'private') item.stickerData = targetSticker.data;
             }
 
             // --- 视频/语音通话邀请检测 ---
@@ -627,6 +627,15 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                         isStatusUpdate: item.isStatusUpdate,
                         statusSnapshot: item.statusSnapshot
                     };
+                    if (item.stickerData) {
+                        const finalStickerMatch = finalContent.match(stickerRegex);
+                        if (finalStickerMatch) {
+                            const finalStickerName = finalStickerMatch[1].trim();
+                            const finalSticker = getAvailablePrivateStickers(chat).find(s => s.name === finalStickerName);
+                            if (!finalSticker) continue;
+                            message.stickerData = finalSticker.data;
+                        }
+                    }
                     if (isCharBlockedMonologue) message.sentWhileCharBlocked = true;
 
                     if (receivedTransferRegex.test(message.content)) {

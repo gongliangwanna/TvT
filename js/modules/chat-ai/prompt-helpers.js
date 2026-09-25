@@ -106,6 +106,13 @@ function formatUserPhoneStateForPrompt(character) {
     return out;
 }
 
+function getAvailablePrivateStickers(character) {
+    const groups = (character.stickerGroups || '').split(/[,，]/)
+        .map(s => s.trim())
+        .filter(s => s && s !== '未分类');
+    return db.myStickers.filter(s => groups.includes(s.group));
+}
+
 function getOnlineLogicRules(character, startIndex = 4) {
     let rules = `${startIndex}. 我的消息中可能会出现特殊格式，请根据其内容和你的角色设定进行回应：
 - [${character.myName}发送的表情包：xxx]：我给你发送了一个名为xxx的表情包。你只需要根据表情包的名字理解我的情绪或意图并回应，不需要真的发送图片。
@@ -182,28 +189,22 @@ b) [${character.realName}拒绝了${character.myName}的代付请求]\n`;
     rules += `${nextIndex}. 你的所有回复都必须直接是聊天内容，绝对不允许包含任何如[心理活动]、(动作)、*环境描写*等多余的、在括号或星号里的叙述性文本。\n`;
     nextIndex++;
 
-    const groups = (character.stickerGroups || '').split(/[,，]/)
-        .map(s => s.trim())
-        .filter(s => s && s !== '未分类');
-        
-    if (groups.length > 0) {
-        const availableStickers = db.myStickers.filter(s => groups.includes(s.group));
-        if (availableStickers.length > 0) {
-            let stickerNames = '';
-            if (character.stickerDescriptionEnabled) {
-                // 如果开启了附带画面描述
-                stickerNames = availableStickers.map(s => {
-                    if (s.description && s.description.trim() !== '') {
-                        return `${s.name}(画面:${s.description})`;
-                    }
-                    return s.name;
-                }).join(', ');
-            } else {
-                stickerNames = availableStickers.map(s => s.name).join(', ');
-            }
-            rules += `${nextIndex}. 你拥有发送表情包的能力。这是一个可选功能，你可以根据对话氛围和内容，自行判断是否需要发送表情包来辅助表达。**必须从以下列表中选择表情包，不允许凭空捏造**：[${stickerNames}]。请使用格式：[表情包：名称]。**不要连续重复发送同一表情，尽量丰富一点，不要每次回复都发送表情**⚠️严格限制：必须完全精确地使用库中的名称，严禁编造中不存在的名称，否则表情包将无法显示。\n`;
-            nextIndex++;
+    const availableStickers = getAvailablePrivateStickers(character);
+    if (availableStickers.length > 0) {
+        let stickerNames = '';
+        if (character.stickerDescriptionEnabled) {
+            // 如果开启了附带画面描述
+            stickerNames = availableStickers.map(s => {
+                if (s.description && s.description.trim() !== '') {
+                    return `${s.name}(画面:${s.description})`;
+                }
+                return s.name;
+            }).join(', ');
+        } else {
+            stickerNames = availableStickers.map(s => s.name).join(', ');
         }
+        rules += `${nextIndex}. 你拥有发送表情包的能力。这是一个可选功能，你可以根据对话氛围和内容，自行判断是否需要发送表情包来辅助表达。**必须从以下列表中选择表情包，不允许凭空捏造**：[${stickerNames}]。请使用格式：[${character.realName}的表情包：名称]。**不要连续重复发送同一表情，尽量丰富一点，不要每次回复都发送表情**⚠️严格限制：必须完全精确地使用库中的名称，严禁编造中不存在的名称，否则表情包将无法显示。\n`;
+        nextIndex++;
     }
 
     if (character.useRealGallery && character.gallery && character.gallery.length > 0) {
@@ -250,25 +251,8 @@ d) 语音消息: [${character.realName}的语音：{语音内容}]
 ${photoVideoFormat}
 f) 给我的转账: [${character.realName}的转账：{金额}元；备注：{备注}]`;
 
-    const groups = (character.stickerGroups || '').split(/[,，]/).map(s => s.trim()).filter(s => s && s !== '未分类');
-    let canUseStickers = false;
-    if (groups.length > 0) {
-        const availableStickers = db.myStickers.filter(s => groups.includes(s.group));
-        if (availableStickers.length > 0) {
-            let stickerNames = '';
-            if (character.stickerDescriptionEnabled) {
-                stickerNames = availableStickers.map(s => {
-                    if (s.description && s.description.trim() !== '') {
-                        return `${s.name}(画面:${s.description})`;
-                    }
-                    return s.name;
-                }).join(', ');
-            } else {
-                stickerNames = availableStickers.map(s => s.name).join(', ');
-            }
-            stickerInstruction = `   - **可用表情包**: 你们可以使用以下表情包来表达情绪：[${stickerNames}]。\n`;
-            canUseStickers = true;
-        }
+    if (getAvailablePrivateStickers(character).length > 0) {
+        outputFormats += `\ng) 表情包: [${character.realName}的表情包：{表情包名称}]（名称必须与可用表情包列表完全一致）`;
     }
 
     outputFormats += `

@@ -3,7 +3,9 @@
 
     const SESSION_KEY = 'ovo_reply_ui_session_v1';
     const DIAGNOSTIC_KEY = 'ovo_reply_lifecycle_log_v1';
-    const ACTIVE_STATES = new Set(['preparing', 'requesting', 'streaming', 'stalled', 'interrupted', 'recovering', 'finalizing']);
+    const RUNNING_STATES = new Set(['preparing', 'requesting', 'streaming', 'recovering', 'finalizing']);
+    const RECOVERABLE_STATES = new Set(['stalled', 'interrupted']);
+    const PENDING_STATES = new Set([...RUNNING_STATES, ...RECOVERABLE_STATES]);
     const AUTO_RECOVER_MAX_AGE = 30 * 60 * 1000;
     const MAX_AUTO_ATTEMPTS = 2;
     const CHECKPOINT_DELAY = 450;
@@ -62,7 +64,8 @@
         const store = table();
         if (!store || !task) return task;
         task.updatedAt = Date.now();
-        activeTasks.set(task.id, task);
+        if (task.ownerId === ownerId && RUNNING_STATES.has(task.state)) activeTasks.set(task.id, task);
+        else activeTasks.delete(task.id);
         await store.put(cloneSafe(task));
         return task;
     }
@@ -107,7 +110,7 @@
         if (!store) return null;
         const candidates = await store.where('chatId').equals(chatId).toArray();
         return candidates
-            .filter(task => task.chatType === chatType && !!task.isBackground === !!isBackground && ACTIVE_STATES.has(task.state)
+            .filter(task => task.chatType === chatType && !!task.isBackground === !!isBackground && PENDING_STATES.has(task.state)
                 && (!userMessageId || !task.userMessageId || task.userMessageId === userMessageId))
             .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))[0] || null;
     }
@@ -221,6 +224,7 @@
         task.previousPartial = '';
         task.transportBytes = 0;
         await flush(task);
+        activeTasks.delete(task.id);
         releaseTaskLock(task);
         if (window.KeepAliveModule && typeof window.KeepAliveModule.notifyTaskEnd === 'function') {
             window.KeepAliveModule.notifyTaskEnd(task.id);
@@ -230,7 +234,11 @@
 
     function hasActive(chatId, chatType) {
         return [...activeTasks.values()].some(task => task.chatId === chatId && task.chatType === chatType
-            && task.ownerId === ownerId && ACTIVE_STATES.has(task.state));
+            && task.ownerId === ownerId && RUNNING_STATES.has(task.state));
+    }
+
+    function canFinalize(task) {
+        return !!task && task.ownerId === ownerId && RUNNING_STATES.has(task.state) && !task.cancelRequestedAt;
     }
 
     async function fail(task, error, cancelled) {
@@ -240,11 +248,41 @@
         task.state = cancelled ? 'cancelled' : permanentClientError ? 'failed' : 'interrupted';
         task.error = error ? { name: error.name || 'Error', message: String(error.message || error).slice(0, 500) } : null;
         await flush(task);
+        activeTasks.delete(task.id);
         releaseTaskLock(task);
         if (window.KeepAliveModule && typeof window.KeepAliveModule.notifyTaskEnd === 'function') {
             window.KeepAliveModule.notifyTaskEnd(task.id);
         }
         logEvent(task.state, task, task.error && task.error.name);
+    }
+
+    async function cancelForChat(chatId, chatType) {
+        const store = table();
+        const storedTasks = store ? await store.where('chatId').equals(chatId).toArray() : [];
+        const candidates = new Map();
+        storedTasks.forEach(task => {
+            if (task.chatType === chatType && !task.isBackground && PENDING_STATES.has(task.state)) candidates.set(task.id, task);
+        });
+        activeTasks.forEach(task => {
+            if (task.chatId === chatId && task.chatType === chatType && !task.isBackground && PENDING_STATES.has(task.state)) {
+                candidates.set(task.id, task);
+            }
+        });
+        if (!candidates.size) return false;
+        const now = Date.now();
+        for (const task of candidates.values()) {
+            task.cancelRequestedAt = now;
+            task.state = 'cancelled';
+            task.error = { name: 'AbortError', message: '用户已停止本次调用' };
+            await putTask(task);
+            activeTasks.delete(task.id);
+            releaseTaskLock(task);
+            if (window.KeepAliveModule && typeof window.KeepAliveModule.notifyTaskEnd === 'function') {
+                window.KeepAliveModule.notifyTaskEnd(task.id);
+            }
+            logEvent('cancelled', task, 'user-requested');
+        }
+        return true;
     }
 
     function readSession() {
@@ -304,10 +342,10 @@
         if (!store || typeof getAiReply !== 'function') return;
         const now = Date.now();
         const tasks = (await store.toArray())
-            .filter(task => ACTIVE_STATES.has(task.state))
+            .filter(task => PENDING_STATES.has(task.state))
             .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
         for (const task of tasks) {
-            if (activeTasks.has(task.id) && task.ownerId === ownerId && typeof isGenerating !== 'undefined' && isGenerating) continue;
+            if (activeTasks.has(task.id) && task.ownerId === ownerId && RUNNING_STATES.has(task.state)) continue;
             const ownerHeartbeatAge = now - (task.updatedAt || task.createdAt || 0);
             if (task.ownerId && task.ownerId !== ownerId && ownerHeartbeatAge >= 0 && ownerHeartbeatAge < 6000) {
                 clearTimeout(recoveryTimer);
@@ -339,7 +377,7 @@
                 continue;
             }
             if (now - (task.updatedAt || task.createdAt || now) > AUTO_RECOVER_MAX_AGE || (task.attempt || 1) >= MAX_AUTO_ATTEMPTS) {
-                task.state = 'interrupted';
+                task.state = 'abandoned';
                 if (!task.userNotifiedAt) {
                     task.userNotifiedAt = now;
                     if (!task.isBackground && typeof currentChatId !== 'undefined' && currentChatId === task.chatId) {
@@ -364,10 +402,11 @@
                 }
                 continue;
             }
-            if (!task.isBackground && typeof openChatRoom === 'function' && (typeof currentChatId === 'undefined' || currentChatId !== task.chatId)) {
-                openChatRoom(task.chatId, task.chatType);
-            }
-            const indicator = task.isBackground ? null : document.getElementById('typing-indicator');
+            // 恢复回复不改变用户所在页面。
+            const isCurrentChat = typeof currentChatId !== 'undefined' && currentChatId === task.chatId
+                && typeof currentChatType !== 'undefined' && currentChatType === task.chatType
+                && document.querySelector('.screen.active')?.id === 'chat-room-screen';
+            const indicator = task.isBackground || !isCurrentChat ? null : document.getElementById('typing-indicator');
             if (indicator) {
                 const savedLength = String(task.rawPartial || task.previousPartial || '').length;
                 indicator.textContent = savedLength > 0
@@ -397,7 +436,7 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 const now = Date.now();
-                activeTasks.forEach(task => { if (ACTIVE_STATES.has(task.state)) task.hiddenAt = now; });
+                activeTasks.forEach(task => { if (RUNNING_STATES.has(task.state)) task.hiddenAt = now; });
                 saveSessionNow();
                 logEvent('hidden');
                 void flushAll();
@@ -425,7 +464,7 @@
         if (initialized) return;
         initialized = true;
         bindLifecycle();
-        restoreSession();
+        // 刷新后保留默认首页，不自动恢复上次打开的聊天页面。
         const store = table();
         if (store) {
             const cutoff = Date.now() - 24 * 60 * 60 * 1000;
@@ -445,6 +484,8 @@
         markFinalizing,
         complete,
         fail,
+        cancelForChat,
+        canFinalize,
         getTask,
         findRecoverable,
         hasActive,
@@ -452,6 +493,6 @@
         scheduleSessionSave,
         restoreSession,
         recoverPending,
-        _test: { ACTIVE_STATES, captureSession, readSession, createId }
+        _test: { RUNNING_STATES, RECOVERABLE_STATES, PENDING_STATES, captureSession, readSession, createId }
     };
 })();

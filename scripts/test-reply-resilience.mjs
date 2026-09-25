@@ -82,6 +82,7 @@ assert.equal(keepAliveEvents.at(-1), `end:${task.id}`, 'reply failure should rel
 const recoverable = await service.begin({ chatId: 'chat-1', chatType: 'private', reuseExisting: false, initialState: 'requesting' });
 await service.fail(recoverable, new TypeError('network failed'), false);
 assert.equal((await pendingReplies.get(recoverable.id)).state, 'interrupted');
+assert.equal(service.hasActive('chat-1', 'private'), false, 'an interrupted task must not keep the chat UI locked');
 
 await service.complete(recoverable);
 stored = await pendingReplies.get(recoverable.id);
@@ -95,11 +96,41 @@ assert.equal(backgroundTask.isBackground, true);
 await service.complete(foregroundTask);
 await service.complete(backgroundTask);
 
+const cancellableTask = await service.begin({ chatId: 'chat-1', chatType: 'private', reuseExisting: false, isBackground: false });
+assert.equal(service.hasActive('chat-1', 'private'), true, 'a live foreground task should be reported as active');
+assert.equal(await service.cancelForChat('chat-1', 'private'), true);
+assert.equal((await pendingReplies.get(cancellableTask.id)).state, 'cancelled');
+assert.equal(service.hasActive('chat-1', 'private'), false, 'a cancelled task must release the chat UI lock');
+
 service.saveSessionNow();
 const session = JSON.parse(storage.get('ovo_reply_ui_session_v1'));
 assert.equal(session.activeScreen, 'chat-room-screen');
 assert.equal(session.chatId, 'chat-1');
 assert.equal(session.inputDraft, '草稿');
+
+// 模拟刷新：保存着聊天页会话，但新页面默认显示首页。
+let activeScreen = 'home-screen';
+let openedChats = 0;
+const recoveredCalls = [];
+context.currentChatId = null;
+context.currentChatType = null;
+context.document.querySelector = selector => selector === '.screen.active' ? { id: activeScreen } : null;
+context.openChatRoom = () => { openedChats += 1; activeScreen = 'chat-room-screen'; };
+context.getAiReply = async (...args) => { recoveredCalls.push(args); };
+await service.init();
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(activeScreen, 'home-screen', 'startup must ignore the saved chat page');
+await pendingReplies.put({
+    id: 'refresh-recovery', chatId: 'chat-1', chatType: 'private',
+    state: 'interrupted', isBackground: false, attempt: 1,
+    createdAt: Date.now() - 10000, updatedAt: Date.now() - 10000, userMessageId: 'user-1'
+});
+await service.recoverPending();
+assert.equal(recoveredCalls.length, 1, 'pending replies should still recover from the home page');
+assert.equal(recoveredCalls[0][0], 'chat-1');
+assert.equal(recoveredCalls[0][6].recoveryTaskId, 'refresh-recovery');
+assert.equal(openedChats, 0, 'neither startup nor reply recovery may open a chat');
+assert.equal(activeScreen, 'home-screen');
 
 context.TextDecoder = TextDecoder;
 context.extractAiProviderResponse = payload => ({
@@ -122,4 +153,47 @@ const response = {
 const streamed = await context.processStream(response, chat, 'openai', 'chat-1', 'private', false, false, task);
 assert.equal(streamed, 'AB', 'SSE parser must accept CRLF, data without a space, and a final unterminated event');
 
-console.log('Reply resilience tests passed: lifecycle journal, checkpoints, retry classification, completion cleanup, UI session snapshot, and resilient SSE parsing.');
+let doneReaderCalls = 0;
+let doneReaderCancelled = false;
+const doneResponse = {
+    body: {
+        getReader() {
+            return {
+                async read() {
+                    doneReaderCalls += 1;
+                    if (doneReaderCalls > 1) throw new Error('reader must not wait for EOF after [DONE]');
+                    return {
+                        done: false,
+                        value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"C"}}]}\n\ndata: [DONE]\n\n')
+                    };
+                },
+                async cancel() { doneReaderCancelled = true; }
+            };
+        }
+    }
+};
+const doneStreamed = await context.processStream(doneResponse, chat, 'openai', 'chat-1', 'private');
+assert.equal(doneStreamed, 'C', 'the stream must finish as soon as the SSE done marker arrives');
+assert.equal(doneReaderCalls, 1);
+assert.equal(doneReaderCancelled, true, 'the transport reader should be cancelled after the done marker');
+
+let releasePendingRead;
+const pendingResponse = {
+    body: {
+        getReader() {
+            return {
+                read: () => new Promise(resolve => { releasePendingRead = resolve; }),
+                async cancel() { if (releasePendingRead) releasePendingRead({ done: true }); }
+            };
+        }
+    }
+};
+const streamAbortController = new AbortController();
+const pendingStream = context.processStream(pendingResponse, chat, 'openai', 'chat-1', 'private', false, false, null, streamAbortController.signal);
+await Promise.resolve();
+const userAbortError = new Error('user stopped');
+userAbortError.name = 'AbortError';
+streamAbortController.abort(userAbortError);
+await assert.rejects(pendingStream, error => error && error.name === 'AbortError', 'aborting must release a pending stream read');
+
+console.log('Reply resilience tests passed: lifecycle journal, terminal cleanup, cancellation, UI session snapshot, done-marker handling, aborts, and resilient SSE parsing.');

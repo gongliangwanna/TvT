@@ -848,7 +848,8 @@ const contentMatch = content.match(/^\[.*?(?:消息|回复)[：:]([\s\S]+)\]$/);
         bubbleElement.className = 'image-bubble sticker-bubble';
         let stickerSrc = '';
         
-        if (isSent && stickerData) {
+        // 新消息保存发送时选定的图片；旧消息仍按名称查找以兼容历史记录。
+        if (stickerData) {
             stickerSrc = stickerData;
         } else {
             const stickerName = isSent ? sentStickerMatch[1].trim() : receivedStickerMatch[1].trim();

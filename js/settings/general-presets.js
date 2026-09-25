@@ -1,4 +1,5 @@
 function setupPresetFeatures() {
+    setupChatAppearancePresets();
     const saveBtn = document.getElementById('api-save-preset');
     const manageBtn = document.getElementById('api-manage-presets');
     const applyBtn = document.getElementById('api-apply-preset');

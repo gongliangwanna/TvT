@@ -19,6 +19,12 @@ function _captureCurrentWidgetWallpaperScheme() {
         }
     }
     return {
+        homeScreenMode: db.homeScreenMode,
+        nightModeSettings: JSON.parse(JSON.stringify(db.nightModeSettings || {})),
+        homeStatusBarSettings: JSON.parse(JSON.stringify(db.homeStatusBarSettings || {})),
+        freeHomePage: typeof freeHomePage === 'number' ? freeHomePage : 0,
+        layoutMode: db.homeLayoutMode === 'free' ? 'free' : 'classic',
+        freeHomeLayout: db.homeLayoutMode === 'free' ? JSON.parse(JSON.stringify(freeHomeData())) : undefined,
         wallpaper: db.wallpaper || DEFAULT_WALLPAPER_URL,
         homeWidgetSettings: JSON.parse(JSON.stringify(db.homeWidgetSettings || {})),
         homeSignature: db.homeSignature !== undefined ? db.homeSignature : DEFAULT_HOME_SIGNATURE,
@@ -37,7 +43,7 @@ function populateWidgetWallpaperPresetSelect() {
     presets.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.name;
-        opt.textContent = p.name;
+        opt.textContent = `${p.name} · ${p.layoutMode === 'free' ? '自由布局' : '经典布局'}`;
         sel.appendChild(opt);
     });
 }
@@ -60,9 +66,21 @@ function applyWidgetWallpaperPreset(name) {
     const presets = _getWidgetWallpaperPresets();
     const p = presets.find(x => x.name === name);
     if (!p) return showToast('未找到该方案');
+    if (p.layoutMode === 'free' && !freeHomeValidLayout(p.freeHomeLayout)) return showToast('自由布局方案数据无效');
+    db.homeLayoutMode = p.layoutMode === 'free' ? 'free' : 'classic';
+    if (db.homeLayoutMode === 'free' && p.freeHomeLayout && Array.isArray(p.freeHomeLayout.pages)) {
+        db.freeHomeLayout = JSON.parse(JSON.stringify(p.freeHomeLayout));
+        freeHomeLastSaved = null;
+        freeHomeHistory.length = 0;
+    }
+    if (['day', 'night'].includes(p.homeScreenMode)) db.homeScreenMode = p.homeScreenMode;
+    if (p.nightModeSettings && typeof p.nightModeSettings === 'object') db.nightModeSettings = JSON.parse(JSON.stringify(p.nightModeSettings));
+    if (p.homeStatusBarSettings && typeof p.homeStatusBarSettings === 'object') db.homeStatusBarSettings = JSON.parse(JSON.stringify(p.homeStatusBarSettings));
+    if (db.homeLayoutMode === 'free' && Number.isInteger(p.freeHomePage)) freeHomePage = Math.max(0, Math.min(p.freeHomePage, db.freeHomeLayout.pages.length - 1));
+    homeScreen.classList.toggle('free-home-active', db.homeLayoutMode === 'free');
     db.wallpaper = p.wallpaper || DEFAULT_WALLPAPER_URL;
     if (typeof applyWallpaper === 'function') applyWallpaper(db.wallpaper);
-    db.homeWidgetSettings = JSON.parse(JSON.stringify(p.homeWidgetSettings || {}));
+    db.homeWidgetSettings = JSON.parse(JSON.stringify({ ...defaultWidgetSettings, ...(p.homeWidgetSettings || {}) }));
     db.homeSignature = p.homeSignature !== undefined ? p.homeSignature : DEFAULT_HOME_SIGNATURE;
     db.insWidgetSettings = JSON.parse(JSON.stringify(p.insWidgetSettings || DEFAULT_INS_WIDGET));
     if (p.customIcons && typeof p.customIcons === 'object') {
@@ -166,38 +184,38 @@ function exportWidgetWallpaperScheme() {
         if (schemeName === null) return; // 用户取消
         const exportPreset = JSON.parse(JSON.stringify(p));
         if (schemeName.trim()) exportPreset.name = schemeName.trim();
-        payload = { type: 'widget-wallpaper-scheme', version: 1, preset: exportPreset };
+        payload = { type: 'widget-wallpaper-scheme', version: exportPreset.layoutMode === 'free' ? 2 : 1, preset: exportPreset };
     } else {
         const current = _captureCurrentWidgetWallpaperScheme();
         const schemeName = prompt('请输入导出方案名称（留空则使用默认名称）：', '当前主屏');
         if (schemeName === null) return; // 用户取消
         const finalName = schemeName.trim() || '当前主屏';
-        payload = { type: 'widget-wallpaper-scheme', version: 1, preset: { name: finalName, ...current } };
+        payload = { type: 'widget-wallpaper-scheme', version: current.layoutMode === 'free' ? 2 : 1, preset: { name: finalName, ...current } };
     }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = (payload.preset.name || '主屏幕预设方案') + '.json';
-    a.click();
-    URL.revokeObjectURL(a.href);
-    showToast('方案已导出');
+    customWidgetDownload(payload, payload.preset.name || '主屏幕预设方案');
 }
 
 function importWidgetWallpaperScheme(file) {
     if (!file) return;
+    if (file.size > 20 * 1024 * 1024) return showToast('预设文件需小于 20 MB');
     const reader = new FileReader();
-    reader.onload = function () {
+    reader.onload = async function () {
         try {
             const data = JSON.parse(reader.result);
+            if (await freeHomeImportBundle(data, 'desktop')) return;
             if (!data || data.type !== 'widget-wallpaper-scheme' || !data.preset) {
                 showToast('不是有效的主屏幕预设方案文件');
                 return;
             }
             const preset = data.preset;
+            if (preset.layoutMode === 'free' && !freeHomeValidLayout(preset.freeHomeLayout)) {
+                showToast('自由布局方案数据无效');
+                return;
+            }
             const name = preset.name || '导入的方案';
             const presets = _getWidgetWallpaperPresets();
             const existingIdx = presets.findIndex(p => p.name === name);
-            const toAdd = { name, wallpaper: preset.wallpaper, homeWidgetSettings: preset.homeWidgetSettings || {}, homeSignature: preset.homeSignature, insWidgetSettings: preset.insWidgetSettings || {}, customIcons: preset.customIcons || {}, customAppNames: preset.customAppNames || {}, peekCustomIcons: preset.peekCustomIcons || {} };
+            const toAdd = { name, homeScreenMode: preset.homeScreenMode, nightModeSettings: preset.nightModeSettings, homeStatusBarSettings: preset.homeStatusBarSettings, freeHomePage: preset.freeHomePage, layoutMode: preset.layoutMode === 'free' ? 'free' : 'classic', freeHomeLayout: preset.freeHomeLayout, wallpaper: preset.wallpaper, homeWidgetSettings: preset.homeWidgetSettings || {}, homeSignature: preset.homeSignature, insWidgetSettings: preset.insWidgetSettings || {}, customIcons: preset.customIcons || {}, customAppNames: preset.customAppNames || {}, peekCustomIcons: preset.peekCustomIcons || {} };
             if (existingIdx >= 0) presets[existingIdx] = toAdd;
             else presets.push(toAdd);
             _saveWidgetWallpaperPresets(presets);

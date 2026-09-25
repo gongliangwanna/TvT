@@ -1,3 +1,6 @@
+const OVO_REPLY_IDLE_TIMEOUT_MS = 90 * 1000;
+const OVO_REPLY_TOTAL_TIMEOUT_MS = 10 * 60 * 1000;
+
 async function getAiReply(chatId, chatType, isBackground = false, isSummary = false, isCharBlockedMonologue = false, isPhoneControlRevokeAttempt = false, replyOptions = {}) {
     if (isGenerating && !isBackground && !replyOptions.recoveryTaskId) return;
 
@@ -41,7 +44,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
     if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!url || !key || !model)) {
         if (!isBackground) {
             showToast('请先在“api”应用中完成设置！');
-            switchScreen('api-settings-screen');
+            if (!replyOptions.recoveryTaskId) switchScreen('api-settings-screen');
         }
         return;
     }
@@ -75,12 +78,46 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
     let replyTask = null;
     const resilienceEnabled = !isSummary && window.ReplyResilience;
     let requestAbortController = null;
+    let replyIdleTimer = null;
+    let replyTotalTimer = null;
+    let replyWatchdogStarted = false;
+    const abortForTimeout = message => {
+        if (!requestAbortController || requestAbortController.signal.aborted) return;
+        const timeoutError = new Error(message);
+        timeoutError.name = 'TimeoutError';
+        requestAbortController.abort(timeoutError);
+    };
+    const touchReplyProgress = () => {
+        if (!replyWatchdogStarted || !requestAbortController || requestAbortController.signal.aborted) return;
+        clearTimeout(replyIdleTimer);
+        replyIdleTimer = setTimeout(() => abortForTimeout('回复连接长时间没有返回数据'), OVO_REPLY_IDLE_TIMEOUT_MS);
+    };
+    const startReplyWatchdog = () => {
+        if (replyWatchdogStarted || !requestAbortController) return;
+        replyWatchdogStarted = true;
+        touchReplyProgress();
+        replyTotalTimer = setTimeout(() => abortForTimeout('本次回复调用时间过长'), OVO_REPLY_TOTAL_TIMEOUT_MS);
+    };
+    const stopReplyWatchdog = () => {
+        clearTimeout(replyIdleTimer);
+        clearTimeout(replyTotalTimer);
+        replyIdleTimer = null;
+        replyTotalTimer = null;
+    };
     const persistTargetChat = async () => {
         if (chatType === 'group' && typeof saveGroup === 'function') return saveGroup(chatId);
         if (chatType === 'private' && typeof saveCharacter === 'function') return saveCharacter(chatId);
         if (typeof saveCurrentChat === 'function' && currentChatId === chatId && currentChatType === chatType) return saveCurrentChat();
     };
     const finalizeReply = async (fullResponse) => {
+        if (requestAbortController && requestAbortController.signal.aborted) {
+            throw requestAbortController.signal.reason || new DOMException('The operation was aborted.', 'AbortError');
+        }
+        if (replyTask && window.ReplyResilience && !window.ReplyResilience.canFinalize(replyTask)) {
+            const cancelledError = new Error('本次回复已停止，忽略延迟到达的响应');
+            cancelledError.name = 'AbortError';
+            throw cancelledError;
+        }
         if (!String(fullResponse || '').trim()) {
             const emptyError = new Error('接口未返回可用的回复内容');
             emptyError.name = 'EmptyReplyError';
@@ -93,6 +130,12 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 cancelledError.name = 'FollowUpCancelledError';
                 throw cancelledError;
             }
+        }
+        if ((requestAbortController && requestAbortController.signal.aborted)
+            || (replyTask && window.ReplyResilience && !window.ReplyResilience.canFinalize(replyTask))) {
+            const cancelledError = new Error('本次回复已停止，忽略延迟到达的响应');
+            cancelledError.name = 'AbortError';
+            throw cancelledError;
         }
         if (replyTask) await window.ReplyResilience.markFinalizing(replyTask, fullResponse);
         const historyLengthBefore = Array.isArray(chat.history) ? chat.history.length : 0;
@@ -783,6 +826,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             replyTask.streamEnabled = !!streamEnabled;
             await window.ReplyResilience.flush(replyTask);
         }
+        startReplyWatchdog();
         if (!isBackground && !isSummary && window.McpChatOrchestrator && window.mcpManager) {
             const latestMcpUserMessage = [...(chat.history || [])].reverse().find(message => message && message.role === 'user' && !message.excludeFromContext);
             const mcpCatalog = window.McpChatOrchestrator.createCatalog(chat, latestMcpUserMessage);
@@ -836,8 +880,10 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                         body: JSON.stringify(toolRequestBody),
                         signal
                     });
+                    touchReplyProgress();
                     if (!toolResponse.ok) throw new Error(`MCP 工具回合 API 错误：${toolResponse.status} ${(await toolResponse.text()).slice(0, 300)}`);
                     const payload = await toolResponse.json();
+                    touchReplyProgress();
                     if (provider === 'gemini') {
                         const assistantMessage = payload.candidates?.[0]?.content || { role: 'model', parts: [] };
                         const parts = assistantMessage.parts || [];
@@ -875,12 +921,16 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             recordLatestTurnProtectionCheck(check);
             if (!check.valid) throw new Error('最新轮次保护校验失败：最终请求未以本轮用户消息作为对话触发点');
         }
-        const sendPrepared = (targetEndpoint, targetHeaders, targetBody) => fetch(targetEndpoint, {
-            method: 'POST',
-            headers: targetHeaders,
-            body: JSON.stringify(targetBody),
-            signal: requestAbortController ? requestAbortController.signal : undefined
-        });
+        const sendPrepared = async (targetEndpoint, targetHeaders, targetBody) => {
+            const preparedResponse = await fetch(targetEndpoint, {
+                method: 'POST',
+                headers: targetHeaders,
+                body: JSON.stringify(targetBody),
+                signal: requestAbortController ? requestAbortController.signal : undefined
+            });
+            touchReplyProgress();
+            return preparedResponse;
+        };
         let response = await sendPrepared(endpoint, headers, requestBody);
         if (!response.ok) {
             const firstErrorText = await response.text();
@@ -916,12 +966,13 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         }
         
         if (streamEnabled) {
-            const streamedResponse = await processStream(response, chat, provider, chatId, chatType, isBackground, isCharBlockedMonologue, replyTask);
+            const streamedResponse = await processStream(response, chat, provider, chatId, chatType, isBackground, isCharBlockedMonologue, replyTask, requestAbortController ? requestAbortController.signal : null, touchReplyProgress);
             await finalizeReply(streamedResponse);
         } else {
             let result;
             try {
                 result = await response.json();
+                touchReplyProgress();
                 console.log('【API完整响应数据】:', result);
             } catch (e) {
                 const text = await response.text();
@@ -989,37 +1040,43 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         }
         if (error.name === 'AbortError') {
             if (!isBackground && typeof showToast === 'function') showToast('已暂停调用');
+        } else if (error.name === 'TimeoutError') {
+            if (!isBackground && typeof showToast === 'function') showToast(error.message || '回复等待超时，请重试');
+            else console.error('Background Auto-Reply Timeout:', error);
         } else if (error.name !== 'FollowUpCancelledError') {
             if (!isBackground) showApiError(error);
             else console.error("Background Auto-Reply Error:", error);
         }
         return false;
     } finally {
+        stopReplyWatchdog();
         if (replyTask && window.ReplyResilience) {
             try { await window.ReplyResilience.flush(replyTask); } catch (_) { /* best effort lifecycle checkpoint */ }
         }
         if (!isBackground) {
-            currentReplyAbortController = null;
+            if (currentReplyAbortController === requestAbortController) currentReplyAbortController = null;
             isGenerating = false;
             getReplyBtn.disabled = false;
             regenerateBtn.disabled = false;
             // 如果正在生成小剧场，不隐藏提示（让小剧场生成过程显示提示）
-            if (!typingIndicator || typingIndicator.getAttribute('data-theater-generating') !== 'true') {
+            if (typingIndicator && typingIndicator.getAttribute('data-theater-generating') !== 'true') {
                 typingIndicator.style.display = 'none';
             }
         }
     }
 }
 
-async function processStream(response, chat, apiType, targetChatId, targetChatType, isBackground = false, isCharBlockedMonologue = false, replyTask = null) {
+async function processStream(response, chat, apiType, targetChatId, targetChatType, isBackground = false, isCharBlockedMonologue = false, replyTask = null, signal = null, onProgress = null) {
     const reader = response.body.getReader(), decoder = new TextDecoder();
     let fullResponse = "", fullReasoning = "", accumulatedChunk = "";
+    let streamFinished = false;
     const processSseBlock = block => {
         const data = block.split(/\r?\n/)
             .filter(line => line.startsWith('data:'))
             .map(line => line.slice(5).replace(/^ /, ''))
             .join('\n');
-        if (!data || data.trim() === '[DONE]') return;
+        if (!data) return false;
+        if (data.trim() === '[DONE]') return true;
         try {
             const extracted = extractAiProviderResponse(JSON.parse(data), apiType, true);
             fullResponse += extracted.content;
@@ -1027,24 +1084,54 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         } catch (error) {
             console.warn('[ReplyStream] ignored malformed SSE event:', error);
         }
+        return false;
     };
-    for (; ;) {
-        const {done, value} = await reader.read();
-        if (done) break;
-        accumulatedChunk += decoder.decode(value, {stream: true});
-        if (apiType !== "gemini") {
-            const parts = accumulatedChunk.split(/\r?\n\r?\n/);
-            accumulatedChunk = parts.pop();
-            parts.forEach(processSseBlock);
+    const abortStream = () => {
+        void reader.cancel(signal && signal.reason ? signal.reason : undefined).catch(() => {});
+    };
+    if (signal) {
+        if (signal.aborted) abortStream();
+        else signal.addEventListener('abort', abortStream, { once: true });
+    }
+    try {
+        for (; ;) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            if (typeof onProgress === 'function') onProgress();
+            accumulatedChunk += decoder.decode(value, {stream: true});
+            if (apiType !== "gemini") {
+                const parts = accumulatedChunk.split(/\r?\n\r?\n/);
+                accumulatedChunk = parts.pop();
+                for (const part of parts) {
+                    if (processSseBlock(part)) {
+                        streamFinished = true;
+                        break;
+                    }
+                }
+                if (streamFinished) {
+                    await reader.cancel().catch(() => {});
+                    break;
+                }
+            }
+            if (replyTask && window.ReplyResilience) {
+                window.ReplyResilience.checkpoint(replyTask, fullResponse, fullReasoning, {
+                    transportBytes: (replyTask.transportBytes || 0) + (value ? value.byteLength : 0)
+                });
+            }
         }
-        if (replyTask && window.ReplyResilience) {
-            window.ReplyResilience.checkpoint(replyTask, fullResponse, fullReasoning, {
-                transportBytes: (replyTask.transportBytes || 0) + (value ? value.byteLength : 0)
-            });
-        }
+    } finally {
+        if (signal) signal.removeEventListener('abort', abortStream);
+    }
+    if (signal && signal.aborted) {
+        throw signal.reason || new DOMException('The operation was aborted.', 'AbortError');
     }
     accumulatedChunk += decoder.decode();
-    if (apiType !== "gemini" && accumulatedChunk.trim()) processSseBlock(accumulatedChunk);
+    if (apiType !== "gemini" && accumulatedChunk.trim() && !streamFinished) {
+        streamFinished = processSseBlock(accumulatedChunk);
+        if (streamFinished) {
+            await reader.cancel().catch(() => {});
+        }
+    }
     if (apiType === "gemini") {
         try {
             const parsedStream = JSON.parse(accumulatedChunk);
