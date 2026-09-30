@@ -1740,6 +1740,7 @@ const TavernSync = {
                 // 合并在酒馆原有楼层里的 → 只去掉小手机那一段
                 stMsg.mes = stripOwnPhoneBlock(stMsg.mes);
                 delete stMsg.extra.from_uwu; delete stMsg.extra.uwu_msg_ids; delete stMsg.extra.uwu_push_time; delete stMsg.extra.uwu_line_lens;
+                delete stMsg.extra.uwu_image_description_ids;
                 continue;
             }
             this._rebuildPhoneBlock(stMsg, surviving, phoneById, toLine, null, withTimeLine);
@@ -1819,8 +1820,19 @@ const TavernSync = {
         if (!char || !this.pushImageDescriptionsFor(binding)) return;
         const target = { ...binding }; // 请求期间换了绑定，不能把结果写到另一个聊天。
         const wanted = new Set(messageIds);
-        const pending = (char.history || []).filter(m => m && wanted.has(m.id) && m.role === 'user'
+        let pending = (char.history || []).filter(m => m && wanted.has(m.id) && m.role === 'user'
             && Array.isArray(m.parts) && m.parts.some(p => p?.type === 'image'));
+        if (!pending.length) return;
+        if (!opts.forPush) {
+            // 回复后补识图也要尊重消息推送当时的设置。旧消息没有标记，保持原样。
+            const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+            const pushed = new Set(), allowed = new Set();
+            for (const stMsg of stMsgs) {
+                for (const id of stMsg?.extra?.uwu_msg_ids || []) pushed.add(id);
+                for (const id of stMsg?.extra?.uwu_image_description_ids || []) allowed.add(id);
+            }
+            pending = pending.filter(m => !pushed.has(m.id) || allowed.has(m.id));
+        }
         for (const msg of pending) {
             if (!this.pushImageDescriptionsFor(this.findBindingForChar(charId))) break;
             const key = JSON.stringify([charId, msg.id]);
@@ -1892,7 +1904,9 @@ const TavernSync = {
         }
         if (!stored) return false;
         const replacements = new Map();
+        const allowed = new Set(stMsg.extra.uwu_image_description_ids || []);
         for (const id of ids) {
+            if (!allowed.has(id)) continue;
             if (onlyIds && !onlyIds.has(id)) continue;
             const m = phoneById.get(id);
             if (m?.role !== 'user' || !Array.isArray(m.parts) || !m.parts.some(p => p?.type === 'image')) continue;
@@ -1911,7 +1925,7 @@ const TavernSync = {
     // 只补这张图片已经存在的酒馆行；不新推消息，也不执行删除同步。
     async syncRecognizedImage(target, messageId) {
         const binding = this.findBindingForChar(target.uwuCharId);
-        if (!this.pushImageDescriptionsFor(binding) || binding.stChatFile !== target.stChatFile
+        if (!binding || binding.stChatFile !== target.stChatFile
             || binding.stCharAvatar !== target.stCharAvatar) return;
         const char = db.characters.find(c => c.id === target.uwuCharId);
         const msg = char?.history?.find(m => m.id === messageId);
@@ -2131,6 +2145,10 @@ const TavernSync = {
         else stMsg.mes = replaceOwnPhoneBlock(stMsg.mes || '', phoneChat);
         stMsg.extra.uwu_msg_ids = nextIds;
         stMsg.extra.uwu_line_lens = this._lineLens(lines);
+        if (Array.isArray(stMsg.extra.uwu_image_description_ids)) {
+            const surviving = new Set(nextIds);
+            stMsg.extra.uwu_image_description_ids = stMsg.extra.uwu_image_description_ids.filter(id => surviving.has(id));
+        }
     },
 
     // 把“上次推送到哪一条”往后挪到 id 那条；已经在更后面就不动（手动推一段较早的消息时不能往回退，
@@ -2155,7 +2173,7 @@ const TavernSync = {
     async pushToTavern(binding, pushCount, trackProgress = true, opts = {}) {
         // 手动推送允许重试失败的识图，并等待后台已有请求；等待结束后才读取酒馆。
         if (Array.isArray(opts.messages) && !opts.recovering) {
-            await this.describeImagesAfterReply(binding.uwuCharId, opts.messages.map(m => m.id), { retry: true });
+            await this.describeImagesAfterReply(binding.uwuCharId, opts.messages.map(m => m.id), { retry: true, forPush: true });
         }
         return this._pushToTavern(binding, pushCount, trackProgress, opts);
     },
@@ -2184,17 +2202,6 @@ const TavernSync = {
     async _pushToTavern(binding, pushCount, trackProgress = true, opts = {}) {
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (!char) throw new Error('找不到角色');
-        // 兼容修复前已经推过空占位的图片：若后面已有 AI 回复，推送时也补查描述。
-        // 尚未收到回复的新图片保持空占位。一次最多处理最近三张，避免旧聊天一次发出大量识图请求。
-        const answeredImages = [];
-        let sawReply = false;
-        for (let i = char.history.length - 1; i >= 0 && answeredImages.length < 3; i--) {
-            const m = char.history[i];
-            if (m?.role === 'assistant' || m?.role === 'char') sawReply = true;
-            else if (sawReply && m?.role === 'user' && Array.isArray(m.parts)
-                && m.parts.some(p => p?.type === 'image' && !p.description)) answeredImages.push(m.id);
-        }
-        if (answeredImages.length) await this.describeImagesAfterReply(char.id, answeredImages.reverse());
         let stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
         // 等识图后再读酒馆，避免把漫长识图期间酒馆新增的内容覆盖掉。
         if (!opts.messages && !opts.recovering) {
@@ -2244,6 +2251,7 @@ const TavernSync = {
                 delete stMsg.extra.uwu_msg_ids;
                 delete stMsg.extra.uwu_push_time;
                 delete stMsg.extra.uwu_line_lens;
+                delete stMsg.extra.uwu_image_description_ids;
                 continue;
             }
             if (stMsg.extra.uwu_summary) {
@@ -2255,8 +2263,8 @@ const TavernSync = {
             this._rebuildPhoneBlock(stMsg, survivingIds, phoneById, toLine, null, withTimeLine);
         }
 
-        // 已推过的图片：识图结果后来才出现时，原位把旧占位文字换成描述；
-        // 旧版误推的图片编码也换成可读文字。只改能确定原文位置的行，保留手工修改过的楼层。
+        // 只补推送当时已开启识图的图片；后来切换开关不回头改变旧消息。
+        // 只改能确定原文位置的行，保留手工修改过的楼层。
         let hadImageUpdates = false;
         for (const stMsg of all) {
             if (this._patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine)) hadImageUpdates = true;
@@ -2332,7 +2340,7 @@ const TavernSync = {
         if (newMsgs.length > 0) {
             if (!opts.imagesPrepared && this.pushImageDescriptionsFor(binding)
                 && newMsgs.some(m => m.parts?.some(p => p?.type === 'image' && !p.description))) {
-                await this.describeImagesAfterReply(char.id, newMsgs.map(m => m.id));
+                await this.describeImagesAfterReply(char.id, newMsgs.map(m => m.id), { forPush: true });
                 // 识图有等待时，重新读取最新酒馆记录后再计算写入内容。
                 return this._pushToTavern(binding, pushCount, trackProgress, { ...opts, imagesPrepared: true });
             }
@@ -2343,6 +2351,9 @@ const TavernSync = {
         }
         if (newMsgs.length > 0) {
             const pushMode = this.getConfig().pushMode || 'new';
+            // 记录本次推送的选择，后续开关变化不再改变这些消息的补写资格。
+            const imageDescriptionIds = this.pushImageDescriptionsFor(binding)
+                ? newMsgs.filter(m => m.role === 'user' && m.parts?.some(p => p?.type === 'image')).map(m => m.id) : [];
             // 最后一楼（聊天只有开头那行设置、一楼都没有时不算）
             const tail = all.length > 0 ? all[all.length - 1] : null;
             const lastMsg = (tail && typeof tail.mes === 'string') ? tail : null;
@@ -2374,6 +2385,11 @@ const TavernSync = {
                 }
                 if (!target.extra) target.extra = {};
                 target.extra.from_uwu = true;
+                const priorIds = new Set(target.extra.uwu_msg_ids || []);
+                target.extra.uwu_image_description_ids = [...new Set([
+                    ...(target.extra.uwu_image_description_ids || []),
+                    ...imageDescriptionIds.filter(id => !priorIds.has(id))
+                ])];
                 target.extra.uwu_msg_ids = [...(target.extra.uwu_msg_ids || []), ...newMsgs.map(m => m.id)];
                 if (oldLens) target.extra.uwu_line_lens = [...oldLens, ...this._lineLens(rawLines)];
                 else delete target.extra.uwu_line_lens;
@@ -2386,7 +2402,7 @@ const TavernSync = {
                     is_user: true, is_system: false,
                     send_date: new Date().toISOString(),
                     mes: mergedContent,
-                    extra: { from_uwu: true, uwu_created: true, uwu_push_time: Date.now(), uwu_msg_ids: newMsgs.map(m => m.id), uwu_line_lens: this._lineLens(rawLines), st_char_name: stCharName },
+                    extra: { from_uwu: true, uwu_created: true, uwu_push_time: Date.now(), uwu_msg_ids: newMsgs.map(m => m.id), uwu_image_description_ids: imageDescriptionIds, uwu_line_lens: this._lineLens(rawLines), st_char_name: stCharName },
                 });
             }
         }
@@ -4041,7 +4057,7 @@ function setupTavernSyncScreen() {
         try { renderBindings(); } catch (e) { /* 画不出来不影响保存 */ }
     });
 
-    // ===== 推送内容：通话、状态栏、在线状态都按角色分开设 =====
+    // ===== 推送内容：通话、状态栏、在线状态、识图结果都按角色分开设 =====
     const pushCharSelect = mainEl.querySelector('#ts-push-char');
     const perCharBox = mainEl.querySelector('#ts-push-per-char');
     function renderPushPerChar() {
@@ -4101,7 +4117,7 @@ function setupTavernSyncScreen() {
                 </div>
                 <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" id="ts-cc-image" ${imageOn ? 'checked' : ''}><span class="kkt-slider"></span></span>
             </label>
-            <div style="font-size:12px; color:#888; margin-top:10px; line-height:1.6;">通话、状态栏和在线状态设置只影响以后推送的消息，已经在酒馆里的不会跟着改或被删掉。</div>`;
+            <div style="font-size:12px; color:#888; margin-top:10px; line-height:1.6;">通话、状态栏、在线状态和识图结果设置只影响以后推送的消息，已经在酒馆里的不会跟着改或被删掉。</div>`;
         const save = async (fn) => {
             const cfg2 = TavernSync.getConfig();
             const b2 = (cfg2.bindings || [])[idx];
