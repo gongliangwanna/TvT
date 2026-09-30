@@ -1796,6 +1796,9 @@ const TavernSync = {
         if (binding && typeof binding.pushIncludeOnlineStatus === 'boolean') return binding.pushIncludeOnlineStatus;
         return this.getConfig().pushIncludeOnlineStatus === true;
     },
+    pushImageDescriptionsFor(binding) {
+        return binding?.pushImageDescriptions === true;
+    },
 
     // 通话推送方式：'summary' 只推总结（默认）/ 'context' 只推记录 / 'both' 都推 / 'none' 不推送。
     // 兼容以前那个「通话连完整对话一起推」的开关（打开过的算“都推”）。
@@ -1803,6 +1806,49 @@ const TavernSync = {
         const m = binding && binding.callPushMode;
         if (m === 'summary' || m === 'context' || m === 'both' || m === 'none') return m;
         return (binding && binding.pushCallContext) ? 'both' : 'summary';
+    },
+
+    // 主聊天模型能直接看原图并回答，但它的回答不会自动写入图片的 description。
+    // 已绑定聊天开启额外识图后，在回复后或推送前补全描述；同一页面内失败也不反复请求。
+    _imageDescriptionAttempts: new Set(),
+    async describeImagesAfterReply(charId, messageIds) {
+        if (!Array.isArray(messageIds) || !messageIds.length) return;
+        const char = db.characters.find(c => c.id === charId);
+        if (!char || !this.pushImageDescriptionsFor(this.findBindingForChar(charId))) return;
+        const wanted = new Set(messageIds);
+        const pending = (char.history || []).filter(m => m && wanted.has(m.id) && m.role === 'user'
+            && Array.isArray(m.parts) && m.parts.some(p => p?.type === 'image' && !p.description)
+            && !this._imageDescriptionAttempts.has(m.id));
+        if (!pending.length) return;
+        if (typeof generateImageDescription !== 'function') {
+            this.reportIssue('小手机的图片识别功能没有加载，图片内容暂时无法补到酒馆');
+            return;
+        }
+        const saved = db.imageRecognitionApiSettings;
+        const savedReady = typeof isApiConfigReady === 'function'
+            ? isApiConfigReady(saved) : !!(saved && saved.url && saved.key && saved.model);
+        const api = savedReady ? saved : db.apiSettings;
+        const ready = typeof isApiConfigReady === 'function'
+            ? isApiConfigReady(api) : !!(api && api.url && api.key && api.model);
+        if (!ready || api.imageMode === 'reject' || api.imageMode === 'description') {
+            this.reportIssue('图片内容未能同步：请在小手机的 API 设置中配置能看图的识图 API');
+            return;
+        }
+        for (const msg of pending) {
+            // 等待前一张识图时，用户可能已经关掉开关。
+            if (!this.pushImageDescriptionsFor(this.findBindingForChar(charId))) break;
+            this._imageDescriptionAttempts.add(msg.id);
+            try {
+                await generateImageDescription(msg, char, api);
+                if (msg.parts.some(p => p?.type === 'image' && !p.description)) {
+                    this.reportIssue('图片内容未能同步：识图没有返回描述，酒馆暂时保留空的图片消息');
+                } else if (typeof saveCharacter === 'function') {
+                    await saveCharacter(char.id);
+                }
+            } catch (e) {
+                this.reportIssue('图片内容未能同步：' + e.message);
+            }
+        }
     },
 
     _pushHelpers(char, binding) {
@@ -2065,6 +2111,17 @@ const TavernSync = {
                 if (rr.recovered) stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
             } catch (e) { this.reportIssue('核对被酒馆盖掉的推送时出错：' + e.message, 'push'); }
         }
+        // 兼容修复前已经推过空占位的图片：若后面已有 AI 回复，推送时也补查描述。
+        // 尚未收到回复的新图片保持空占位。一次最多处理最近三张，避免旧聊天一次发出大量识图请求。
+        const answeredImages = [];
+        let sawReply = false;
+        for (let i = char.history.length - 1; i >= 0 && answeredImages.length < 3; i--) {
+            const m = char.history[i];
+            if (m?.role === 'assistant' || m?.role === 'char') sawReply = true;
+            else if (sawReply && m?.role === 'user' && Array.isArray(m.parts)
+                && m.parts.some(p => p?.type === 'image' && !p.description)) answeredImages.push(m.id);
+        }
+        if (answeredImages.length) await this.describeImagesAfterReply(char.id, answeredImages.reverse());
         const { allUwuMsgs, toLine, withTimeLine, hasTimeLine, phoneById } = this._pushHelpers(char, binding);
         // 小手机里还在的消息。只有从小手机里真的删掉了，才去酒馆里删（改推送设置不算删）。
         // binding.keptIds：被“重新生成”换掉的旧回复。它们在小手机里没了，但酒馆里的旧版本要保留，所以当作还在（yuan 版新增）
@@ -2218,6 +2275,7 @@ const TavernSync = {
         let pushLines = [];
         let rawLines = [];      // 和 newMsgs 一一对应（写空的也在），用来记每一段有多长
         if (newMsgs.length > 0) {
+            await this.describeImagesAfterReply(char.id, newMsgs.map(m => m.id));
             rawLines = newMsgs.map(toLine);
             pushLines = rawLines.filter(l => l && l.trim());
             // 新消息剥掉状态栏等之后全部为空，就当没有新消息（删除照样处理）
@@ -3950,6 +4008,7 @@ function setupTavernSyncScreen() {
         const callMode = TavernSync.callPushMode(b);
         const statusOn = TavernSync.pushIncludeStatusBarFor(b);
         const onlineOn = TavernSync.pushIncludeOnlineStatusFor(b);
+        const imageOn = TavernSync.pushImageDescriptionsFor(b);
         perCharBox.innerHTML = `
             <label style="display:flex; align-items:center; gap:8px; margin-top:12px; font-size:13px;">
                 <span style="white-space:nowrap;">通话推送</span>
@@ -3975,7 +4034,14 @@ function setupTavernSyncScreen() {
                 </div>
                 <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" id="ts-cc-online" ${onlineOn ? 'checked' : ''}><span class="kkt-slider"></span></span>
             </label>
-            <div style="font-size:12px; color:#888; margin-top:10px; line-height:1.6;">这几项只影响以后推送的消息，已经在酒馆里的不会跟着改或被删掉。</div>`;
+            <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; font-size:13px; cursor:pointer;">
+                <div>
+                    <div>推送识图结果到酒馆</div>
+                    <div style="font-size:12px; color:#888; line-height:1.6; margin-top:2px;">开启后，为没有描述的图片额外请求识图，优先使用后台自动识图 API，未配置时使用主 API。关闭后只使用已有描述，没有描述时留空。默认关闭。</div>
+                </div>
+                <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" id="ts-cc-image" ${imageOn ? 'checked' : ''}><span class="kkt-slider"></span></span>
+            </label>
+            <div style="font-size:12px; color:#888; margin-top:10px; line-height:1.6;">通话、状态栏和在线状态设置只影响以后推送的消息，已经在酒馆里的不会跟着改或被删掉。</div>`;
         const save = async (fn) => {
             const cfg2 = TavernSync.getConfig();
             const b2 = (cfg2.bindings || [])[idx];
@@ -3989,6 +4055,7 @@ function setupTavernSyncScreen() {
         }));
         perCharBox.querySelector('#ts-cc-status').addEventListener('change', (e) => save(b2 => { b2.pushIncludeStatusBar = e.target.checked; }));
         perCharBox.querySelector('#ts-cc-online').addEventListener('change', (e) => save(b2 => { b2.pushIncludeOnlineStatus = e.target.checked; }));
+        perCharBox.querySelector('#ts-cc-image').addEventListener('change', (e) => save(b2 => { b2.pushImageDescriptions = e.target.checked; }));
     }
     pushCharSelect.addEventListener('change', () => {
         const b = (TavernSync.getConfig().bindings || [])[parseInt(pushCharSelect.value, 10)];

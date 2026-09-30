@@ -288,6 +288,20 @@
         }
         const originalGetAiReply = window.getAiReply;
         window.getAiReply = async function (chatId, chatType) {
+            // 记住本轮用户发的图片。主聊天模型可能直接看图回答，却没有把描述存进消息。
+            let imageIds = [];
+            if (chatType === 'private' && window.TavernSync?.findBindingForChar(chatId)) {
+                const chat = db.characters.find(c => c.id === chatId);
+                const history = chat?.history || [];
+                let lastReply = -1;
+                for (let i = history.length - 1; i >= 0; i--) {
+                    if (history[i]?.role === 'assistant' || history[i]?.role === 'char') { lastReply = i; break; }
+                }
+                imageIds = history.slice(lastReply + 1)
+                    .filter(m => m?.role === 'user' && Array.isArray(m.parts)
+                        && m.parts.some(p => p?.type === 'image' && !p.description))
+                    .map(m => m.id);
+            }
             let regen = null;
             try { if (window.TavernSync) regen = beginRegenerate(chatId, chatType); }
             catch (e) { fail('处理重新生成出错：' + e.message); }
@@ -302,6 +316,10 @@
                 }
             }
             if (result === true && chatType === 'private' && window.TavernSync) {
+                if (imageIds.length) {
+                    try { await window.TavernSync.describeImagesAfterReply(chatId, imageIds); }
+                    catch (e) { fail('图片描述补全失败：' + e.message); }
+                }
                 window.TavernSync.autoPushIfNeeded(chatId).catch(e => console.warn(`${TAG} 自动推送失败：`, e));
             }
             return result;
