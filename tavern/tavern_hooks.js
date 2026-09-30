@@ -317,8 +317,10 @@
             }
             if (result === true && chatType === 'private' && window.TavernSync) {
                 if (imageIds.length) {
-                    window.TavernSync.describeImagesAfterReply(chatId, imageIds)
-                        .catch(e => fail('图片描述补全失败：' + e.message));
+                    const binding = window.TavernSync.findBindingForChar(chatId);
+                    if (window.TavernSync.pushImageDescriptionsFor(binding)) {
+                        window.TavernSync._startImageDescriptions({ ...binding }, imageIds);
+                    }
                 }
                 window.TavernSync.autoPushIfNeeded(chatId).catch(e => console.warn(`${TAG} 自动推送失败：`, e));
             }

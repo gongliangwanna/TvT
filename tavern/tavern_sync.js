@@ -1824,8 +1824,25 @@ const TavernSync = {
         const current = this.findBindingForChar(target.uwuCharId);
         return !!current && current.stCharAvatar === target.stCharAvatar && current.stChatFile === target.stChatFile;
     },
-    _retryImageTask(map, key, error, run) {
-        const count = (map.get(key)?.count || 0) + 1;
+    _sameImageTarget(a, b) {
+        return !!a && !!b && a.uwuCharId === b.uwuCharId && a.stCharAvatar === b.stCharAvatar && a.stChatFile === b.stChatFile;
+    },
+    _cancelImageRetries(target, id) {
+        const key = JSON.stringify([target.uwuCharId, id]);
+        for (const [map, mapKey, kind] of [
+            [this._imageDescriptionFailures, key, 'image-description:' + key],
+            [this._imageWriteFailures, 'image-write:' + key, 'image-write:' + key]
+        ]) {
+            const failed = map.get(mapKey);
+            if (failed && this._sameImageTarget(failed.target, target)) {
+                this._clearImageFailure(map, mapKey);
+                this.resolveIssues(kind);
+            }
+        }
+    },
+    _retryImageTask(map, key, error, run, target) {
+        const previous = map.get(key);
+        const count = (previous?.target && target && !this._sameImageTarget(previous.target, target) ? 0 : previous?.count || 0) + 1;
         this._clearImageFailure(map, key);
         const status = Number(error.response?.status || error.status);
         const permanent = error.noRetry || (status >= 400 && status < 500 && ![408, 425, 429].includes(status));
@@ -1835,15 +1852,33 @@ const TavernSync = {
             const requested = /^\d+(\.\d+)?$/.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now();
             if (Number.isFinite(requested)) delay = Math.max(delay, requested);
         }
-        const failed = { count, retryAt: Infinity, timer: null };
+        const failed = { count, retryAt: Infinity, timer: null, target: target && { ...target } };
+        map.set(key, failed);
         if (!permanent && Number.isFinite(delay)) {
             failed.retryAt = Date.now() + delay;
-            failed.timer = setTimeout(() => { failed.timer = null; failed.retryAt = 0; run(); }, delay);
+            // 浏览器定时器有 32 位上限，过大的 Retry-After 不能溢出成立即执行。
+            const wake = (remaining = failed.retryAt - Date.now()) => {
+                if (map.get(key) !== failed) return;
+                if (remaining > 2147483647) { failed.timer = setTimeout(() => wake(), 2147483647); return; }
+                failed.timer = setTimeout(() => {
+                    if (map.get(key) !== failed) return;
+                    failed.timer = null; failed.retryAt = 0; run();
+                }, Math.max(0, remaining));
+            };
+            wake(delay);
         }
-        map.set(key, failed);
         return failed.timer ? '将自动重试。' : '自动重试已停止，可再次确认推送重试。';
     },
     IMAGE_DESCRIPTION_TIMEOUT_MS: 60000,
+    _imageResponseContent(data, provider, delta = false) {
+        if (data?.error || data?.type === 'error') {
+            const detail = data.error || data;
+            const error = new Error(typeof detail === 'string' ? detail : detail.message || '识图接口返回错误');
+            error.status = Number(detail.status || detail.code || data.status) || undefined;
+            throw error;
+        }
+        return extractAiProviderResponse(data, provider, delta).content || '';
+    },
     async _fetchTavernImageResponse(settings, body, headers, endpoint, state) {
         // 使用小手机的提供商适配，只有互通额外识图的请求带独立取消信号。
         const prepared = prepareAiProviderRequest({ ...settings, streamEnabled: false }, body, headers, endpoint, false);
@@ -1856,24 +1891,29 @@ const TavernSync = {
             error.response = response;
             throw error;
         }
-        if ((response.headers.get('content-type') || '').includes('text/event-stream')) {
-            return readStreamResponse(response, prepared.provider);
-        }
+        // 识图本来就要等完整描述；统一读完再解析，整个过程仍受取消信号和超时约束。
+        // 主聊天的流读取器不支持部分 Gemini SSE、Anthropic event 行及 CRLF。
         const text = await response.text();
         let data;
         try { data = JSON.parse(text); }
         catch (e) {
-            // 兼容没有正确标注 Content-Type 的流式接口，与主 API 的兜底一致。
+            // 不依赖接口是否正确标注 Content-Type。一个 SSE 事件可有多行 data。
             let content = '';
-            for (const line of text.split('\n')) {
-                if (!line.startsWith('data: ') || line.includes('[DONE]')) continue;
-                try { content += extractAiProviderResponse(JSON.parse(line.slice(6)), prepared.provider, true).content || ''; }
-                catch (_) { /* 跳过心跳或不完整的数据行 */ }
+            for (const event of text.replace(/\r\n?/g, '\n').split('\n\n')) {
+                const payload = event.split('\n').filter(line => line.startsWith('data:'))
+                    .map(line => line.slice(5).replace(/^ /, '')).join('\n').trim();
+                if (!payload || payload === '[DONE]') continue;
+                let chunk;
+                try { chunk = JSON.parse(payload); }
+                catch (_) { throw new Error('识图接口返回的流式内容无法解析'); }
+                content += this._imageResponseContent(chunk, prepared.provider, true);
             }
             if (content) return content;
             throw new Error('识图接口返回的内容无法解析');
         }
-        return extractAiProviderResponse(data, prepared.provider).content;
+        // Gemini 也可能把流式片段作为 JSON 数组返回。
+        if (Array.isArray(data)) return data.map(chunk => this._imageResponseContent(chunk, prepared.provider, true)).join('');
+        return this._imageResponseContent(data, prepared.provider);
     },
     async _generateTavernImageDescription(msg, char, api) {
         // 原识图函数会吞掉 API 错误；按本次独立配置对象捕获，主聊天请求不受影响。
@@ -1927,10 +1967,15 @@ const TavernSync = {
         this.describeImagesAfterReply(target.uwuCharId, ids, { ...opts, target }).catch(e => {
             // 识图之前读取酒馆也会遇到断网，不能因此丢掉整个重试任务。
             for (const id of ids) {
+                if (!this._imageTargetMatches(target)
+                    || !db.characters.find(c => c.id === target.uwuCharId)?.history?.some(m => m.id === id)) {
+                    this._cancelImageRetries(target, id);
+                    continue;
+                }
                 const key = JSON.stringify([target.uwuCharId, id]);
                 if (opts.retry) this._clearImageFailure(this._imageDescriptionFailures, key);
                 const retryText = this._retryImageTask(this._imageDescriptionFailures, key, e,
-                    () => this._startImageDescriptions(target, [id], { ...opts, retry: false }));
+                    () => this._startImageDescriptions(target, [id], { ...opts, retry: false }), target);
                 this.resolveIssues('image-description:' + key);
                 this.reportIssue('图片描述补全失败：' + e.message + '。' + retryText, 'image-description:' + key);
             }
@@ -1940,12 +1985,18 @@ const TavernSync = {
         if (!Array.isArray(messageIds) || !messageIds.length) return;
         const char = db.characters.find(c => c.id === charId);
         const binding = this.findBindingForChar(charId);
-        if (!char || !binding || (!opts.target && !this.pushImageDescriptionsFor(binding))) return;
-        const target = opts.target || { ...binding };
-        if (!this._imageTargetMatches(target)) return;
+        const target = opts.target || (binding && { ...binding });
+        if (!target) return;
+        if (!char || !this._imageTargetMatches(target)) {
+            messageIds.forEach(id => this._cancelImageRetries(target, id));
+            return;
+        }
+        if (!opts.target && !this.pushImageDescriptionsFor(binding)) return;
         const wanted = new Set(messageIds);
         let pending = (char.history || []).filter(m => m && wanted.has(m.id) && m.role === 'user'
             && Array.isArray(m.parts) && m.parts.some(p => p?.type === 'image'));
+        const present = new Set(pending.map(m => m.id));
+        messageIds.filter(id => !present.has(id)).forEach(id => this._cancelImageRetries(target, id));
         if (!pending.length) return;
         const allowed = new Set();
         {
@@ -1956,10 +2007,17 @@ const TavernSync = {
                 for (const id of stMsg?.extra?.uwu_msg_ids || []) pushed.add(id);
                 for (const id of stMsg?.extra?.uwu_image_description_ids || []) allowed.add(id);
             }
-            pending = pending.filter(m => allowed.has(m.id) || (!opts.requirePushed && !pushed.has(m.id)));
+            pending = pending.filter(m => {
+                const eligible = allowed.has(m.id) || (!opts.requirePushed && !pushed.has(m.id));
+                if (!eligible) this._cancelImageRetries(target, m.id);
+                return eligible;
+            });
         }
         await Promise.all(pending.map(async msg => {
-            if (!this._imageTargetMatches(target) || !char.history.includes(msg)) return;
+            if (!this._imageTargetMatches(target) || !db.characters.includes(char) || !char.history.includes(msg)) {
+                this._cancelImageRetries(target, msg.id);
+                return;
+            }
             const requirePushed = opts.requirePushed || allowed.has(msg.id);
             // 原识图函数按真值判断是否已有描述，空白字符串必须先归为空。
             for (const part of msg.parts) {
@@ -1969,11 +2027,28 @@ const TavernSync = {
             const kind = 'image-description:' + key;
             // 必须先等待同一张图的请求。曾开始过不等于已经完成。
             const active = this._imageDescriptionJobs.get(key);
-            if (active) { await active; return; }
+            if (active) {
+                await active;
+                // 新绑定复用旧请求的识图结果，但必须按新绑定重新核对补写资格。
+                if (!this._sameImageTarget(active.target, target) && this._imageTargetMatches(target)) {
+                    return this.describeImagesAfterReply(charId, [msg.id], { ...opts, target, retry: true });
+                }
+                return;
+            }
+            const prior = this._imageDescriptionFailures.get(key);
+            if (prior?.target && !this._sameImageTarget(prior.target, target)) {
+                this._clearImageFailure(this._imageDescriptionFailures, key);
+                this.resolveIssues(kind);
+            }
             if (opts.retry) this._clearImageFailure(this._imageDescriptionFailures, key);
             const failed = this._imageDescriptionFailures.get(key);
-            if (!opts.retry && failed && Date.now() < failed.retryAt) return;
+            const needsDescription = msg.parts.some(p => p?.type === 'image' && !p.description);
+            // 其他识图流程已补齐描述时，不再受旧 API 失败的冷却限制。
+            // 本地保存失败仍须遵守原有重试次数与间隔。
+            if (!opts.retry && failed && (needsDescription || failed.needsSave) && Date.now() < failed.retryAt) return;
+            if (!needsDescription && failed && !failed.needsSave) this._clearImageFailure(this._imageDescriptionFailures, key);
             const job = Promise.resolve().then(async () => {
+                let needsSave = false;
                 try {
                     // 本地保存失败也共享同一个任务、冷却和次数上限；已有描述不重复请求 API。
                     if (msg.parts.some(p => p?.type === 'image' && !p.description)) {
@@ -1987,10 +2062,15 @@ const TavernSync = {
                         }
                         await this._generateTavernImageDescription(msg, char, api);
                     }
+                    if (!this._imageTargetMatches(target) || !db.characters.includes(char) || !char.history.includes(msg)) {
+                        this._cancelImageRetries(target, msg.id);
+                        return;
+                    }
                     for (const part of msg.parts) {
                         if (part?.type === 'image' && typeof part.description === 'string' && !part.description.trim()) part.description = '';
                     }
                     if (msg.parts.some(p => p?.type === 'image' && !p.description)) throw new Error('识图没有返回描述');
+                    needsSave = true;
                     if (typeof saveCharacter === 'function' && await saveCharacter(char.id) === false) {
                         throw new Error('图片描述未能保存到小手机');
                     }
@@ -1999,12 +2079,18 @@ const TavernSync = {
                     // 排在写入队列后面补已推送的行，不等待它，避免推送正在等待本次识图时互相卡住。
                     this._queueImageDescriptionSync(target, msg.id);
                 } catch (e) {
+                    if (!this._imageTargetMatches(target) || !db.characters.includes(char) || !char.history.includes(msg)) {
+                        this._cancelImageRetries(target, msg.id);
+                        return;
+                    }
                     const retryText = this._retryImageTask(this._imageDescriptionFailures, key, e,
-                        () => this._startImageDescriptions(target, [msg.id], { requirePushed }));
+                        () => this._startImageDescriptions(target, [msg.id], { requirePushed }), target);
+                    this._imageDescriptionFailures.get(key).needsSave = needsSave;
                     this.resolveIssues(kind);
                     this.reportIssue(`「${char.remarkName || char.name || char.myName || '当前角色'}」图片识图失败：${e.message}。图片内容暂时留空，${retryText}`, kind);
                 }
             }).finally(() => this._imageDescriptionJobs.delete(key));
+            job.target = target;
             this._imageDescriptionJobs.set(key, job);
             await job;
         }));
@@ -2013,8 +2099,13 @@ const TavernSync = {
     _queueImageDescriptionSync(target, messageId) {
         const kind = 'image-write:' + JSON.stringify([target.uwuCharId, messageId]);
         this.syncRecognizedImage(target, messageId).catch(e => {
+            if (!this._imageTargetMatches(target)
+                || !db.characters.find(c => c.id === target.uwuCharId)?.history?.some(m => m.id === messageId)) {
+                this._cancelImageRetries(target, messageId);
+                return;
+            }
             const retryText = this._retryImageTask(this._imageWriteFailures, kind, e,
-                () => this._queueImageDescriptionSync(target, messageId));
+                () => this._queueImageDescriptionSync(target, messageId), target);
             this.resolveIssues(kind);
             this.reportIssue('图片识别成功，但补写酒馆失败：' + e.message + '。' + retryText, kind);
         });
@@ -2055,17 +2146,29 @@ const TavernSync = {
     async syncRecognizedImage(target, messageId) {
         const binding = this.findBindingForChar(target.uwuCharId);
         if (!binding || binding.stChatFile !== target.stChatFile
-            || binding.stCharAvatar !== target.stCharAvatar) return;
+            || binding.stCharAvatar !== target.stCharAvatar) {
+            this._cancelImageRetries(target, messageId);
+            return;
+        }
         const char = db.characters.find(c => c.id === target.uwuCharId);
         const msg = char?.history?.find(m => m.id === messageId);
-        if (!msg?.parts?.some(p => p?.type === 'image' && p.description)) return;
+        if (!msg?.parts?.some(p => p?.type === 'image' && p.description)) {
+            this._cancelImageRetries(target, messageId);
+            return;
+        }
         const { phoneById, toLine, withTimeLine } = this._pushHelpers(char, binding);
         const stMsgs = await this.getSTChatMessages(target.stCharAvatar, target.stChatFile);
         // 读取酒馆期间也可能改绑定；不能用变化后的地址保存刚读到的旧聊天。
         const current = this.findBindingForChar(target.uwuCharId);
-        if (!current || current.stChatFile !== target.stChatFile || current.stCharAvatar !== target.stCharAvatar) return;
+        if (!current || current.stChatFile !== target.stChatFile || current.stCharAvatar !== target.stCharAvatar) {
+            this._cancelImageRetries(target, messageId);
+            return;
+        }
         // 读取期间可能删图或替换整个角色数据，不能使用读取前缓存的消息继续补写。
-        if (!db.characters.includes(char) || !char.history.includes(msg)) return;
+        if (!db.characters.includes(char) || !char.history.includes(msg)) {
+            this._cancelImageRetries(target, messageId);
+            return;
+        }
         let changed = false;
         for (const stMsg of stMsgs) {
             if (this._patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine, new Set([messageId]))) changed = true;
@@ -2489,7 +2592,10 @@ const TavernSync = {
             // 2. 合并到最后一楼模式：不管最后一楼是什么，都接在它末尾
             const lastIsOwnFloor = !!(lastMsg && lastMsg.extra && lastMsg.extra.uwu_created
                 && !lastMsg.extra.uwu_summary && Array.isArray(lastMsg.extra.uwu_msg_ids));
-            const appendToLast = lastIsOwnFloor || (pushMode === 'append' && lastMsg);
+            // 手动重推可能含同一个编号。放进同一段会使逐条长度和识图资格无法区分两份副本。
+            const newIds = new Set(newMsgs.map(m => m.id));
+            const overlaps = lastMsg?.extra?.uwu_msg_ids?.some(id => newIds.has(id));
+            const appendToLast = !overlaps && (lastIsOwnFloor || (pushMode === 'append' && lastMsg));
             const own = appendToLast && lastMsg.extra?.from_uwu ? lastPhoneBlock(lastMsg.mes) : null;
             const firstFilled = rawLines.findIndex(l => l && l.trim());
             rawLines = rawLines.map((line, i) => line ? withTimeLine(newMsgs[i], line, i === firstFilled && !own) : line);
@@ -2543,8 +2649,9 @@ const TavernSync = {
             }
         }
         // 空占位先落盘，再启动识图；写入队列从不等待 API。资格以落盘的逐条标记为准。
+        const eligibleImages = new Set(all.flatMap(m => m.extra?.uwu_image_description_ids || []));
         const imageIds = (Array.isArray(opts.messages) ? opts.messages : newMsgs)
-            .filter(m => m.role === 'user' && m.parts?.some(p => p?.type === 'image')).map(m => m.id);
+            .filter(m => eligibleImages.has(m.id) && m.role === 'user' && m.parts?.some(p => p?.type === 'image')).map(m => m.id);
         if (imageIds.length && !opts.recovering) this._startImageDescriptions({ ...binding }, imageIds,
             { requirePushed: true, retry: Array.isArray(opts.messages) });
         // 记一笔：万一酒馆正在生成回复、忙完把这次推的盖掉了，能发现并补推
