@@ -1810,89 +1810,170 @@ const TavernSync = {
     },
 
     // 主聊天模型能直接看原图并回答，但它的回答不会自动写入图片的 description。
-    // 同一张图共享正在进行的请求；自动失败冷却 30 秒，最多尝试三次，手动推送允许重试。
+    // 识图不占写入队列；同一张图共享请求，失败后最多自动重试三次。
     _imageDescriptionJobs: new Map(),
     _imageDescriptionFailures: new Map(),
+    _imageWriteFailures: new Map(),
+    _imageApiErrors: new WeakMap(),
+    _clearImageFailure(map, key) {
+        const failed = map.get(key);
+        if (failed?.timer) clearTimeout(failed.timer);
+        map.delete(key);
+    },
+    _imageTargetMatches(target) {
+        const current = this.findBindingForChar(target.uwuCharId);
+        return !!current && current.stCharAvatar === target.stCharAvatar && current.stChatFile === target.stChatFile;
+    },
+    _retryImageTask(map, key, error, run) {
+        const count = (map.get(key)?.count || 0) + 1;
+        this._clearImageFailure(map, key);
+        const status = Number(error.response?.status || error.status);
+        const permanent = error.noRetry || (status >= 400 && status < 500 && ![408, 425, 429].includes(status));
+        let delay = [5000, 15000, 30000][count - 1];
+        const header = error.response?.headers?.get?.('Retry-After');
+        if (header) {
+            const requested = /^\d+(\.\d+)?$/.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now();
+            if (Number.isFinite(requested)) delay = Math.max(delay, requested);
+        }
+        const failed = { count, retryAt: Infinity, timer: null };
+        if (!permanent && Number.isFinite(delay)) {
+            failed.retryAt = Date.now() + delay;
+            failed.timer = setTimeout(() => { failed.timer = null; failed.retryAt = 0; run(); }, delay);
+        }
+        map.set(key, failed);
+        return failed.timer ? '将自动重试。' : '自动重试已停止，可再次确认推送重试。';
+    },
+    async _generateTavernImageDescription(msg, char, api) {
+        // 原识图函数会吞掉 API 错误；按本次独立配置对象捕获，主聊天请求不受影响。
+        if (typeof fetchAiResponse === 'function' && !fetchAiResponse._tavernImageErrors) {
+            const original = fetchAiResponse;
+            const errors = this._imageApiErrors;
+            const wrapped = async function (settings, ...args) {
+                try { return await original.call(this, settings, ...args); }
+                catch (e) { if (errors.has(settings)) errors.set(settings, e); throw e; }
+            };
+            wrapped._tavernImageErrors = true;
+            fetchAiResponse = wrapped;
+        }
+        const settings = { ...api };
+        this._imageApiErrors.set(settings, null);
+        try {
+            await generateImageDescription(msg, char, settings);
+            const error = this._imageApiErrors.get(settings);
+            if (error) throw error;
+        } finally { this._imageApiErrors.delete(settings); }
+    },
+    _startImageDescriptions(target, ids, opts = {}) {
+        this.describeImagesAfterReply(target.uwuCharId, ids, { ...opts, target }).catch(e => {
+            // 识图之前读取酒馆也会遇到断网，不能因此丢掉整个重试任务。
+            for (const id of ids) {
+                const key = JSON.stringify([target.uwuCharId, id]);
+                if (opts.retry) this._clearImageFailure(this._imageDescriptionFailures, key);
+                const retryText = this._retryImageTask(this._imageDescriptionFailures, key, e,
+                    () => this._startImageDescriptions(target, [id], { ...opts, retry: false }));
+                this.resolveIssues('image-description:' + key);
+                this.reportIssue('图片描述补全失败：' + e.message + '。' + retryText, 'image-description:' + key);
+            }
+        });
+    },
     async describeImagesAfterReply(charId, messageIds, opts = {}) {
         if (!Array.isArray(messageIds) || !messageIds.length) return;
         const char = db.characters.find(c => c.id === charId);
         const binding = this.findBindingForChar(charId);
-        if (!char || !this.pushImageDescriptionsFor(binding)) return;
-        const target = { ...binding }; // 请求期间换了绑定，不能把结果写到另一个聊天。
+        if (!char || !binding || (!opts.target && !this.pushImageDescriptionsFor(binding))) return;
+        const target = opts.target || { ...binding };
+        if (!this._imageTargetMatches(target)) return;
         const wanted = new Set(messageIds);
         let pending = (char.history || []).filter(m => m && wanted.has(m.id) && m.role === 'user'
             && Array.isArray(m.parts) && m.parts.some(p => p?.type === 'image'));
         if (!pending.length) return;
-        if (!opts.forPush) {
+        const allowed = new Set();
+        {
             // 回复后补识图也要尊重消息推送当时的设置。旧消息没有标记，保持原样。
             const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
-            const pushed = new Set(), allowed = new Set();
+            const pushed = new Set();
             for (const stMsg of stMsgs) {
                 for (const id of stMsg?.extra?.uwu_msg_ids || []) pushed.add(id);
                 for (const id of stMsg?.extra?.uwu_image_description_ids || []) allowed.add(id);
             }
-            pending = pending.filter(m => !pushed.has(m.id) || allowed.has(m.id));
+            pending = pending.filter(m => allowed.has(m.id) || (!opts.requirePushed && !pushed.has(m.id)));
         }
-        for (const msg of pending) {
-            if (!this.pushImageDescriptionsFor(this.findBindingForChar(charId))) break;
+        await Promise.all(pending.map(async msg => {
+            if (!this._imageTargetMatches(target) || !char.history.includes(msg)) return;
+            const requirePushed = opts.requirePushed || allowed.has(msg.id);
+            // 原识图函数按真值判断是否已有描述，空白字符串必须先归为空。
+            for (const part of msg.parts) {
+                if (part?.type === 'image' && typeof part.description === 'string' && !part.description.trim()) part.description = '';
+            }
             const key = JSON.stringify([charId, msg.id]);
             const kind = 'image-description:' + key;
             // 必须先等待同一张图的请求。曾开始过不等于已经完成。
             const active = this._imageDescriptionJobs.get(key);
-            if (active) { await active; continue; }
+            if (active) { await active; return; }
             if (!msg.parts.some(p => p?.type === 'image' && !p.description)) {
                 // 上次可能已识图成功但本地保存失败；保存真正成功后再撤掉错误。
                 if (this._imageDescriptionFailures.has(key) && typeof saveCharacter === 'function') {
                     try {
-                        if (await saveCharacter(char.id) === false) continue;
-                    } catch (e) { continue; }
+                        if (await saveCharacter(char.id) === false) throw new Error('图片描述未能保存到小手机');
+                    } catch (e) {
+                        this._retryImageTask(this._imageDescriptionFailures, key, e,
+                            () => this._startImageDescriptions(target, [msg.id], { requirePushed }));
+                        return;
+                    }
                 }
-                this._imageDescriptionFailures.delete(key);
+                this._clearImageFailure(this._imageDescriptionFailures, key);
                 this.resolveIssues(kind);
                 this._queueImageDescriptionSync(target, msg.id);
-                continue;
+                return;
             }
+            if (opts.retry) this._clearImageFailure(this._imageDescriptionFailures, key);
             const failed = this._imageDescriptionFailures.get(key);
-            if (!opts.retry && failed && (failed.count >= 3 || Date.now() < failed.retryAt)) continue;
+            if (!opts.retry && failed && Date.now() < failed.retryAt) return;
             const job = Promise.resolve().then(async () => {
                 try {
-                    if (typeof generateImageDescription !== 'function') throw new Error('小手机的图片识别功能没有加载');
+                    if (typeof generateImageDescription !== 'function') throw Object.assign(new Error('小手机的图片识别功能没有加载'), { noRetry: true });
                     const saved = db.imageRecognitionApiSettings;
                     const isReady = api => typeof isApiConfigReady === 'function'
                         ? isApiConfigReady(api) : !!(api && api.url && api.key && api.model);
                     const api = isReady(saved) ? saved : db.apiSettings;
                     if (!isReady(api) || api.imageMode === 'reject' || api.imageMode === 'description') {
-                        throw new Error('请在小手机的 API 设置中配置能看图的识图 API');
+                        throw Object.assign(new Error('请在小手机的 API 设置中配置能看图的识图 API'), { noRetry: true });
                     }
-                    await generateImageDescription(msg, char, api);
+                    await this._generateTavernImageDescription(msg, char, api);
+                    for (const part of msg.parts) {
+                        if (part?.type === 'image' && typeof part.description === 'string' && !part.description.trim()) part.description = '';
+                    }
                     if (msg.parts.some(p => p?.type === 'image' && !p.description)) throw new Error('识图没有返回描述');
                     if (typeof saveCharacter === 'function' && await saveCharacter(char.id) === false) {
                         throw new Error('图片描述未能保存到小手机');
                     }
-                    this._imageDescriptionFailures.delete(key);
+                    this._clearImageFailure(this._imageDescriptionFailures, key);
                     this.resolveIssues(kind);
                     // 排在写入队列后面补已推送的行，不等待它，避免推送正在等待本次识图时互相卡住。
                     this._queueImageDescriptionSync(target, msg.id);
                 } catch (e) {
-                    this._imageDescriptionFailures.set(key, { count: opts.retry ? 1 : (failed?.count || 0) + 1, retryAt: Date.now() + 30000 });
+                    const retryText = this._retryImageTask(this._imageDescriptionFailures, key, e,
+                        () => this._startImageDescriptions(target, [msg.id], { requirePushed }));
                     this.resolveIssues(kind);
-                    this.reportIssue(`「${char.remarkName || char.name || char.myName || '当前角色'}」图片识图失败：${e.message}。图片内容暂时留空，可再次确认推送重试。`, kind);
+                    this.reportIssue(`「${char.remarkName || char.name || char.myName || '当前角色'}」图片识图失败：${e.message}。图片内容暂时留空，${retryText}`, kind);
                 }
             }).finally(() => this._imageDescriptionJobs.delete(key));
             this._imageDescriptionJobs.set(key, job);
             await job;
-        }
+        }));
     },
 
     _queueImageDescriptionSync(target, messageId) {
         const kind = 'image-write:' + JSON.stringify([target.uwuCharId, messageId]);
         this.syncRecognizedImage(target, messageId).catch(e => {
+            const retryText = this._retryImageTask(this._imageWriteFailures, kind, e,
+                () => this._queueImageDescriptionSync(target, messageId));
             this.resolveIssues(kind);
-            this.reportIssue('图片识别成功，但补写酒馆失败：' + e.message, kind);
+            this.reportIssue('图片识别成功，但补写酒馆失败：' + e.message + '。' + retryText, kind);
         });
     },
 
-    _patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine, onlyIds) {
+    _patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine, onlyIds, updatedIds) {
         const ids = stMsg?.extra?.uwu_msg_ids;
         if (!stMsg?.extra?.from_uwu || !Array.isArray(ids) || stMsg.extra.uwu_summary) return false;
         let stored = this._blockLines(stMsg);
@@ -1919,6 +2000,7 @@ const TavernSync = {
         }
         if (!replacements.size) return false;
         this._rebuildPhoneBlock(stMsg, ids, phoneById, toLine, replacements, withTimeLine);
+        if (updatedIds) for (const id of replacements.keys()) updatedIds.add(id);
         return true;
     },
 
@@ -1931,16 +2013,20 @@ const TavernSync = {
         const msg = char?.history?.find(m => m.id === messageId);
         if (!msg?.parts?.some(p => p?.type === 'image' && p.description)) return;
         const { phoneById, toLine, withTimeLine } = this._pushHelpers(char, binding);
-        const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+        const stMsgs = await this.getSTChatMessages(target.stCharAvatar, target.stChatFile);
+        // 读取酒馆期间也可能改绑定；不能用变化后的地址保存刚读到的旧聊天。
+        const current = this.findBindingForChar(target.uwuCharId);
+        if (!current || current.stChatFile !== target.stChatFile || current.stCharAvatar !== target.stCharAvatar) return;
         let changed = false;
         for (const stMsg of stMsgs) {
             if (this._patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine, new Set([messageId]))) changed = true;
         }
         if (changed) {
-            await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: stMsgs });
+            await this.apiCall('/api/chats/save', { avatar_url: target.stCharAvatar, file_name: target.stChatFile, chat: stMsgs });
             this._notifyData();
         }
         this.resolveIssues('image-write:' + JSON.stringify([char.id, messageId]));
+        this._clearImageFailure(this._imageWriteFailures, 'image-write:' + JSON.stringify([char.id, messageId]));
     },
 
     _pushHelpers(char, binding) {
@@ -2171,10 +2257,6 @@ const TavernSync = {
     // opts.noLog：这次推送不记进 recentPushes（兜底补推时用，免得你在酒馆里故意删的被一遍遍推回来）
     // opts.allowBulkDelete：一次要从酒馆删很多条时也照删（推送窗口里你点了「从酒馆删掉」时才传，见 BULK_DELETE_LIMIT）
     async pushToTavern(binding, pushCount, trackProgress = true, opts = {}) {
-        // 手动推送允许重试失败的识图，并等待后台已有请求；等待结束后才读取酒馆。
-        if (Array.isArray(opts.messages) && !opts.recovering) {
-            await this.describeImagesAfterReply(binding.uwuCharId, opts.messages.map(m => m.id), { retry: true, forPush: true });
-        }
         return this._pushToTavern(binding, pushCount, trackProgress, opts);
     },
     // 小手机里一次少了这么多条已经推到酒馆的消息时，不自动从酒馆删，先等你在推送窗口里决定。
@@ -2266,8 +2348,9 @@ const TavernSync = {
         // 只补推送当时已开启识图的图片；后来切换开关不回头改变旧消息。
         // 只改能确定原文位置的行，保留手工修改过的楼层。
         let hadImageUpdates = false;
+        const updatedImageIds = new Set();
         for (const stMsg of all) {
-            if (this._patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine)) hadImageUpdates = true;
+            if (this._patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine, null, updatedImageIds)) hadImageUpdates = true;
         }
 
         // 给旧推送补时间行：只有长度记录仍能准确拆出每条原文时才改；用户改过且拆不准的楼层原样保留。
@@ -2338,12 +2421,6 @@ const TavernSync = {
         let pushLines = [];
         let rawLines = [];      // 和 newMsgs 一一对应（写空的也在），用来记每一段有多长
         if (newMsgs.length > 0) {
-            if (!opts.imagesPrepared && this.pushImageDescriptionsFor(binding)
-                && newMsgs.some(m => m.parts?.some(p => p?.type === 'image' && !p.description))) {
-                await this.describeImagesAfterReply(char.id, newMsgs.map(m => m.id), { forPush: true });
-                // 识图有等待时，重新读取最新酒馆记录后再计算写入内容。
-                return this._pushToTavern(binding, pushCount, trackProgress, { ...opts, imagesPrepared: true });
-            }
             rawLines = newMsgs.map(toLine);
             pushLines = rawLines.filter(l => l && l.trim());
             // 新消息剥掉状态栏等之后全部为空，就当没有新消息（删除照样处理）
@@ -2410,7 +2487,17 @@ const TavernSync = {
         // 有新消息、删除或补入图片描述才保存
         if (newMsgs.length > 0 || hadDeletions || hadImageUpdates || hadTimestampUpdates) {
             await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: all });
+            for (const id of updatedImageIds) {
+                const kind = 'image-write:' + JSON.stringify([char.id, id]);
+                this.resolveIssues(kind);
+                this._clearImageFailure(this._imageWriteFailures, kind);
+            }
         }
+        // 空占位先落盘，再启动识图；写入队列从不等待 API。资格以落盘的逐条标记为准。
+        const imageIds = (Array.isArray(opts.messages) ? opts.messages : newMsgs)
+            .filter(m => m.role === 'user' && m.parts?.some(p => p?.type === 'image')).map(m => m.id);
+        if (imageIds.length && !opts.recovering) this._startImageDescriptions({ ...binding }, imageIds,
+            { requirePushed: true, retry: Array.isArray(opts.messages) });
         // 记一笔：万一酒馆正在生成回复、忙完把这次推的盖掉了，能发现并补推
         if (newMsgs.length > 0 && !opts.noLog) this._logPush(binding, { kind: 'raw', ids: newMsgs.map(m => m.id) });
         if (newMsgs.length > 0) this._rememberPushed(binding, newMsgs.map(m => m.id));

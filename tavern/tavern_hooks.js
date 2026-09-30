@@ -317,8 +317,8 @@
             }
             if (result === true && chatType === 'private' && window.TavernSync) {
                 if (imageIds.length) {
-                    try { await window.TavernSync.describeImagesAfterReply(chatId, imageIds); }
-                    catch (e) { fail('图片描述补全失败：' + e.message); }
+                    window.TavernSync.describeImagesAfterReply(chatId, imageIds)
+                        .catch(e => fail('图片描述补全失败：' + e.message));
                 }
                 window.TavernSync.autoPushIfNeeded(chatId).catch(e => console.warn(`${TAG} 自动推送失败：`, e));
             }
