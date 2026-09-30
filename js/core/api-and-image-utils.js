@@ -828,11 +828,24 @@ function extractAiProviderResponse(data, provider, delta = false) {
         };
     }
     if (provider === 'anthropic') {
-        const blocks = data?.content || (data?.delta ? [data.delta] : []);
-        return { content: blocks.filter(block => block.type === 'text' || block.text).map(block => block.text || '').join(''), reasoning: blocks.filter(block => block.type === 'thinking').map(block => block.thinking || '').join('') };
+        const blocks = Array.isArray(data?.content) ? data.content : (data?.delta ? [data.delta] : []);
+        return {
+            content: blocks.filter(block => block.type === 'text' || block.type === 'text_delta').map(block => block.text || '').join(''),
+            reasoning: blocks.filter(block => block.type === 'thinking' || block.type === 'thinking_delta').map(block => block.thinking || '').join('')
+        };
     }
     const message = delta ? data?.choices?.[0]?.delta : data?.choices?.[0]?.message;
-    return { content: message?.content || '', reasoning: message?.reasoning_content || message?.reasoning || '' };
+    const reasoningText = value => {
+        if (typeof value === 'string') return value;
+        if (Array.isArray(value)) return value.map(reasoningText).join('');
+        if (value && typeof value === 'object') return reasoningText(value.text) || reasoningText(value.content);
+        return '';
+    };
+    return {
+        content: message?.content || '',
+        reasoning: reasoningText(message?.reasoning_content) || reasoningText(message?.reasoning)
+            || reasoningText(message?.reasoning_text) || reasoningText(message?.reasoning_details)
+    };
 }
 
 function getApiConfigEndpoint(settings, stream = false) {

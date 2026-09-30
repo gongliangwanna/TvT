@@ -30,6 +30,7 @@
         let mode = room.promptEditMode || (Array.isArray(room.customPromptItems) && room.customPromptItems.length ? 'items' : (room.customPromptTemplate ? 'source' : 'items'));
         let items = studio.normalizeItems(room.customPromptItems);
         if (!items.length) items = studio.createDefaultItems();
+        else if (!items.some(entry => entry.id === 'context.moments' || entry.content.includes('{{动态能力与已看内容}}'))) items.push(studio.createDefaultItems().find(entry => entry.id === 'context.moments'));
         let expandedId = '';
         let activeTextarea = null;
         let dirty = false;
@@ -68,7 +69,8 @@
                 ['worldMiddle', '世界书·中不为空'], ['worldAfter', '世界书·后不为空'], ['userContext', '用户设定不为空'],
                 ['relationshipContext', '存在关系/手机功能上下文'], ['enhancementContext', '存在提醒/头像/活人运转'],
                 ['memory', '共同回忆不为空'], ['statusPanel', '已开启状态栏'], ['bilingual', '已开启双语模式'],
-                ['autoFavorite', '已开启角色自主收藏'], ['userFavorites', '角色可感知用户收藏']
+                ['autoFavorite', '已开启角色自主收藏'], ['userFavorites', '角色可感知用户收藏'],
+                ['moments', '已开启动态能力']
             ];
             const fragment = document.createDocumentFragment();
             conditions.forEach(([value, label]) => {
@@ -334,7 +336,10 @@
             loadPreset(preset) {
                 if (!preset) return;
                 mode = preset.mode || (Array.isArray(preset.items) && preset.items.length ? 'items' : 'source');
-                if (Array.isArray(preset.items) && preset.items.length) items = studio.normalizeItems(studio.clone(preset.items));
+                if (Array.isArray(preset.items) && preset.items.length) {
+                    items = studio.normalizeItems(studio.clone(preset.items));
+                    if (!items.some(entry => entry.id === 'context.moments' || entry.content.includes('{{动态能力与已看内容}}'))) items.push(studio.createDefaultItems().find(entry => entry.id === 'context.moments'));
+                }
                 sourceTextarea.value = preset.template || '';
                 expandedId = '';
                 dirty = true;

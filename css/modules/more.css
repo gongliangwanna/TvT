@@ -3,6 +3,11 @@
     background-color: #fff; /* 整体背景色 */
 }
 
+/* 个人卡片背景弹窗的遮罩需覆盖全局底部导航栏。 */
+#more-card-bg-modal {
+    z-index: 10000;
+}
+
 /* 自定义毛玻璃风格卡片 (2025 风格重构) */
 .more-profile-card.custom-glass-style {
     position: relative;

@@ -369,12 +369,20 @@ function showTheaterHtmlScenarioDetail(scenario) {
     //       - 禁止访问父文档（无 allow-same-origin）
     //       - 仅允许表单元素交互（checkbox/radio 切换状态）
     let htmlForIframe = String(displayContent || '');
+    let characterTranslation = '';
+    if (!isEditing && scenario.charGenerated) {
+        const character = (db.characters || []).find(item => item.id === scenario.charId);
+        const documentForTranslation = new DOMParser().parseFromString(htmlForIframe, 'text/html');
+        documentForTranslation.querySelectorAll('style,script').forEach(node => node.remove());
+        characterTranslation = BilingualContent.html(documentForTranslation.body.textContent.trim(), character, 'theater', 'theater', { originalHtml: '' });
+    }
 
     const contentDisplay = isEditing
         // 注意：这里不能用 DOMPurify.sanitize()，否则会把 <style>/<input>/<label> 等交互结构“编辑时”清掉
         ? `<textarea id="theater-html-edit-content" class="theater-edit-textarea" style="min-height:300px;">${theaterEscapeHtml(scenario.content || '')}</textarea>`
         : `<div class="theater-html-detail-body">
                 <iframe id="theater-html-render-frame" class="theater-html-render-frame" sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer"></iframe>
+                ${characterTranslation}
            </div>`;
 
     let metaInfo = `<span class="theater-detail-badge" style="background: rgba(100,181,246,0.2); color: #1976d2;">HTML</span>`;

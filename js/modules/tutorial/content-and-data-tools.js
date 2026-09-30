@@ -1363,15 +1363,37 @@ function renderTutorialContent() {
         `;
     }
     
+    const feedbackSection = document.createElement('div');
+    feedbackSection.className = `sakura-feedback-entries uwu-feedback-entries ${isRabbit ? 'is-rabbit' : isModern ? 'is-modern' : 'is-classic'}`;
+    feedbackSection.innerHTML = `
+        <div class="sakura-feedback-entries-title">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <span>心之信箱 · 许愿与反馈</span>
+        </div>
+        <button type="button" class="sakura-feedback-entry uwu-feedback-entry" data-sakura-feedback-mode="private" data-uwu-feedback-mode="private">
+            <span><strong>私密信件</strong><small>仅你与作者可见，支持往来回信交流</small></span>
+            <span class="sakura-entry-badge uwu-feedback-entry-badge" aria-hidden="true">›</span>
+        </button>
+        <button type="button" class="sakura-feedback-entry uwu-feedback-entry" data-sakura-feedback-mode="public" data-uwu-feedback-mode="public">
+            <span><strong>公开信件</strong><small>审核通过后公开展出，支持往来回信交流</small></span>
+            <span class="sakura-entry-badge uwu-feedback-entry-badge" aria-hidden="true">›</span>
+        </button>`;
+    feedbackSection.querySelectorAll('[data-sakura-feedback-mode], [data-uwu-feedback-mode]').forEach(button => {
+        button.addEventListener('click', () => (window.SakuraFeedback || window.UWUFeedback)?.open(button.dataset.sakuraFeedbackMode || button.dataset.uwuFeedbackMode));
+    });
+
     if (isModern) {
         modernGroups.github.appendChild(githubSection);
         modernGroups.github.appendChild(bgToastSection);
         modernGroups.github.appendChild(hapticSection);
+        modernGroups.github.appendChild(feedbackSection);
     } else {
         tutorialContentArea.appendChild(githubSection);
         tutorialContentArea.appendChild(bgToastSection);
         tutorialContentArea.appendChild(hapticSection);
+        tutorialContentArea.appendChild(feedbackSection);
     }
+    window.UWUFeedback?.refreshIndicators();
 
     const existingOverlay = document.getElementById('gh-help-overlay');
     if (existingOverlay) existingOverlay.remove();

@@ -141,6 +141,7 @@ ${recentHistory}
 - 如果是轻松、日常或闲聊氛围，可以用活泼或调侃的方式提醒。
 
 只输出内容，不要包含任何格式标记。
+${BilingualContent.prompt(chat, 'battery', '这一句角色内心独白；若使用外语，长度约十五个词以内')}
 `;
 
             // 2. 调用 API
@@ -160,7 +161,7 @@ ${recentHistory}
 
             if (responseText) {
                 // 显示思考气泡
-                this.showBatteryThoughtBubble(responseText, chat.avatar);
+                this.showBatteryThoughtBubble(responseText, chat.avatar, chat);
             }
 
         } catch (error) {
@@ -173,7 +174,7 @@ ${recentHistory}
      * @param {string} text 提示文本
      * @param {string} avatarUrl 头像 URL
      */
-    showBatteryThoughtBubble(text, avatarUrl) {
+    showBatteryThoughtBubble(text, avatarUrl, character) {
         // 移除旧的气泡（如果存在）
         const oldBubble = document.querySelector('.battery-thought-bubble-container');
         if (oldBubble) oldBubble.remove();
@@ -189,7 +190,7 @@ ${recentHistory}
                     <img src="${avatarUrl}" class="thought-avatar" alt="avatar">
                 </div>
                 <div class="thought-bubble">
-                    <div class="thought-content">${text}</div>
+                    <div class="thought-content">${BilingualContent.html(text, character, 'battery', 'battery', { originalHtml: text })}</div>
                     <div class="thought-dots">
                         <span></span><span></span><span></span>
                     </div>

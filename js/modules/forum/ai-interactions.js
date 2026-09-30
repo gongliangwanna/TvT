@@ -154,11 +154,14 @@ async function forumGenerateStrangerDMs() {
                 var customName = (charAltNames[charId] || '').trim();
                 var altDisplayName = customName ? customName.replace(/\s+/g, '_').slice(0, 20) : ((altNicknames[a] || fallbackAltNames[a % fallbackAltNames.length]).trim().replace(/\s+/g, '_') || ('路人' + (offset + a + 1)));
                 var fromUserId = 'npc_alt_' + charId + '_' + baseTime + '_' + a;
+                var altGreeting = altTemplates[a % altTemplates.length];
+                try { altGreeting = await BilingualContent.composeNative(mainChar, 'forum', altGreeting, 'forum'); }
+                catch (error) { console.warn('角色小号招呼语生成失败，使用原有文案', error); }
                 db.forumMessages.push({
                     id: 'dm_' + baseTime + '_alt_' + a + '_' + Math.random(),
                     fromUserId: fromUserId,
                     toUserId: 'user',
-                    content: altTemplates[a % altTemplates.length],
+                    content: altGreeting,
                     timestamp: baseTime + offset + a,
                     isRead: false,
                     accountId: generationJob.accountId
@@ -228,6 +231,7 @@ async function forumGenerateAIDMReply() {
         if (npcProfile && npcProfile.linkedCharId) {
             const linkedChar = (db.characters || []).find(c => c.id === npcProfile.linkedCharId);
             npcContext += `\n\n【双重身份，仅供扮演决策】\n真实身份：${linkedChar ? linkedChar.realName : '已绑定角色'}\n真实人格：${npcProfile.privatePersona || (linkedChar && linkedChar.persona) || ''}\n公开伪装：${npcProfile.publicPersona || npcProfile.basicPersona || ''}\n伪装规则：${npcProfile.disguisePersona || '未被可靠识破前维持陌生网友身份，只允许细微习惯形成破绽，不得无故自曝。'}`;
+            npcContext += BilingualContent.prompt(linkedChar, 'forum', '小号发给用户的私信，不要因此暴露真实身份');
         }
         if (npcPosts.length > 0) {
             npcContext += `\n\n以下是Ta发过的帖子:\n`;

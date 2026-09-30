@@ -105,17 +105,22 @@ function setupPeekFeature() {
     const peekWallpaperModal = document.getElementById('peek-wallpaper-modal');
     const peekWallpaperUpload = document.getElementById('peek-wallpaper-upload');
 
-    document.getElementById('clear-peek-data-btn')?.addEventListener('click', async () => {
-        if (confirm('确定要清空该角色的所有偷看数据吗？清空后下次进入各应用将重新生成。')) {
-            const char = db.characters.find(c => c.id === currentChatId);
-            if (char) {
-                char.peekData = {};
-                char.peekViewedByUser = [];
-                char.lastPeekViewedAt = undefined;
-                await saveData();   
-                showToast('偷看数据已清空');
-            }
-        }
+    document.getElementById('clear-peek-data-btn')?.addEventListener('click', () => {
+        const ordersOption = document.getElementById('peek-clear-real-orders');
+        if (ordersOption) ordersOption.checked = true;
+        document.getElementById('peek-clear-modal')?.classList.add('visible');
+    });
+    document.getElementById('peek-clear-cancel')?.addEventListener('click', () => {
+        document.getElementById('peek-clear-modal')?.classList.remove('visible');
+    });
+    document.getElementById('peek-clear-confirm')?.addEventListener('click', async () => {
+        const char = db.characters.find(c => c.id === currentChatId);
+        if (!char) return;
+        const clearOrders = !!document.getElementById('peek-clear-real-orders')?.checked;
+        const result = await clearPeekStoredData(char, null, clearOrders);
+        if (!result) return;
+        document.getElementById('peek-clear-modal')?.classList.remove('visible');
+        showToast(clearOrders ? '查手机数据和角色真实订单已清空' : '查手机生成内容已清空');
     });
 
     peekBtn?.addEventListener('click', () => {
@@ -340,6 +345,8 @@ function setupPeekFeature() {
     document.getElementById('refresh-all-peek-apps-btn')?.addEventListener('click', () => refreshAllPeekApps());
 
     document.getElementById('manage-peek-data-btn')?.addEventListener('click', () => {
+        const ordersOption = document.getElementById('peek-manage-clear-real-orders');
+        if (ordersOption) ordersOption.checked = true;
         renderPeekDataManagement();
         document.getElementById('peek-data-management-modal').classList.add('visible');
     });
@@ -396,12 +403,113 @@ async function refreshAllPeekApps() {
     renderPeekScreen();
 }
 
+function getPeekRealOrderIds(char) {
+    const ids = new Set();
+    (db.piggyBank?.orders || []).forEach(order => {
+        if (order.buyerType === 'character' && order.buyerId === char.id && order.id) ids.add(order.id);
+    });
+    (char.walletLedger?.transactions || []).forEach(item => {
+        if (item.source === 'shop' && item.eventId) ids.add(item.eventId);
+    });
+    (db.piggyBank?.familyCards || []).forEach(card => {
+        if (card.targetCharId !== char.id) return;
+        (card.transactions || []).forEach(item => {
+            if (typeof item.eventId === 'string' && item.eventId.startsWith('order_')) ids.add(item.eventId);
+        });
+    });
+    return ids;
+}
+
+function peekBilingualText(text, originalHtml) {
+    const character = (db.characters || []).find(item => item.id === currentChatId);
+    return character && typeof BilingualContent !== 'undefined' ? BilingualContent.html(text, character, 'peek', 'peek', originalHtml == null ? {} : { originalHtml }) : originalHtml ?? peekEscapeHtml(text).replace(/\n/g, '<br>');
+}
+
+function hasPeekRealOrders(char) {
+    return getPeekRealOrderIds(char).size > 0
+        || (char.walletLedger?.transactions || []).some(item => item.source === 'shop');
+}
+
+const peekClearRevisions = new Map();
+function getPeekClearRevision(charId, appId) {
+    return peekClearRevisions.get(`${charId}:${appId}`) || 0;
+}
+
+let peekClearInProgress = false;
+async function clearPeekStoredData(char, appIds, clearOrders) {
+    if (peekClearInProgress) return false;
+    peekClearInProgress = true;
+    const previous = {
+        peekData: char.peekData,
+        peekViewedByUser: char.peekViewedByUser,
+        lastPeekViewedAt: char.lastPeekViewedAt,
+        walletLedger: char.walletLedger ? JSON.parse(JSON.stringify(char.walletLedger)) : char.walletLedger,
+        piggyBank: clearOrders && db.piggyBank ? JSON.parse(JSON.stringify(db.piggyBank)) : db.piggyBank
+    };
+    const markedMessages = [];
+    try {
+        (appIds === null ? Object.keys(peekScreenApps) : appIds).forEach(appId => {
+            const key = `${char.id}:${appId}`;
+            peekClearRevisions.set(key, getPeekClearRevision(char.id, appId) + 1);
+        });
+        if (appIds === null) {
+            char.peekData = {};
+            char.peekViewedByUser = [];
+            char.lastPeekViewedAt = undefined;
+        } else {
+            char.peekData = { ...(char.peekData || {}) };
+            appIds.forEach(appId => { delete char.peekData[appId]; });
+            char.peekViewedByUser = (char.peekViewedByUser || []).filter(entry => !appIds.includes(entry.appId));
+        }
+
+        if (clearOrders) {
+            const orderIds = getPeekRealOrderIds(char);
+            if (Array.isArray(db.piggyBank?.orders)) {
+                db.piggyBank.orders = db.piggyBank.orders.filter(order => !(order.buyerType === 'character' && order.buyerId === char.id));
+            }
+            if (Array.isArray(char.walletLedger?.transactions)) {
+                char.walletLedger.transactions = char.walletLedger.transactions.filter(item => item.source !== 'shop' && !orderIds.has(item.eventId));
+            }
+            (db.piggyBank?.familyCards || []).forEach(card => {
+                if (card.targetCharId === char.id && Array.isArray(card.transactions)) {
+                    card.transactions = card.transactions.filter(item => !orderIds.has(item.eventId));
+                }
+            });
+            (char.history || []).forEach(message => {
+                if (message.shopOrderId && !message.peekWalletOrderCleared) {
+                    message.peekWalletOrderCleared = true;
+                    markedMessages.push(message);
+                }
+            });
+        }
+
+        const saved = clearOrders ? await persistWalletState([char.id]) : await saveCharacter(char.id);
+        if (!saved) throw new Error('数据保存失败');
+        return true;
+    } catch (error) {
+        char.peekData = previous.peekData;
+        char.peekViewedByUser = previous.peekViewedByUser;
+        char.lastPeekViewedAt = previous.lastPeekViewedAt;
+        char.walletLedger = previous.walletLedger;
+        if (clearOrders) db.piggyBank = previous.piggyBank;
+        markedMessages.forEach(message => { delete message.peekWalletOrderCleared; });
+        showToast('清空失败，请重试');
+        console.error('[Peek] 清空数据失败:', error);
+        return false;
+    } finally {
+        peekClearInProgress = false;
+    }
+}
+
 function renderPeekDataManagement() {
     const char = db.characters.find(c => c.id === currentChatId);
     const peekDataList = document.getElementById('peek-data-list');
     if (!peekDataList) return;
 
-    if (!char || !char.peekData || Object.keys(char.peekData).length === 0) {
+    if (!char) return;
+    const appIds = Object.keys(char.peekData || {});
+    if (!appIds.includes('wallet') && hasPeekRealOrders(char)) appIds.push('wallet');
+    if (appIds.length === 0) {
         peekDataList.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">暂无已刷新的数据</p>';
         return;
     }
@@ -415,12 +523,13 @@ function renderPeekDataManagement() {
         </div>
     `;
 
-    Object.keys(char.peekData).forEach(appId => {
+    appIds.forEach(appId => {
         const appName = (peekScreenApps[appId] && peekScreenApps[appId].name) ? peekScreenApps[appId].name : appId;
+        const status = char.peekData?.[appId] ? '已有数据' : '仅有真实订单';
         html += `
             <label class="peek-data-item" style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px;">
                 <input type="checkbox" class="peek-data-checkbox" data-app-id="${peekEscapeHtml(appId)}" style="width: auto;">
-                <span>${peekEscapeHtml(appName)} <span style="color: #999; font-size: 12px;">(已有数据)</span></span>
+                <span>${peekEscapeHtml(appName)} <span style="color: #999; font-size: 12px;">(${status})</span></span>
             </label>
         `;
     });
@@ -443,7 +552,7 @@ function renderPeekDataManagement() {
 
 async function deleteSelectedPeekData() {
     const char = db.characters.find(c => c.id === currentChatId);
-    if (!char || !char.peekData) return;
+    if (!char) return;
 
     const selectedCheckboxes = document.querySelectorAll('.peek-data-checkbox:checked');
     if (selectedCheckboxes.length === 0) {
@@ -455,47 +564,43 @@ async function deleteSelectedPeekData() {
         const appId = cb.dataset.appId;
         return (peekScreenApps[appId] && peekScreenApps[appId].name) ? peekScreenApps[appId].name : appId;
     }).join('、');
+    const appIds = Array.from(selectedCheckboxes, cb => cb.dataset.appId);
+    const clearOrders = appIds.includes('wallet') && !!document.getElementById('peek-manage-clear-real-orders')?.checked;
 
-    if (!confirm('确定要删除以下应用的数据吗？\n\n' + appNames + '\n\n删除后下次点击将重新生成。')) {
+    if (!confirm('确定要删除以下应用的数据吗？\n\n' + appNames
+        + (clearOrders ? '\n同时清除该角色的真实商城订单；已消费金额不会退回。' : '')
+        + '\n\n删除后下次点击将重新生成。')) {
         return;
     }
 
-    selectedCheckboxes.forEach(cb => {
-        const appId = cb.dataset.appId;
-        delete char.peekData[appId];
-        if (char.peekViewedByUser && char.peekViewedByUser.length > 0) {
-            char.peekViewedByUser = char.peekViewedByUser.filter(e => e.appId !== appId);
-        }
-    });
-
-    await saveData();
-    showToast('已删除 ' + selectedCheckboxes.length + ' 个应用的数据');
+    if (!await clearPeekStoredData(char, appIds, clearOrders)) return;
+    showToast(clearOrders ? '已删除选中数据和角色真实订单' : '已删除 ' + selectedCheckboxes.length + ' 个应用的数据');
 
     renderPeekDataManagement();
 
-    if (!char.peekData || Object.keys(char.peekData).length === 0) {
+    if (Object.keys(char.peekData || {}).length === 0 && !hasPeekRealOrders(char)) {
         document.getElementById('peek-data-management-modal').classList.remove('visible');
     }
 }
 
 async function deleteAllPeekData() {
     const char = db.characters.find(c => c.id === currentChatId);
-    if (!char || !char.peekData || Object.keys(char.peekData).length === 0) {
+    const clearOrders = !!document.getElementById('peek-manage-clear-real-orders')?.checked;
+    if (!char || (Object.keys(char.peekData || {}).length === 0 && !(clearOrders && hasPeekRealOrders(char)))) {
         showToast('没有可删除的数据');
         return;
     }
 
-    const appCount = Object.keys(char.peekData).length;
+    const appCount = Object.keys(char.peekData || {}).length;
 
-    if (!confirm('确定要删除所有 ' + appCount + ' 个应用的偷看数据吗？\n\n删除后下次点击应用时将重新生成。')) {
+    if (!confirm('确定要删除所有 ' + appCount + ' 个应用的偷看数据吗？'
+        + (clearOrders ? '\n同时清除该角色的真实商城订单；已消费金额不会退回。' : '')
+        + '\n\n删除后下次点击应用时将重新生成。')) {
         return;
     }
 
-    char.peekData = {};
-    char.peekViewedByUser = [];
-    char.lastPeekViewedAt = undefined;
-    await saveData();
-    showToast('已清空所有偷看数据');
+    if (!await clearPeekStoredData(char, null, clearOrders)) return;
+    showToast(clearOrders ? '已清空偷看数据和角色真实订单' : '已清空所有偷看数据');
 
     document.getElementById('peek-data-management-modal').classList.remove('visible');
 }

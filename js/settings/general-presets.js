@@ -156,6 +156,12 @@ function setupPresetFeatures() {
         if (m) m.style.display = 'none';
     });
 
+    const widgetPresetModalClose = document.getElementById('widget-presets-close-modal');
+    if (widgetPresetModalClose) widgetPresetModalClose.addEventListener('click', () => {
+        const m = document.getElementById('widget-presets-modal');
+        if (m) m.style.display = 'none';
+    });
+
     const widgetWallpaperModalClose = document.getElementById('widget-wallpaper-presets-close-modal');
     if (widgetWallpaperModalClose) widgetWallpaperModalClose.addEventListener('click', () => {
         const m = document.getElementById('widget-wallpaper-presets-modal');

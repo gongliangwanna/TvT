@@ -17,7 +17,7 @@ export const phoneHtmlChunks = [
     ['16-archive-theater', ['html/screens/archive-theater.html']],
     ['17-group-settings', ['html/screens/group-settings.html']],
     ['18-memory-favorites', ['html/screens/memory-favorites.html']],
-    ['19-forum-social', ['html/screens/forum-social.html']],
+    ['19-forum-social', ['html/screens/forum-social.html', 'html/screens/moments.html']],
     ['20-magic-storage-peek', ['html/screens/magic-storage-peek.html']],
     ['21-video-call', ['html/screens/video-call.html']],
     ['22-lifestyle', ['html/screens/lifestyle.html']],

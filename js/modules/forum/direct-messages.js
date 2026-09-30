@@ -315,7 +315,8 @@ function forumRenderDMConversation(userId) {
         
         const bubble = document.createElement('div');
         bubble.className = 'dm-message-bubble';
-        bubble.textContent = m.content || '';
+        const linkedCharacter = !isUser && npcProfile?.linkedCharId ? (db.characters || []).find(c => c.id === npcProfile.linkedCharId) : null;
+        bubble.innerHTML = linkedCharacter ? BilingualContent.html(m.content || '', linkedCharacter, 'forum', 'forum') : forumEscapeHtml(m.content || '');
         
         const messageBody = document.createElement('div');
         messageBody.className = 'dm-message-body';

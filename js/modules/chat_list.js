@@ -397,10 +397,20 @@ function renderChatList() {
 
     document.getElementById('no-chats-placeholder').style.display = filteredChats.length === 0 ? 'block' : 'none';
 
+    const sortTimeCache = new Map();
+    const latestSortTime = chat => {
+        if (sortTimeCache.has(chat)) return sortTimeCache.get(chat);
+        for (let index = (chat.history || []).length - 1; index >= 0; index--) {
+            const message = chat.history[index];
+            if (!message.isMomentsActivity || chat.momentsSettings?.showActivityNarration) { const time = message.timestamp || 0; sortTimeCache.set(chat, time); return time; }
+        }
+        sortTimeCache.set(chat, 0);
+        return 0;
+    };
     const sortedChats = filteredChats.sort((a, b) => {
         if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
-        const lastMsgTimeA = a.history && a.history.length > 0 ? a.history[a.history.length - 1].timestamp : 0;
-        const lastMsgTimeB = b.history && b.history.length > 0 ? b.history[b.history.length - 1].timestamp : 0;
+        const lastMsgTimeA = latestSortTime(a);
+        const lastMsgTimeB = latestSortTime(b);
         return lastMsgTimeB - lastMsgTimeA;
     });
 
@@ -417,6 +427,7 @@ function renderChatList() {
             let lastMsg = null;
             for (let historyIndex = chat.history.length - 1; historyIndex >= 0; historyIndex--) {
                 const candidate = chat.history[historyIndex];
+                if (candidate.isMomentsActivity && !chat.momentsSettings?.showActivityNarration) continue;
                 if (!invisibleRegex.test(candidate.content)) {
                     lastMsg = candidate;
                     break;
@@ -471,7 +482,9 @@ function renderChatList() {
                 const timeSkipRegex = /\[system-display:([\s\S]+?)\]/;
                 const timeSkipMatch = lastEverMsg.content.match(timeSkipRegex);
 
-                if (timeSkipMatch) {
+                if (lastEverMsg.isMomentsActivity && !chat.momentsSettings?.showActivityNarration) {
+                    lastMessageText = '开始聊天吧...';
+                } else if (timeSkipMatch) {
                     lastMessageText = timeSkipMatch[1];
                 } else if (inviteRegex.test(lastEverMsg.content)) {
                     lastMessageText = '新成员加入了群聊';

@@ -246,7 +246,7 @@ async function sendImageForRecognition(base64Data) {
     const message = {
         id: `msg_${Date.now()}`,
         role: 'user',
-        content: base64Data,
+        content: textPrompt,
         parts: [{type: 'text', text: textPrompt}, {type: 'image', data: base64Data}],
         timestamp: Date.now(),
     };

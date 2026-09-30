@@ -589,8 +589,10 @@ async function saveMessageEdit() {
                             html: html,
                             timestamp: Date.now()
                         });
-                        if (chat.statusPanel.history.length > 20) {
-                            chat.statusPanel.history = chat.statusPanel.history.slice(0, 20);
+                        const storedLimit = chat.statusPanel.historyRetentionLimit;
+                        const retentionLimit = Number.isSafeInteger(storedLimit) && storedLimit >= 0 ? storedLimit : 20;
+                        if (retentionLimit > 0 && chat.statusPanel.history.length > retentionLimit) {
+                            chat.statusPanel.history = chat.statusPanel.history.slice(0, retentionLimit);
                         }
                     }
 

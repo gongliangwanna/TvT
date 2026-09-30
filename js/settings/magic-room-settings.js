@@ -14,6 +14,8 @@ function setupMagicRoomApp() {
     const importInput = document.getElementById('magic-room-import-input');
     const promptStudioUi = typeof setupPromptStudioEditor === 'function' ? setupPromptStudioEditor() : null;
     const promptPresetIdsMigrated = window.PromptStudio ? window.PromptStudio.ensurePresetIds(db.magicRoom) : false;
+    const momentsPromptFields = [...app.querySelectorAll('[data-moments-prompt]')];
+    momentsPromptFields.forEach(field => { field.value = db.magicRoom?.momentsPrompts?.[field.dataset.momentsPrompt] ?? window.Moments?.promptDefaults?.[field.dataset.momentsPrompt] ?? ''; });
     if (promptPresetIdsMigrated) saveMagicRoomSettings();
 
     // 默认底层提示词模板
@@ -298,6 +300,7 @@ B. 纯线上互动：这是一个完全虚拟的线上聊天。你扮演的角�
         if (!db.magicRoom) db.magicRoom = {};
         db.magicRoom.customPromptEnabled = enabledSwitch.checked;
         db.magicRoom.customPromptTemplate = promptTextarea.value;
+        db.magicRoom.momentsPrompts = Object.fromEntries(momentsPromptFields.map(field => [field.dataset.momentsPrompt, field.value]));
         if (promptStudioUi) promptStudioUi.saveToDb();
         // 保存系统通知设置
         db.magicRoom.sysNotifEnabled      = sysnotifEnabled ? sysnotifEnabled.checked : false;

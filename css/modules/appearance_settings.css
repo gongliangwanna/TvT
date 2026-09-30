@@ -1,6 +1,6 @@
 /* --- 外观设置页 (Appearance Settings) --- */
 #appearance-settings-screen {
-    background: #f7f7f8;
+    background: #ffffff;
     min-height: 100%;
 }
 
@@ -9,21 +9,23 @@
     flex-direction: column;
     height: 100%;
     overflow: hidden;
+    background: #ffffff;
 }
 
 .appearance-content {
     padding: 16px 0 80px;
     overflow-y: auto;
     flex: 1;
+    background: #ffffff;
 }
 
 /* 独立区块 (每个APP/功能的设置区) */
 .appearance-section {
-    background: #fff;
-    margin-bottom: 20px;
+    background: #ffffff;
+    margin-bottom: 0;
     padding: 20px 0;
-    border-top: 1px solid #eee;
-    border-bottom: 1px solid #eee;
+    border-top: none;
+    border-bottom: 1px solid #f2f2f2;
 }
 
 .appearance-section:first-child {

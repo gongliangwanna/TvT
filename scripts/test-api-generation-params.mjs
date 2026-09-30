@@ -26,6 +26,7 @@ vm.runInContext(fs.readFileSync(path.join(root, 'js/core/api-and-image-utils.js'
 
 const defaults = context.createDefaultApiGenerationParams(false);
 assert.equal(defaults.temperature.enabled, true);
+assert.equal(defaults.temperature.value, 0.8);
 assert.equal(defaults.topP.enabled, false);
 
 {

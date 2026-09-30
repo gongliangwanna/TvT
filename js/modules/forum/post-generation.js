@@ -253,7 +253,9 @@ function renderForumPosts(posts, filter = 'all') {
     postsContainer.innerHTML = ''; 
 
     if (!posts || posts.length === 0) {
-        postsContainer.innerHTML = '<p class="placeholder-text" style="margin-top: 50px;">AI还没生成任何帖子，请点击刷新按钮。';
+        postsContainer.innerHTML = forumPostDeleteMode && forumPostDeleteTarget === 'others'
+            ? '<p class="placeholder-text" style="margin-top: 50px;">当前没有可删除的他人帖子</p>'
+            : '<p class="placeholder-text" style="margin-top: 50px;">AI还没生成任何帖子，请点击刷新按钮。';
         return;
     }
     
@@ -277,11 +279,11 @@ function renderForumPosts(posts, filter = 'all') {
         const history = forumGetAccountState().historyPostIds;
         filteredPosts = filteredPosts.filter(p => history.indexOf(p.id) >= 0).sort((a, b) => history.indexOf(a.id) - history.indexOf(b.id));
     }
-    if (forumPostDeleteMode) filteredPosts = filteredPosts.filter(p => forumAccountOwnsAuthor(p.authorId));
+    if (forumPostDeleteMode) filteredPosts = filteredPosts.filter(forumPostMatchesDeleteMode);
     
     if (filteredPosts.length === 0) {
         const emptyText = { liked: '暂无点赞的帖子', favorited: '暂无收藏的帖子', following: '暂无关注对象发布的帖子', mentions: '暂无与你相关的帖子', history: '暂无浏览历史', hot: '暂无热门帖子', latest: '暂无最新帖子' };
-        postsContainer.innerHTML = `<p class="placeholder-text" style="margin-top: 50px;">${forumPostDeleteMode ? '当前身份没有可删除的帖子' : (emptyText[filter] || '暂无帖子')}</p>`;
+        postsContainer.innerHTML = `<p class="placeholder-text" style="margin-top: 50px;">${forumPostDeleteMode ? (forumPostDeleteTarget === 'others' ? '当前没有可删除的他人帖子' : '当前身份没有可删除的帖子') : (emptyText[filter] || '暂无帖子')}</p>`;
         return;
     }
 

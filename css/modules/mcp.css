@@ -974,68 +974,99 @@ body.night-mode-active {
 }
 
 /* 对话中的 MCP 执行卡片 (Chat Activity Bubble) */
+.mcp-activity-wrapper {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .mcp-message-card {
-  width: 100%;
-  max-width: 320px;
-  background: var(--mcp-card);
-  border: 1px solid var(--mcp-card-border);
-  border-radius: var(--mcp-radius-md);
-  padding: 12px 14px;
-  box-shadow: var(--mcp-shadow-sm);
+  --mcp-chat-surface: #f8fbfd;
+  --mcp-chat-border: #dce8ef;
+  --mcp-chat-text: #2a3032;
+  --mcp-chat-muted: #70818c;
+  --mcp-chat-blue: #52768e;
+  --mcp-chat-detail: #f0f5f8;
+  width: fit-content;
+  min-width: min(244px, calc(100% - 16px));
+  max-width: min(320px, calc(100% - 16px));
+  min-height: 0;
+  margin: 0 8px;
+  background: var(--mcp-chat-surface);
+  border: 1px solid var(--mcp-chat-border);
+  border-radius: var(--border-radius, 18px);
+  border-bottom-left-radius: 5px;
+  padding: 11px 13px;
+  color: var(--mcp-chat-text);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.mcp-message-card.running {
-  border-left: 3px solid var(--mcp-accent);
-}
-
-.mcp-message-card.success {
-  border-left: 3px solid var(--mcp-success);
-}
-
-.mcp-message-card.failed {
-  border-left: 3px solid var(--mcp-danger);
+  gap: 7px;
 }
 
 .mcp-message-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
 }
 
 .mcp-message-source {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--mcp-accent);
-  text-transform: uppercase;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(11px * var(--app-font-scale, 1));
+  font-weight: 500;
+  color: var(--mcp-chat-blue);
+}
+
+.mcp-message-head .mcp-status-tag {
+  flex: none;
+  font-size: calc(11px * var(--app-font-scale, 1));
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--mcp-chat-muted);
+}
+
+.mcp-message-head .mcp-status-tag.running { color: var(--mcp-chat-blue); }
+.mcp-message-head .mcp-status-tag.success { color: #627f80; }
+.mcp-message-head .mcp-status-tag.failed { color: #ad5660; }
+.mcp-message-head .mcp-status-tag.cancelled { color: var(--mcp-chat-muted); }
+
+.mcp-message-body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
 }
 
 .mcp-message-title {
-  font-size: 13px;
+  font-size: calc(14px * var(--app-font-scale, 1));
   font-weight: 600;
-  color: var(--mcp-text-main);
+  line-height: 1.35;
+  color: var(--mcp-chat-text);
+  overflow-wrap: anywhere;
 }
 
 .mcp-message-summary {
-  font-size: 12px;
-  color: var(--mcp-text-muted);
+  font-size: calc(12px * var(--app-font-scale, 1));
+  color: var(--mcp-chat-muted);
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .mcp-message-detail {
   display: none;
-  font-size: 11px;
-  background: var(--mcp-control-bg);
-  color: var(--mcp-text-main);
-  padding: 8px 10px;
-  border-radius: var(--mcp-radius-sm);
+  font-size: calc(11px * var(--app-font-scale, 1));
+  line-height: 1.5;
+  background: var(--mcp-chat-detail);
+  color: var(--mcp-chat-text);
+  padding: 9px 10px;
+  border-radius: 8px;
   font-family: ui-monospace, SFMono-Regular, monospace;
   max-height: 160px;
   overflow-y: auto;
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .mcp-message-card.expanded .mcp-message-detail {
@@ -1043,14 +1074,33 @@ body.night-mode-active {
 }
 
 .mcp-message-toggle {
+  width: 100%;
   background: transparent;
   border: none;
-  color: var(--mcp-accent);
-  font-size: 11px;
-  padding: 0;
+  border-top: 1px solid var(--mcp-chat-border);
+  color: var(--mcp-chat-blue);
+  font-size: calc(11px * var(--app-font-scale, 1));
+  padding: 9px 0 0;
   cursor: pointer;
   text-align: left;
 }
+
+.mcp-message-toggle:focus-visible {
+  outline: 2px solid var(--mcp-chat-blue);
+  outline-offset: 3px;
+}
+
+body.night-mode-active .mcp-message-card {
+  --mcp-chat-surface: #1b2329;
+  --mcp-chat-border: #35434b;
+  --mcp-chat-text: #e1e9ed;
+  --mcp-chat-muted: #a3b0b8;
+  --mcp-chat-blue: #9cbdd1;
+  --mcp-chat-detail: #232e35;
+}
+
+body.night-mode-active .mcp-message-head .mcp-status-tag.success { color: #a5c4bd; }
+body.night-mode-active .mcp-message-head .mcp-status-tag.failed { color: #e8a1a9; }
 
 /* 角色与群聊详情中的 MCP 权限面板 */
 .mcp-perm-container {

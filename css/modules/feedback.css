@@ -1,0 +1,1492 @@
+/* ==========================================================================
+   魔卡少女樱 (Cardcaptor Sakura · Clow Cards Edition)
+   严格设计准则：
+   1. 绝对无任何渐变色 (No linear-gradient, radial-gradient)
+   2. 绝对无任何默认 Emoji (纯 SVG 矢量几何线条与法阵图腾)
+   3. 高雅纯白 (#ffffff) 与深沉墨黑 (#121214) 纯色搭配，支持细致双边框法阵、卡牌外框
+   ========================================================================== */
+
+body.sakura-feedback-open,
+body.uwu-feedback-open,
+body.feedback-open {
+  overflow: hidden !important;
+}
+
+#sakura-feedback,
+#sakura-feedback *,
+#uwu-feedback,
+#uwu-feedback * {
+  box-sizing: border-box;
+}
+
+/* ==========================================================================
+   一、系统设置页中入口卡片样式 (Sakura Clow Cards Style)
+   ========================================================================== */
+.uwu-feedback-entries,
+.sakura-feedback-entries {
+  margin-top: 18px;
+}
+
+.uwu-feedback-entries-title,
+.sakura-feedback-entries-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  color: #121214;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.uwu-feedback-entries-title svg,
+.sakura-feedback-entries-title svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 仿库洛牌/樱之卡封套矩形框，纯色双重边框，无渐变 */
+.uwu-feedback-entry,
+.sakura-feedback-entry {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 70px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px solid #121214;
+  background: #ffffff;
+  color: #121214;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px #121214;
+  transition: all 0.15s ease;
+}
+
+.uwu-feedback-entry:hover,
+.sakura-feedback-entry:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+.uwu-feedback-entry:hover small,
+.sakura-feedback-entry:hover small,
+.uwu-feedback-entry:hover .uwu-feedback-entry-badge,
+.sakura-feedback-entry:hover .sakura-entry-badge {
+  color: #ffffff;
+}
+
+.uwu-feedback-entry strong,
+.uwu-feedback-entry small,
+.sakura-feedback-entry strong,
+.sakura-feedback-entry small {
+  display: block;
+}
+
+.uwu-feedback-entry strong,
+.sakura-feedback-entry strong {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.uwu-feedback-entry small,
+.sakura-feedback-entry small {
+  margin-top: 4px;
+  color: #555555;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+
+.uwu-feedback-entry-badge,
+.sakura-entry-badge {
+  flex: 0 0 auto;
+  color: #121214;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+}
+
+/* 有新回信或已公开状态：反色实体突出 */
+.uwu-feedback-entry.has-reply .uwu-feedback-entry-badge,
+.uwu-feedback-entry.has-feedback-notice .uwu-feedback-entry-badge,
+.sakura-feedback-entry.has-reply .sakura-entry-badge,
+.sakura-feedback-entry.has-feedback-notice .sakura-entry-badge {
+  background: #121214;
+  color: #ffffff;
+  border-color: #121214;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.uwu-feedback-entry:hover.has-reply .uwu-feedback-entry-badge,
+.uwu-feedback-entry:hover.has-feedback-notice .uwu-feedback-entry-badge,
+.sakura-feedback-entry:hover.has-reply .sakura-entry-badge,
+.sakura-feedback-entry:hover.has-feedback-notice .sakura-entry-badge {
+  background: #ffffff;
+  color: #121214;
+  border-color: #ffffff;
+}
+
+/* 适配主题容器差异 */
+.uwu-feedback-entries.is-modern,
+.sakura-feedback-entries.is-modern {
+  margin-top: 0;
+  padding: 10px 14px;
+}
+
+/* ==========================================================================
+   二、主界面：星之书 / 库洛牌室总遮罩 (Overlay & Book Frame)
+   ========================================================================== */
+#sakura-feedback.sakura-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  padding: max(env(safe-area-inset-top), 16px) 16px max(env(safe-area-inset-bottom), 16px);
+  background: #ffffff;
+  color: #121214;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Songti SC", "SimSun", "PingFang SC", "Hiragino Sans GB", serif, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#sakura-feedback.sakura-overlay.open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#sakura-feedback button,
+#sakura-feedback input,
+#sakura-feedback select,
+#sakura-feedback textarea {
+  font: inherit;
+  color: inherit;
+  letter-spacing: 0.02em;
+}
+
+#sakura-feedback button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+#sakura-feedback input:focus,
+#sakura-feedback textarea:focus,
+#sakura-feedback button:focus-visible {
+  outline: 1px solid #121214;
+  outline-offset: 2px;
+}
+
+/* 魔法书外框：经典双线封边，纯白底黑边 */
+#sakura-feedback .sakura-book-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 640px);
+  height: min(100%, 860px);
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #121214;
+  box-shadow: 0 0 0 3px #ffffff, 0 0 0 4px #121214;
+}
+
+/* 库洛卡牌四角经典线框饰纹 */
+#sakura-feedback .sakura-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  z-index: 10;
+}
+#sakura-feedback .corner-tl { top: 4px; left: 4px; border-top: 1px solid #121214; border-left: 1px solid #121214; }
+#sakura-feedback .corner-tr { top: 4px; right: 4px; border-top: 1px solid #121214; border-right: 1px solid #121214; }
+#sakura-feedback .corner-bl { bottom: 4px; left: 4px; border-bottom: 1px solid #121214; border-left: 1px solid #121214; }
+#sakura-feedback .corner-br { bottom: 4px; right: 4px; border-bottom: 1px solid #121214; border-right: 1px solid #121214; }
+
+/* 顶栏 Header */
+#sakura-feedback .sakura-header {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  align-items: center;
+  min-height: 60px;
+  padding: 0 10px;
+  background: #ffffff;
+  border-bottom: 1px solid #121214;
+}
+
+#sakura-feedback .sakura-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: #121214;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-btn-icon:hover {
+  border-color: #121214;
+  background: #121214;
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-btn-icon:active {
+  transform: scale(0.92);
+}
+
+#sakura-feedback .sakura-title-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  text-align: center;
+}
+
+#sakura-feedback .sakura-sub-emblem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-sub-emblem svg {
+  width: 14px;
+  height: 10px;
+}
+
+#sakura-feedback .sakura-title {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 状态通知条 */
+#sakura-feedback .sakura-status:not(:empty) {
+  padding: 8px 16px;
+  background: #ffffff;
+  border-bottom: 1px dashed #121214;
+  font-size: 12px;
+  text-align: center;
+  letter-spacing: 0.05em;
+}
+
+#sakura-feedback .sakura-status.error {
+  background: #121214;
+  color: #ffffff;
+}
+
+/* 主内容可滚动区域 */
+#sakura-feedback .sakura-viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 22px calc(24px + env(safe-area-inset-bottom));
+  background: #ffffff;
+  overscroll-behavior: contain;
+}
+
+/* ==========================================================================
+   三、主界面各区：魔卡展厅 (Hub)
+   ========================================================================== */
+#sakura-feedback .sakura-hub {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* 魔法阵引言羊皮纸卷轴 (Emblem Parchment) */
+#sakura-feedback .sakura-emblem-parchment {
+  position: relative;
+  padding: 18px 16px 16px;
+  background: #ffffff;
+  border: 1px solid #121214;
+  text-align: center;
+}
+
+#sakura-feedback .sakura-magic-crest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+#sakura-feedback .sakura-crest-icon {
+  display: inline-flex;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-crest-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 160px;
+}
+
+#sakura-feedback .crest-line {
+  flex: 1;
+  height: 1px;
+  background: #121214;
+}
+
+#sakura-feedback .crest-star {
+  display: inline-flex;
+  color: #121214;
+}
+#sakura-feedback .crest-star svg {
+  width: 12px;
+  height: 12px;
+}
+
+#sakura-feedback .sakura-parchment-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #222222;
+  letter-spacing: 0.04em;
+}
+
+/* 核心解除封印按钮 (Release Button Section) */
+#sakura-feedback .sakura-release-section {
+  margin: 4px 0;
+}
+
+#sakura-feedback .sakura-btn-release {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #121214;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px #121214;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-btn-release:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-btn-release:hover .sakura-release-hint,
+#sakura-feedback .sakura-btn-release:hover .sakura-release-arrow,
+#sakura-feedback .sakura-btn-release:hover .release-wand {
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-release-decor {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+#sakura-feedback .release-wand {
+  display: inline-flex;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-release-content {
+  flex: 1;
+  min-width: 0;
+  margin: 0 14px;
+}
+
+#sakura-feedback .sakura-release-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+#sakura-feedback .sakura-release-hint {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #555555;
+  margin-top: 3px;
+}
+
+#sakura-feedback .sakura-release-arrow {
+  flex-shrink: 0;
+  color: #121214;
+}
+
+/* 区块通用头部 */
+#sakura-feedback .sakura-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#sakura-feedback .sakura-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #121214;
+}
+
+#sakura-feedback .sakura-section-glyph {
+  display: inline-flex;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  flex: 1;
+}
+
+#sakura-feedback .sakura-badge-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid #121214;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 卡牌堆栈卡片 (Card Stack) */
+#sakura-feedback .sakura-card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#sakura-feedback .sakura-card-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid #121214;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-card-item:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-card-item:hover .sakura-card-left-frame,
+#sakura-feedback .sakura-card-item:hover .sakura-card-code,
+#sakura-feedback .sakura-card-item:hover .sakura-card-enter-tag {
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-card-left-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-right: 12px;
+  color: #121214;
+  flex-shrink: 0;
+}
+
+#sakura-feedback .sakura-card-glyph svg { width: 18px; height: 18px; }
+#sakura-feedback .sakura-card-star svg { width: 10px; height: 10px; }
+
+#sakura-feedback .sakura-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+#sakura-feedback .sakura-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+#sakura-feedback .sakura-card-code {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: #555555;
+  font-family: monospace;
+}
+
+#sakura-feedback .sakura-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  letter-spacing: 0.05em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#sakura-feedback .sakura-status-tag svg {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+}
+
+#sakura-feedback .sakura-status-tag.has-reply {
+  background: #121214;
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-card-item:hover .sakura-status-tag.has-reply {
+  background: #ffffff;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-card-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#sakura-feedback .sakura-card-enter-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  margin-left: 8px;
+  color: #121214;
+}
+
+/* 空状态 */
+#sakura-feedback .sakura-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 16px;
+  border: 1px dashed #121214;
+  text-align: center;
+}
+
+#sakura-feedback .sakura-empty-icon {
+  margin-bottom: 8px;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-empty-text {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: #444444;
+}
+
+/* 公开广场牌架 */
+#sakura-feedback .sakura-public-board {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#sakura-feedback .sakura-public-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#sakura-feedback .sakura-public-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid #121214;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-public-card:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-public-card:hover .sakura-sender-mark,
+#sakura-feedback .sakura-public-card:hover .sakura-card-date {
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-public-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+#sakura-feedback .sakura-sender-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: #121214;
+}
+#sakura-feedback .sakura-sender-mark svg {
+  width: 12px;
+  height: 12px;
+}
+
+#sakura-feedback .sakura-card-date {
+  color: #666666;
+  font-size: 10px;
+}
+
+#sakura-feedback .sakura-public-heading {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#sakura-feedback .sakura-btn-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 10px;
+  background: #ffffff;
+  border: 1px solid #121214;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+#sakura-feedback .sakura-btn-secondary:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+/* ==========================================================================
+   四、写信页：心愿魔卡撰写 (Compose Card)
+   ========================================================================== */
+#sakura-feedback .sakura-parchment-sheet {
+  background: #ffffff;
+}
+
+#sakura-feedback .sakura-sheet-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid #121214;
+  margin-bottom: 20px;
+}
+
+#sakura-feedback .sakura-stamp-box {
+  flex-shrink: 0;
+}
+
+#sakura-feedback .stamp-border {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 52px;
+  border: 1px dashed #121214;
+  padding: 2px;
+}
+
+#sakura-feedback .stamp-icon {
+  margin-bottom: 2px;
+}
+
+#sakura-feedback .stamp-text {
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
+#sakura-feedback .sakura-sheet-motto {
+  flex: 1;
+  min-width: 0;
+}
+
+#sakura-feedback .sakura-sheet-motto-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#sakura-feedback .motto-line {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+#sakura-feedback .sakura-btn-guide-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 7px;
+  border: 1px solid #121214;
+  background: #ffffff;
+  color: #121214;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+#sakura-feedback .sakura-btn-guide-tag:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+#sakura-feedback .motto-note {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: #444444;
+  line-height: 1.5;
+}
+
+/* 表单字段通用 */
+#sakura-feedback .sakura-field {
+  margin-bottom: 18px;
+}
+
+#sakura-feedback .sakura-field-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  margin-bottom: 8px;
+}
+
+#sakura-feedback .label-star {
+  display: inline-flex;
+}
+
+/* 4 种魔卡属性印章选择器 (Stamp Pills) */
+#sakura-feedback .sakura-stamp-group {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+#sakura-feedback .sakura-stamp-pill {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 4px;
+  border: 1px solid #121214;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-stamp-pill input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#sakura-feedback .sakura-stamp-pill .pill-symbol {
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+#sakura-feedback .sakura-stamp-pill .pill-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+#sakura-feedback .sakura-stamp-pill.is-active,
+#sakura-feedback .sakura-stamp-pill:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+/* 输入框包装 */
+#sakura-feedback .sakura-input-wrap input {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #121214;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+/* 信纸横线式多行文本书写区 */
+#sakura-feedback .sakura-textarea-wrap {
+  position: relative;
+  border: 1px solid #121214;
+  background: #ffffff;
+}
+
+#sakura-feedback .sakura-textarea-wrap textarea {
+  display: block;
+  width: 100%;
+  padding: 14px 14px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.8;
+  resize: vertical;
+  min-height: 150px;
+}
+
+#sakura-feedback .sakura-textarea-wrap.mini textarea {
+  min-height: 80px;
+  padding: 10px 12px;
+}
+
+/* 随信附件上传卡 */
+#sakura-feedback .sakura-file-label {
+  display: block;
+  cursor: pointer;
+}
+
+#sakura-feedback .sakura-file-label input[type="file"] {
+  display: none;
+}
+
+#sakura-feedback .sakura-file-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px dashed #121214;
+  background: #ffffff;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-file-card:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-file-card.mini {
+  padding: 8px 10px;
+  margin-top: 8px;
+}
+
+#sakura-feedback .sakura-file-icon {
+  display: inline-flex;
+}
+
+/* 契约验证区 */
+#sakura-feedback .sakura-challenge-section {
+  margin: 18px 0;
+  text-align: center;
+}
+
+#sakura-feedback .sakura-challenge-title {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+#sakura-feedback .sakura-challenge {
+  display: flex;
+  justify-content: center;
+  min-height: 65px;
+}
+
+/* 封印操作栏与加盖印章按钮 (Seal Button) */
+#sakura-feedback .sakura-actions-bar {
+  margin-top: 20px;
+}
+
+#sakura-feedback .sakura-btn-seal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 20px;
+  background: #ffffff;
+  border: 1px solid #121214;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px #121214;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-btn-seal:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-btn-seal:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+#sakura-feedback .sakura-btn-seal.mini {
+  padding: 10px 14px;
+  box-shadow: none;
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+/* ==========================================================================
+   五、详情与往来回信页 (对话式架构 Message Stream)
+   ========================================================================== */
+#sakura-feedback .sakura-thread-view {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+#sakura-feedback .sakura-thread-meta-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border: 1px solid #121214;
+  background: #ffffff;
+}
+
+#sakura-feedback .sakura-thread-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#sakura-feedback .meta-tag {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  font-family: monospace;
+}
+
+#sakura-feedback .meta-kind {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#sakura-feedback .meta-date {
+  font-size: 10px;
+  color: #666666;
+}
+
+#sakura-feedback .sakura-thread-crest {
+  color: #121214;
+}
+
+/* 往来对话流 */
+#sakura-feedback .sakura-thread-scroll {
+  display: flex;
+  flex-direction: column;
+}
+
+#sakura-feedback .sakura-scroll-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#sakura-feedback .sakura-message-card {
+  display: flex;
+  flex-direction: column;
+  max-width: 90%;
+}
+
+/* 投递者消息 (右对齐) */
+#sakura-feedback .sakura-message-card.message-caster {
+  align-self: flex-end;
+}
+
+#sakura-feedback .sakura-message-card.message-caster .sakura-bubble-frame {
+  border: 1px solid #121214;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+/* 掌柜/守护之灵回信 (左对齐，双线翼羽气泡) */
+#sakura-feedback .sakura-message-card.message-guardian {
+  align-self: flex-start;
+}
+
+#sakura-feedback .sakura-message-card.message-guardian .sakura-bubble-frame {
+  border: 1px solid #121214;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px #121214;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+#sakura-feedback .bubble-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed #121214;
+  margin-bottom: 8px;
+}
+
+#sakura-feedback .bubble-author {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+#sakura-feedback .author-glyph {
+  display: inline-flex;
+}
+#sakura-feedback .author-glyph svg {
+  width: 14px;
+  height: 10px;
+}
+
+#sakura-feedback .bubble-time {
+  font-size: 10px;
+  color: #666666;
+}
+
+#sakura-feedback .bubble-body {
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+#sakura-feedback .bubble-attachment {
+  margin-top: 10px;
+}
+
+#sakura-feedback .sakura-attachment-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid #121214;
+  font-size: 11px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-attachment-btn:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+/* 随信展开的附随画卷 */
+#sakura-feedback .sakura-image-viewer {
+  margin-top: 10px;
+  padding: 6px;
+  border: 1px solid #121214;
+  background: #ffffff;
+}
+
+#sakura-feedback .sakura-framed-photo {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+}
+
+/* 续写回信抽屉 */
+#sakura-feedback .sakura-reply-drawer {
+  margin-top: 8px;
+  padding: 14px;
+  border: 1px solid #121214;
+  background: #ffffff;
+}
+
+#sakura-feedback .sakura-reply-prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+#sakura-feedback .reply-wand {
+  display: inline-flex;
+}
+
+/* 封存与化作星尘按钮 */
+#sakura-feedback .sakura-danger-zone {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+#sakura-feedback .sakura-thread-closed {
+  margin: 12px 0 0;
+  text-align: center;
+  color: #555555;
+  font-size: 11px;
+}
+
+#sakura-feedback .sakura-burn-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #121214;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #121214;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-burn-btn:hover {
+  background: #121214;
+  color: #ffffff;
+}
+
+/* ==========================================================================
+   六、子弹窗 1：守护者寄语 · 投稿须知 弹窗 (Submission Guide Modal)
+   ========================================================================== */
+#sakura-feedback .sakura-notice-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  transition: opacity 0.2s ease;
+}
+
+#sakura-feedback .sakura-notice-backdrop[hidden] {
+  display: none !important;
+}
+
+#sakura-feedback .sakura-notice-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 460px);
+  max-height: min(90vh, 600px);
+  background: #ffffff;
+  color: #121214;
+  border: 1px solid #121214;
+  box-shadow: 0 0 0 3px #ffffff, 0 0 0 4px #121214, 0 12px 28px rgba(0, 0, 0, 0.25);
+  padding: 24px 20px 20px;
+  animation: sakuraNoticePop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes sakuraNoticePop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+#sakura-feedback .sakura-modal-decor {
+  pointer-events: none;
+}
+
+#sakura-feedback .sakura-notice-header {
+  text-align: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #121214;
+}
+
+#sakura-feedback .sakura-notice-wings {
+  display: inline-flex;
+  margin-bottom: 6px;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-notice-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  font-weight: 600;
+  color: #333333;
+  margin-bottom: 4px;
+}
+
+#sakura-feedback .badge-star svg {
+  width: 9px;
+  height: 9px;
+}
+
+#sakura-feedback .sakura-notice-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-notice-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 4px;
+  margin-bottom: 18px;
+}
+
+#sakura-feedback .sakura-notice-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px dashed #121214;
+  background: #ffffff;
+}
+
+#sakura-feedback .notice-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#sakura-feedback .notice-item-glyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
+#sakura-feedback .notice-item-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #121214;
+}
+
+#sakura-feedback .notice-item-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #333333;
+  word-break: break-word;
+}
+
+#sakura-feedback .sakura-notice-footer {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid #121214;
+}
+
+#sakura-feedback .sakura-btn-suppress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 8px;
+  background: #ffffff;
+  border: 1px solid #121214;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #555555;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-btn-suppress:hover {
+  background: #f0f0f0;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-btn-ack {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: #121214;
+  border: 1px solid #121214;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-btn-ack:disabled {
+  background: #ffffff;
+  color: #888888;
+  border-color: #cccccc;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+#sakura-feedback .sakura-btn-ack:not(:disabled):hover {
+  background: #ffffff;
+  color: #121214;
+  box-shadow: inset 0 0 0 1px #121214;
+}
+
+#sakura-feedback .ack-countdown {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+/* ==========================================================================
+   七、子弹窗 2：自定义确认弹窗 (Custom Confirm Modal)
+   ========================================================================== */
+#sakura-feedback .sakura-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+#sakura-feedback .sakura-confirm-backdrop[hidden] {
+  display: none !important;
+}
+
+#sakura-feedback .sakura-confirm-modal {
+  position: relative;
+  width: min(100%, 360px);
+  padding: 22px 20px 20px;
+  border: 1px solid #121214;
+  background: #ffffff;
+  color: #121214;
+  box-shadow: 6px 6px 0 #121214;
+  text-align: center;
+}
+
+#sakura-feedback .sakura-confirm-emblem {
+  display: inline-flex;
+  margin-bottom: 8px;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-confirm-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+#sakura-feedback .sakura-confirm-message {
+  margin: 0 0 20px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #333333;
+  text-align: left;
+}
+
+#sakura-feedback .sakura-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+#sakura-feedback .sakura-confirm-actions button {
+  padding: 8px 16px;
+  border: 1px solid #121214;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+#sakura-feedback .sakura-btn-cancel {
+  background: #ffffff;
+  color: #121214;
+}
+
+#sakura-feedback .sakura-btn-cancel:hover {
+  background: #f0f0f0;
+}
+
+#sakura-feedback .sakura-btn-accept {
+  background: #121214;
+  color: #ffffff;
+}
+
+#sakura-feedback .sakura-btn-accept:hover {
+  background: #333333;
+}
+
+/* ==========================================================================
+   八、移动端极致适配
+   ========================================================================== */
+@media (max-width: 600px) {
+  #sakura-feedback.sakura-overlay {
+    padding: 0;
+  }
+  #sakura-feedback .sakura-book-container {
+    width: 100%;
+    height: 100%;
+    border: none;
+    box-shadow: none;
+  }
+  #sakura-feedback .sakura-corner {
+    display: none;
+  }
+  #sakura-feedback .sakura-header {
+    min-height: calc(56px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+  }
+  #sakura-feedback .sakura-viewport {
+    padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  #sakura-feedback .sakura-stamp-group {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  #sakura-feedback .sakura-message-card {
+    max-width: 96%;
+  }
+}

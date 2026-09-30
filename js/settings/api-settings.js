@@ -263,7 +263,7 @@ function setupApiSettingsApp() {
         if (BLOCKED_API_DOMAINS.some(domain => r.value.includes(domain))) {
             return showToast('该 API 站点已被屏蔽，无法保存！');
         }
-        const generationParams = mainGenerationEditor?.get() || normalizeApiGenerationParams(null, false, 1);
+        const generationParams = mainGenerationEditor?.get() || normalizeApiGenerationParams(null, false);
         db.apiSettings = {
             provider: n.value,
             url: r.value,
@@ -433,7 +433,7 @@ function setupApiSettingsApp() {
 
 const API_NODE_FEATURE_GROUPS = [
     ['聊天', ['chat', 'groupChat', 'background', 'call']],
-    ['内容', ['summary', 'journal', 'forum', 'theater', 'peek', 'shop', 'pomodoro', 'battery']],
+    ['内容', ['summary', 'journal', 'forum', 'moments', 'theater', 'peek', 'shop', 'pomodoro', 'battery']],
     ['图片', ['imageChat', 'stickerVision', 'avatarVision', 'callVision']],
     ['扩展', ['memorySummary', 'webSearch']]
 ];

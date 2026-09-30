@@ -69,7 +69,7 @@ function renderPeekChatList(conversations = []) {
             <div class="item-details">
                 <div class="item-details-row"><div class="item-name">${convo.partnerName}</div></div>
                 <div class="item-preview-wrapper">
-                    <div class="item-preview">${lastMessageText}</div>
+                    <div class="item-preview">${lastMessage?.sender === "char" ? peekBilingualText(lastMessageText, lastMessageText) : lastMessageText}</div>
                 </div>
             </div>`;
         container.appendChild(li);
@@ -121,13 +121,14 @@ function renderMemosList(memos) {
 function renderMemoDetail(memo) {
     const screen = document.getElementById('peek-memo-detail-screen');
     if (!memo) return;
-    const contentHtml = memo.content.replace(/\n/g, '<br>');
+    const contentHtml = peekBilingualText(memo.content, memo.content.replace(/\n/g, '<br>'));
     screen.innerHTML = `
         <header class="app-header">
             <button class="back-btn" data-target="peek-memos-screen">‹</button>
             <div class="title-container"><h1 class="title">${memo.title}</h1></div>
             <button class="action-btn"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"></path></svg></button>
         </header>
+        <div class="peek-memo-title-translation">${peekBilingualText(memo.title, '')}</div>
         <main class="content" style="padding: 20px; line-height: 1.6;">${contentHtml}</main>
     `;
 }
@@ -145,8 +146,8 @@ function renderPeekCart(items) {
                 <li class="cart-item" data-id="${item.id}">
                     <img src="https://i.postimg.cc/wMbSMvR9/export202509181930036600.png" class="cart-item-image" alt="${item.title}">
                     <div class="cart-item-details">
-                        <h3 class="cart-item-title">${item.title}</h3>
-                        <p class="cart-item-spec">规格：${item.spec}</p>
+                        <h3 class="cart-item-title">${peekBilingualText(item.title, item.title)}</h3>
+                        <p class="cart-item-spec">规格：${peekBilingualText(item.spec, item.spec)}</p>
                         <p class="cart-item-price">¥${item.price}</p>
                     </div>
                 </li>
@@ -276,7 +277,7 @@ function renderPeekWallet(data) {
             }
             return '<ul class="wallet-list">' + items.map(item => {
                 const amt = item.amount != null ? item.amount : '';
-                const remark = peekEscapeHtml(item.remark != null ? item.remark : '');
+                const remark = peekBilingualText(item.remark != null ? item.remark : '');
                 const time = peekEscapeHtml(item.time != null ? item.time : '');
                 return `<li class="wallet-list-item">
                     <div class="left">
@@ -379,7 +380,7 @@ function renderPeekTransferStation(entries) {
             messagesHtml += `
                 <div class="message-wrapper sent">
                     <div class="message-bubble-row">
-                        <div class="message-bubble sent" style="background-color: #98E165; color: #000;">${entry}</div>
+                        <div class="message-bubble sent" style="background-color: #98E165; color: #000;">${peekBilingualText(entry, entry)}</div>
                     </div>
                 </div>
             `;
@@ -429,7 +430,7 @@ function renderPeekBrowser(historyItems) {
                 <li class="browser-history-item${hasDetail}" data-index="${index}">
                     <h3 class="history-item-title">${peekEscapeHtml(item.title)}</h3>
                     <p class="history-item-url">${peekEscapeHtml(item.url)}</p>
-                    <div class="history-item-annotation">${peekEscapeHtml(item.annotation)}</div>
+                    <div class="history-item-annotation">${peekBilingualText(item.annotation)}</div>
                 </li>
             `;
         });
@@ -473,7 +474,7 @@ function renderBrowserDetail(item) {
         <main class="content browser-detail-content">
             <p class="browser-detail-url">${peekEscapeHtml(item.url)}</p>
             <div class="browser-detail-body">${item.detail}</div>
-            <div class="browser-detail-annotation">${peekEscapeHtml(item.annotation)}</div>
+            <div class="browser-detail-annotation">${peekBilingualText(item.annotation)}</div>
         </main>
     `;
 }
@@ -485,7 +486,9 @@ function renderPeekDrafts(draft) {
 
     if (draft) {
         draftTo = draft.to;
-        draftContent = draft.content;
+        const draftHtml = draft.content;
+        const draftPlainText = new DOMParser().parseFromString(draft.content, 'text/html').body.textContent || '';
+        draftContent = peekBilingualText(draftPlainText, draftHtml);
     }
     
     screen.innerHTML = `
@@ -536,8 +539,8 @@ function renderPeekSteps(data) {
     const percentage = (data.currentSteps / 6000) * 100;
     progressRingEl.style.setProperty('--steps-percentage', percentage);
 
-    trackListEl.innerHTML = data.trajectory.map(item => `<li class="activity-track-item">${item}</li>`).join('');
-    annotationEl.textContent = data.annotation;
+    trackListEl.innerHTML = data.trajectory.map(item => `<li class="activity-track-item">${peekBilingualText(item)}</li>`).join('');
+    annotationEl.innerHTML = peekBilingualText(data.annotation);
 }
 
 function extractTransfersFromHistory(history, realName, myName) {

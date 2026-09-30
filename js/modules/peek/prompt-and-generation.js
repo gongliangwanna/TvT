@@ -311,7 +311,7 @@ ${diaryContext ? `- 长期记忆（日记总结）：\n${diaryContext}` : ''}
 【近期对话】\n${mainChatContext}\n
 【必须纳入账单的真实转账与商城/代付收支】\n${transferContext}\n
 
-要求：1）上方真实转账与商城/代付收支必须全部出现在 income 或 expense 中，且 amount、remark 一致；2）可再根据人设与记忆补充其他收支项（如工资、购物、红包等）；3）只输出 XML 标签格式，不要 markdown 或解释。格式如下，每条记录含 amount、remark、time、source（填"聊天记录"或"人设生成"）：
+要求：1）上方真实转账与商城/代付收支必须全部出现在 income 或 expense 中，且 amount、remark 一致；2）可再根据人设与记忆补充其他收支项（如工资、购物、红包等），但不要重建用户已清除的旧商城订单；3）只输出 XML 标签格式，不要 markdown 或解释。格式如下，每条记录含 amount、remark、time、source（填"聊天记录"或"人设生成"）：
 <result>
   <summary>
     <balance>当前余额说明或数字</balance>
@@ -401,7 +401,12 @@ ${diaryContext ? `- 长期记忆（日记总结）：\n${diaryContext}` : ''}
             break;
         }
     }
-    return prompt;
+    const authored = {
+        messages: '只有角色本人发送的消息', memos: '备忘录标题和正文', album: '角色对相册的批注',
+        browser: '角色对浏览记录的批注', drafts: '角色未发送的草稿正文', transfer: '角色发给自己的文字',
+        timeThoughts: '角色对童年的描述和想说的话', steps: '角色的运动批注', unlock: '角色小号简介、帖子与角色本人评论'
+    };
+    return prompt + (authored[appType] && typeof BilingualContent !== 'undefined' ? BilingualContent.prompt(char, 'peek', authored[appType]) : '');
 }
 
 async function generateAndRenderPeekContent(appType, options = {}) {
@@ -414,6 +419,7 @@ async function generateAndRenderPeekContent(appType, options = {}) {
 
     const char = db.characters.find(c => c.id === currentChatId);
     if (!char) return showToast('无法找到当前角色');
+    const clearRevision = getPeekClearRevision(char.id, appType);
     
     if (!char.peekData) char.peekData = {};
 
@@ -543,7 +549,9 @@ async function generateAndRenderPeekContent(appType, options = {}) {
     try {
         let historySlice = char.history.slice(-10);
         historySlice = filterHistoryForAI(char, historySlice);
-        const mainChatContext = historySlice.map(m => m.content).join('\n');
+        const mainChatContext = historySlice
+            .filter(m => appType !== 'wallet' || !m.peekWalletOrderCleared)
+            .map(m => m.content).join('\n');
 
         const systemPrompt = generatePeekContentPrompt(char, appType, mainChatContext);
         
@@ -558,6 +566,7 @@ async function generateAndRenderPeekContent(appType, options = {}) {
         const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
 
         const contentStr = await fetchAiResponse(apiConfig, requestBody, headers, endpoint);
+        if (getPeekClearRevision(char.id, appType) !== clearRevision) return;
         
         const generatedData = parseXmlToJson(contentStr);
 

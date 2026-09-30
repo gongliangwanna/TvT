@@ -7,6 +7,7 @@ function loadSettingsToSidebar() {
         }
         const nameDisplay = document.getElementById('setting-char-name-display');
         if(nameDisplay) nameDisplay.textContent = e.remarkName;
+        if (window.Moments) window.Moments.loadCharacterSettings(e);
         const realNameEl = document.getElementById('setting-char-real-name');
         if (realNameEl) realNameEl.value = e.realName || '';
         
@@ -185,6 +186,8 @@ function loadSettingsToSidebar() {
         }
         
         document.getElementById('setting-reply-count-enabled').checked = e.replyCountEnabled || false;
+        const showDebugContentEl = document.getElementById('setting-show-debug-content');
+        if (showDebugContentEl) showDebugContentEl.checked = !!e.showDebugContent;
         const replyCountContainer = document.getElementById('setting-reply-count-container');
         if (replyCountContainer) {
             replyCountContainer.style.display = e.replyCountEnabled ? 'flex' : 'none';
@@ -232,6 +235,8 @@ function loadSettingsToSidebar() {
         
         const journalFavTopEl = document.getElementById('setting-journal-favorite-top');
         if (journalFavTopEl) journalFavTopEl.checked = e.journalFavoriteTop !== false; // 默认开启
+        const journalNewestFirstEl = document.getElementById('setting-journal-newest-first');
+        if (journalNewestFirstEl) journalNewestFirstEl.checked = e.journalNewestFirst === true;
 
         // 加载单人思维链设置
         const charCotEnabledEl = document.getElementById('setting-char-cot-enabled');
@@ -488,13 +493,18 @@ function loadSettingsToSidebar() {
         }
 
         document.getElementById('setting-bilingual-mode').checked = e.bilingualModeEnabled || false;
+        document.getElementById('setting-bilingual-language').value = e.bilingualLanguage || '';
+        BilingualContent.syncSettingsUi();
         document.getElementById('setting-bilingual-style').value = e.bilingualBubbleStyle || 'under';
+        document.getElementById('setting-auto-expand-translation').checked = e.autoExpandTranslation === true;
 
         if (window.PokeSystem) window.PokeSystem.ensureSettings(e);
         const pokeEnabledEl = document.getElementById('setting-poke-enabled');
         const pokeOptionsEl = document.getElementById('setting-poke-options');
         if (pokeEnabledEl) pokeEnabledEl.checked = e.pokeEnabled === true;
         if (pokeOptionsEl) pokeOptionsEl.style.display = e.pokeEnabled === true ? 'block' : 'none';
+        const pokeTriggerModeEl = document.getElementById('setting-poke-trigger-mode');
+        if (pokeTriggerModeEl) pokeTriggerModeEl.value = ['auto', 'both', 'avatar', 'title'].includes(e.pokeTriggerMode) ? e.pokeTriggerMode : 'auto';
         const pokeCharacterEl = document.getElementById('setting-poke-character-initiated');
         if (pokeCharacterEl) pokeCharacterEl.checked = e.pokeAllowCharacterInitiated !== false;
         const pokeReplyEl = document.getElementById('setting-poke-trigger-reply');
@@ -575,6 +585,12 @@ function loadSettingsToSidebar() {
         document.getElementById('setting-status-regex').value = sp.regexPattern || '';
         document.getElementById('setting-status-replace').value = sp.replacePattern || '';
         document.getElementById('setting-status-history-limit').value = sp.historyLimit !== undefined ? sp.historyLimit : 3;
+        const retentionLimit = sp.historyRetentionLimit;
+        const retentionUnlimited = document.getElementById('setting-status-retention-unlimited');
+        const retentionInput = document.getElementById('setting-status-retention-limit');
+        retentionUnlimited.checked = retentionLimit === 0;
+        retentionInput.value = Number.isSafeInteger(retentionLimit) && retentionLimit > 0 ? retentionLimit : 20;
+        retentionInput.disabled = retentionUnlimited.checked;
         
         const statusPanelContainer = document.getElementById('status-panel-settings-container');
         if (statusPanelContainer) {

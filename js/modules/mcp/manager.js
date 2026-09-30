@@ -106,7 +106,7 @@
 
   async function showCustomAlert(title, message) {
     if (typeof window.showAppConfirmDialog === 'function') {
-      await window.showAppConfirmDialog({ title, message: String(message || ''), confirmText: '知道了', cancelText: '', dismissText: '' });
+      await window.showAppConfirmDialog({ title, message: String(message || ''), confirmText: '知道了', cancelText: '取消', dismissText: '' });
       return;
     }
     window.alert(`${title}\n\n${message}`);
@@ -1120,7 +1120,7 @@
        <div class="mcp-form" style="margin-top:12px;">
         <div class="mcp-field"><label>服务器</label><input value="${escapeHtml(connection.name)}" disabled></div>
         <div class="mcp-field"><label for="mcp-tool-arguments">调用参数（JSON）</label><textarea id="mcp-tool-arguments" spellcheck="false">${escapeHtml(JSON.stringify(args, null, 2))}</textarea></div>
-        ${chat && state.settings.showChatCards && canSyncToActiveChat(connection) ? `<label class="mcp-setting-row" style="padding:8px 0;border:0;"><div class="mcp-setting-main"><div class="mcp-setting-name">同步到对话</div><div class="mcp-setting-desc">在“${escapeHtml(chat.name || '当前聊天')}”中显示 MCP 活动卡片</div></div><span class="mcp-toggle"><input id="mcp-sync-chat" type="checkbox" checked><span></span></span></label>` : ''}
+        ${chat && state.settings.showChatCards && canSyncToActiveChat(connection) ? `<label class="mcp-setting-row" style="padding:8px 0;border:0;"><div class="mcp-setting-main"><div class="mcp-setting-name">同步到对话</div><div class="mcp-setting-desc">在“${escapeHtml(chat.name || '当前聊天')}”中显示 MCP 活动卡片</div></div><span class="mcp-toggle"><input id="mcp-sync-chat" type="checkbox"><span></span></span></label>` : ''}
        </div>`,
       `<button type="button" class="mcp-secondary-btn" data-mcp-action="close-sheet">取消</button>
        <button type="button" class="mcp-primary-btn" data-mcp-action="confirm-invoke" data-id="${escapeHtml(connection.id)}" data-name="${escapeHtml(tool.name)}">确认调用</button>`
@@ -1542,6 +1542,8 @@
     const chat = getChatById(activity.chatId);
     if (!chat) return;
     const existingMessage = chat.history.find(message => message.type === 'mcp_activity' && message.mcpActivity && message.mcpActivity.id === activity.id);
+    // 完成时只更新已存在的卡片；用户在执行中删除后不能再次写入聊天。
+    if (!existingMessage && status !== 'running') return;
     const detail = state.settings.includeResultDetails && result ? JSON.stringify(result, null, 2) : '';
     const cardData = {
       id: activity.id,
@@ -1555,6 +1557,7 @@
       updatedAt: Date.now()
     };
     if (existingMessage) {
+      existingMessage.id ||= `mcp_${activity.id}`;
       existingMessage.content = activity.summary;
       existingMessage.mcpActivity = cardData;
       if (typeof saveData === 'function') await saveData();
@@ -1562,6 +1565,7 @@
       return;
     }
     const message = {
+      id: `mcp_${activity.id}`,
       role: 'assistant',
       type: 'mcp_activity',
       content: activity.summary || activity.title,
@@ -1630,7 +1634,7 @@
         <div class="mcp-field"><label>服务器</label><input value="${escapeHtml(connection.name)}" disabled></div>
         <div class="mcp-field"><label>${isResource || isTemplate ? '资源地址' : '提示名称'}</label><input id="mcp-resource-template-uri" value="${escapeHtml(isTemplate ? item.uriTemplate : isResource ? item.uri : item.name)}" ${isTemplate ? '' : 'disabled'}></div>
         ${isResource || isTemplate ? '' : '<div class="mcp-field"><label for="mcp-capability-arguments">提示参数（JSON）</label><textarea id="mcp-capability-arguments" spellcheck="false">{}</textarea></div>'}
-        ${chat && state.settings.showChatCards && canSyncToActiveChat(connection) ? `<label class="mcp-setting-row" style="padding:8px 0;border:0;"><div class="mcp-setting-main"><div class="mcp-setting-name">同步到对话</div><div class="mcp-setting-desc">在“${escapeHtml(chat.name || '当前聊天')}”中显示 MCP 活动卡片</div></div><span class="mcp-toggle"><input id="mcp-sync-chat" type="checkbox" checked><span></span></span></label>` : ''}
+        ${chat && state.settings.showChatCards && canSyncToActiveChat(connection) ? `<label class="mcp-setting-row" style="padding:8px 0;border:0;"><div class="mcp-setting-main"><div class="mcp-setting-name">同步到对话</div><div class="mcp-setting-desc">在“${escapeHtml(chat.name || '当前聊天')}”中显示 MCP 活动卡片</div></div><span class="mcp-toggle"><input id="mcp-sync-chat" type="checkbox"><span></span></span></label>` : ''}
        </div>`,
       `<button type="button" class="mcp-secondary-btn" data-mcp-action="capability-details" data-id="${escapeHtml(connection.id)}" data-kind="${escapeHtml(kind)}" data-name="${escapeHtml(item.name || item.uri || '')}">详情</button>
        <button type="button" class="mcp-primary-btn" data-mcp-action="confirm-consume" data-id="${escapeHtml(connection.id)}" data-kind="${escapeHtml(kind)}" data-name="${escapeHtml(item.name || item.uri || item.uriTemplate || '')}">${isResource || isTemplate ? '确认读取' : '确认使用'}</button>`
@@ -1745,14 +1749,15 @@
   function updateMessageCardDom(cardData) {
     document.querySelectorAll('.mcp-message-card[data-mcp-activity-id]').forEach(card => {
       if (card.dataset.mcpActivityId !== cardData.id) return;
-      card.className = `mcp-message-card ${cardData.status}`;
-      const tag = card.querySelector('.mcp-status-tag');
-      const summary = card.querySelector('.mcp-message-summary');
-      if (tag) {
-        tag.className = `mcp-status-tag ${cardData.status}`;
-        tag.textContent = STATUS_LABELS[cardData.status] || cardData.status;
+      const expanded = card.classList.contains('expanded');
+      const container = document.createElement('div');
+      container.innerHTML = renderMessageCard({ mcpActivity: cardData });
+      const updatedCard = container.firstElementChild;
+      if (expanded && cardData.detail) {
+        updatedCard.classList.add('expanded');
+        updatedCard.querySelector('[data-mcp-card-toggle]').textContent = '收起执行详情';
       }
-      if (summary) summary.textContent = cardData.summary || '';
+      card.replaceWith(updatedCard);
     });
   }
 

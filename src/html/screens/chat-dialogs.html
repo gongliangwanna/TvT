@@ -94,17 +94,24 @@
         <!-- Token 分布弹窗（点击角色资料卡 Token 打开） -->
         <div id="token-distribution-modal" class="modal-overlay">
             <div class="modal-window token-distribution-window">
-                <h3 class="token-distribution-title">Token 分布</h3>
+                <h3 class="token-distribution-title">本次对话 Token</h3>
                 <div class="token-chart-summary">
                     <div id="token-chart-container"></div>
                     <div class="token-total-row">
-                        <span class="token-total-label">合计</span>
+                        <span class="token-total-label">预计输入</span>
                         <strong id="token-distribution-total" class="token-total-value">0</strong>
                         <span class="token-total-unit">Token</span>
                     </div>
                 </div>
+                <div class="token-overview-meta">
+                    <span>带入消息 <strong id="token-message-count">0</strong> 条</span>
+                    <span>图片消息 <strong id="token-image-count">0</strong> 张</span>
+                </div>
+                <div id="token-actual-usage" class="token-actual-usage" hidden></div>
+                <div class="token-section-label">内容来源</div>
                 <div class="token-details-list" id="token-details-list"></div>
                 <div class="token-detail-desc" id="token-detail-desc"></div>
+                <button type="button" class="btn btn-neutral token-storage-link" id="token-storage-link">查看本地占用</button>
                 <button type="button" class="btn btn-neutral token-distribution-close" id="token-distribution-close-btn">关闭</button>
             </div>
         </div>

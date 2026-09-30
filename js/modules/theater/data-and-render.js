@@ -457,7 +457,7 @@ function showTheaterScenarioDetail(scenario) {
                    <button id="theater-edit-apply-font-preset-btn" class="theater-action-btn theater-save-font-size-btn">应用字体</button>
                </div>
            </div>`
-        : `<div class="theater-detail-body" style="font-size: ${fontSize}px;" id="theater-detail-body-content">${renderTheaterMarkdown(displayContent)}</div>`;
+        : `<div class="theater-detail-body" style="font-size: ${fontSize}px;" id="theater-detail-body-content">${renderTheaterMarkdown(displayContent)}${scenario.charGenerated ? BilingualContent.html(displayContent, db.characters.find(c => c.id === scenario.charId), 'theater', 'theater', { originalHtml: '' }) : ''}</div>`;
     
     // 构建元信息显示
     let metaInfo = `<span class="theater-detail-badge">${DOMPurify.sanitize(category)}</span>`;

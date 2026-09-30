@@ -1,9 +1,19 @@
-function forumDeletePost(postId) {
+var forumPostDeleteTarget = 'own';
+
+function forumPostMatchesDeleteMode(post) {
+    return forumPostDeleteTarget === 'others'
+        ? forumIsOtherPersonPost(post) && forumCanViewPost(post)
+        : forumAccountOwnsAuthor(post.authorId);
+}
+
+function forumDeletePost(postId, deleteOtherPerson) {
     if (!confirm('确定要删除这篇帖子吗？')) return;
     const index = db.forumPosts.findIndex(p => p.id === postId);
     if (index === -1) return;
     const post = db.forumPosts[index];
-    if (!forumAccountOwnsAuthor(post.authorId)) { showToast('只能删除当前身份发布的帖子'); return; }
+    if (deleteOtherPerson) {
+        if (!forumIsOtherPersonPost(post) || !forumCanViewPost(post)) { showToast('只能删除其他人发布的可见帖子'); return; }
+    } else if (!forumAccountOwnsAuthor(post.authorId)) { showToast('只能删除当前身份发布的帖子'); return; }
     forumRecordEvent('post_deleted', { postId: post.id, title: post.title || '' });
     db.forumPosts.splice(index, 1);
     saveData();
@@ -12,8 +22,9 @@ function forumDeletePost(postId) {
     showToast('帖子已删除');
 }
 
-function forumTogglePostDeleteMode() {
+function forumTogglePostDeleteMode(target) {
     if (forumPostDeleteMode) return;
+    forumPostDeleteTarget = target === 'others' ? 'others' : 'own';
     forumPostDeleteMode = true;
     forumSelectedPostIds.clear();
     var toolbar = document.getElementById('forum-post-delete-toolbar');
@@ -32,10 +43,11 @@ function forumPostSelectAll() {
 function forumPostDeleteSelected() {
     if (forumSelectedPostIds.size === 0) { showToast('请先选择要删除的帖子'); return; }
     if (!confirm('确定要删除选中的 ' + forumSelectedPostIds.size + ' 个帖子吗？')) return;
-    db.forumPosts = (db.forumPosts || []).filter(function(p) { return !forumSelectedPostIds.has(p.id) || !forumAccountOwnsAuthor(p.authorId); });
+    db.forumPosts = (db.forumPosts || []).filter(function(p) { return !forumSelectedPostIds.has(p.id) || !forumPostMatchesDeleteMode(p); });
     saveData();
     forumSelectedPostIds.clear();
     forumPostDeleteMode = false;
+    forumPostDeleteTarget = 'own';
     var toolbar = document.getElementById('forum-post-delete-toolbar');
     if (toolbar) toolbar.style.display = 'none';
     var deleteBtn = document.getElementById('forum-post-delete-btn');
@@ -46,6 +58,7 @@ function forumPostDeleteSelected() {
 
 function forumPostCancelDeleteMode() {
     forumPostDeleteMode = false;
+    forumPostDeleteTarget = 'own';
     forumSelectedPostIds.clear();
     var toolbar = document.getElementById('forum-post-delete-toolbar');
     if (toolbar) toolbar.style.display = 'none';
@@ -457,6 +470,20 @@ function forumBindNewEvents() {
                                 <span class="forum-more-item-desc">批量删除我的发布内容</span>
                             </div>
                         </button>
+                        <button type="button" class="forum-more-modal-item" id="forum-more-delete-others-btn">
+                            <div class="forum-more-modal-icon">
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                                </svg>
+                            </div>
+                            <div class="forum-more-modal-text">
+                                <span class="forum-more-item-name">删除他人帖子</span>
+                                <span class="forum-more-item-desc">多选或全选清理他人帖子</span>
+                            </div>
+                        </button>
                         <button type="button" class="forum-more-modal-item" id="forum-more-settings-btn">
                             <div class="forum-more-modal-icon">
                                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -502,6 +529,12 @@ function forumBindNewEvents() {
             if (manageBtn) manageBtn.addEventListener('click', () => {
                 modal.classList.remove('visible');
                 forumTogglePostDeleteMode();
+            });
+
+            const deleteOthersBtn = modal.querySelector('#forum-more-delete-others-btn');
+            if (deleteOthersBtn) deleteOthersBtn.addEventListener('click', () => {
+                modal.classList.remove('visible');
+                forumTogglePostDeleteMode('others');
             });
 
             const settingsBtn = modal.querySelector('#forum-more-settings-btn');

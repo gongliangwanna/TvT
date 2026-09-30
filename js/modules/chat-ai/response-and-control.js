@@ -175,6 +175,21 @@ function executePhoneControlCommands(text, controllingChar) {
     return { cleaned, executed };
 }
 
+function extractThinkingBlocks(response) {
+    const blocks = [];
+    const content = String(response || '').replace(/<(thinking|think)>([\s\S]*?)<\/\1>/gi, (_, tag, body) => {
+        blocks.push(body);
+        return '';
+    });
+    if (/^\s*<(?:thinking|think)>/i.test(content)) {
+        console.warn('[CoT] 思考标签未闭合，无法安全分离思考与回复');
+    }
+    return {
+        content,
+        thinking: blocks.length ? `<thinking>${blocks.join('\n\n')}</thinking>` : ''
+    };
+}
+
 async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChatType, isBackground = false, isCharBlockedMonologue = false, replyOptions = {}) {
     const rawResponse = fullResponse;
     const saveReplyTargetChat = async () => {
@@ -231,10 +246,10 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
             }
         }
 
-        // 1.7 捕获并分离 <thinking> 内容 (必须在提取摘要前执行，防止思维链内部的摘要标签被误提取)
-        const thinkingMatch = fullResponse.match(/<thinking>([\s\S]*)<\/thinking>/);
-        if (thinkingMatch) {
-            const thinkingContent = thinkingMatch[0]; // 包含标签的完整内容
+        // 1.7 捕获并分离 <thinking>/<think> 内容，先于摘要提取处理
+        const extractedThinking = extractThinkingBlocks(fullResponse);
+        if (extractedThinking.thinking) {
+            const thinkingContent = extractedThinking.thinking;
             if (chat._cotDisplayMode !== 'hidden') {
             // 创建思考过程消息对象
             const thinkingMsg = {
@@ -271,7 +286,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
             addMessageBubble(thinkingMsg, targetChatId, targetChatType);
             }
             // 从即将显示的文本中移除思考内容
-            fullResponse = fullResponse.replace(thinkingContent, "");
+            fullResponse = extractedThinking.content;
         }
 
         // 1.75 在思考内容移除后再提取拍一拍，避免误执行思维链中的示例。
@@ -282,6 +297,12 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                 addMessageBubble(message, targetChatId, targetChatType);
                 window.PokeSystem.playFeedback(message, chat);
             });
+        }
+
+        if (targetChatType === 'private' && window.Moments && typeof window.Moments.consumeAiCommands === 'function') {
+            const momentsResult = await window.Moments.consumeAiCommands(fullResponse, chat);
+            fullResponse = momentsResult.cleaned;
+            if (momentsResult.errors.length) fullResponse += `\n[系统提示：动态操作未完成：${momentsResult.errors.join('；')}]`;
         }
 
         // 1.8 节点系统：提取摘要
@@ -435,9 +456,10 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                             timestamp: Date.now()
                         });
 
-                        // Keep only last 20 items
-                        if (char.statusPanel.history.length > 20) {
-                            char.statusPanel.history = char.statusPanel.history.slice(0, 20);
+                        const storedLimit = char.statusPanel.historyRetentionLimit;
+                        const retentionLimit = Number.isSafeInteger(storedLimit) && storedLimit >= 0 ? storedLimit : 20;
+                        if (retentionLimit > 0 && char.statusPanel.history.length > retentionLimit) {
+                            char.statusPanel.history = char.statusPanel.history.slice(0, retentionLimit);
                         }
 
                         char.statusPanel.currentStatusRaw = rawStatus;

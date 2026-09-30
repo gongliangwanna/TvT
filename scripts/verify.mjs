@@ -161,22 +161,34 @@ if (retainedLegacyTagErrors.length > 1) {
 }
 
 const logicalInfo = collectDocumentInfo(logicalDocument);
-const protectedDomSignature = '679bc21e9ca7320577fd241a15151848c08999cbe33448db8c4762840dc5a2b1';
+const protectedDomSignature = 'acf0fdbf6941d00caf66673b3d82e527760cb7bc9fa20ccae76f48ace51ad7c1';
 const actualDomSignature = getNonScriptDomSignature(logicalDocument);
 if (actualDomSignature !== protectedDomSignature) {
-    fail(`Assembled non-script DOM differs from the protected pre-split structure: ${actualDomSignature}`);
+    fail(`Assembled non-script DOM differs from the protected release structure: ${actualDomSignature}`);
 }
 const textualIds = [...logicalHtml.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi)].map(match => match[1]);
 const duplicateIds = [...new Set(textualIds.filter((id, index) => textualIds.indexOf(id) !== index))];
-if (textualIds.length !== 2425) fail(`Expected 2425 assembled IDs, found ${textualIds.length}`);
+if (textualIds.length !== 2619) fail(`Expected 2619 assembled IDs, found ${textualIds.length}`);
 if (duplicateIds.length) fail(`Duplicate assembled IDs: ${duplicateIds.join(', ')}`);
 
 const requiredIds = [
     'home-screen', 'chat-list-screen', 'contacts-screen', 'chat-room-screen',
     'api-settings-screen', 'api-generation-params', 'api-generation-reset-values',
     'api-node-editor-screen', 'api-node-edit-form', 'api-node-generation-mode', 'api-node-generation-params',
-    'chat-settings-screen', 'group-settings-screen',
+    'chat-settings-screen', 'group-settings-screen', 'setting-show-debug-content',
+    'setting-journal-newest-first', 'setting-group-journal-newest-first',
+    'storage-audit-open', 'storage-audit-modal', 'storage-audit-title', 'storage-audit-close',
+    'storage-audit-status', 'storage-audit-results', 'storage-audit-clean',
+    'moments-screen', 'moments-compose-screen', 'moments-detail-screen', 'moments-settings-screen', 'moments-contacts-screen', 'moments-story-viewer',
+    'setting-moments-post-enabled', 'setting-moments-story-enabled', 'setting-moments-browse-enabled', 'setting-moments-contacts-enabled',
+    'moments-default-view-mode', 'moments-compose-view-mode', 'moments-result-dialog', 'moments-result-content', 'moments-friend-dialog', 'moments-friend-send', 'magic-room-moments-prompts',
+    'moments-ai-batch-btn', 'moments-batch-dialog', 'moments-batch-review', 'moments-comment-edit-dialog',
+    'moments-character-name-source', 'moments-character-nickname-awareness', 'moments-contact-nickname-awareness',
+    'setting-bilingual-language', 'setting-bilingual-global-display',
+    'setting-auto-expand-translation', 'setting-group-auto-expand-translation',
     'memory-table-screen', 'forum-screen', 'peek-screen', 'node-system-screen',
+    'peek-clear-modal', 'peek-clear-real-orders', 'peek-clear-cancel', 'peek-clear-confirm',
+    'peek-manage-clear-real-orders',
     'storage-screen', 'mcp-screen', 'mcp-panel', 'mcp-sheet', 'mcp-import-input',
     'keep-alive-auto-wake-enabled', 'keep-alive-use-builtin-btn', 'keep-alive-playback-status',
     'keep-alive-page-status', 'keep-alive-wake-status', 'keep-alive-task-status',

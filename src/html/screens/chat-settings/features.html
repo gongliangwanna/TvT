@@ -10,6 +10,15 @@
                                     </div>
                                 </div>
                                 <div class="kkt-item">
+                                    <div class="kkt-item-label">显示调试内容</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-show-debug-content">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="kkt-item">
                                     <div class="kkt-item-label">与所在群聊记忆互通</div>
                                     <div class="kkt-item-control">
                                         <label class="kkt-switch">
@@ -45,6 +54,10 @@
                                         </label>
                                     </div>
                                 </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">角色常用语言</div>
+                                    <div class="kkt-item-control"><input id="setting-bilingual-language" type="text" maxlength="40" placeholder="按人设判断" style="width:112px;text-align:right;border:none;background:transparent;color:inherit;font:inherit;"></div>
+                                </div>
                                 <div class="kkt-item" id="setting-bilingual-style-container">
                                     <div class="kkt-item-label">翻译显示样式</div>
                                     <div class="kkt-item-control">
@@ -56,6 +69,32 @@
                                         </select>
                                         <span class="kkt-arrow">›</span>
                                     </div>
+                                </div>
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label">翻译气泡自动展开</div>
+                                    <div class="kkt-item-control">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-auto-expand-translation">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="bilingual-global-settings">
+                                    <div class="bilingual-global-heading">全局双语生效位置</div>
+                                    <p>对已开启双语聊天的角色生效；聊天气泡仍用上面的设置。首次查看译文会调用对应场景 API，结果会缓存。</p>
+                                    <div class="bilingual-scope-grid">
+                                        <label><input type="checkbox" data-bilingual-scope="moments">动态、Story 与评论</label>
+                                        <label><input type="checkbox" data-bilingual-scope="peek">查手机与时光想说</label>
+                                        <label><input type="checkbox" data-bilingual-scope="journal">角色日记</label>
+                                        <label><input type="checkbox" data-bilingual-scope="forum">角色论坛小号</label>
+                                        <label><input type="checkbox" data-bilingual-scope="battery">电量心声</label>
+                                        <label><input type="checkbox" data-bilingual-scope="pomodoro">番茄钟回复</label>
+                                        <label><input type="checkbox" data-bilingual-scope="theater">角色小剧场</label>
+                                        <label><input type="checkbox" data-bilingual-scope="friendRequest">角色好友申请</label>
+                                    </div>
+                                    <label class="bilingual-display-row">其他位置的译文显示
+                                        <select id="setting-bilingual-global-display"><option value="click">点击查看翻译</option><option value="both">默认同时显示</option></select>
+                                    </label>
                                 </div>
                                 <div class="kkt-item">
                                     <div class="kkt-item-label">自定义回复条数</div>
@@ -126,7 +165,7 @@
                                     </div>
                                 </div>
                                 <div class="kkt-item">
-                                    <div class="kkt-item-label">拍一拍<p class="kkt-item-hint">开启后连点头像两次即可互动</p></div>
+                                    <div class="kkt-item-label">拍一拍<p class="kkt-item-hint">开启后按所选方式连点两次即可互动</p></div>
                                     <div class="kkt-item-control">
                                         <label class="kkt-switch">
                                             <input type="checkbox" id="setting-poke-enabled">
@@ -135,6 +174,10 @@
                                     </div>
                                 </div>
                                 <div id="setting-poke-options" class="poke-settings-options" style="display:none;">
+                                    <div class="kkt-item">
+                                        <label class="kkt-item-label" for="setting-poke-trigger-mode">触发方式<p class="kkt-item-hint">自动模式下隐藏头像时连点顶栏名字</p></label>
+                                        <div class="kkt-item-control"><select id="setting-poke-trigger-mode"><option value="auto">自动切换</option><option value="both">头像和顶栏名字</option><option value="avatar">仅头像</option><option value="title">仅顶栏名字</option></select><span class="kkt-arrow">›</span></div>
+                                    </div>
                                     <div class="kkt-item">
                                         <div class="kkt-item-label">允许角色主动拍我</div>
                                         <div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-poke-character-initiated"><span class="kkt-slider"></span></label></div>
@@ -191,6 +234,15 @@
                                     </div>
                                 </div>
 
+                                <div class="kkt-item">
+                                    <div class="kkt-item-label" style="min-width:0; flex-direction:column; align-items:flex-start; gap:0;">最新日记排前<p class="kkt-item-hint">按生成时间排序，收藏置顶暂不生效</p></div>
+                                    <div class="kkt-item-control" style="flex-shrink:0;">
+                                        <label class="kkt-switch">
+                                            <input type="checkbox" id="setting-journal-newest-first">
+                                            <span class="kkt-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
                                 <div class="kkt-item">
                                     <div class="kkt-item-label">收藏日记置顶</div>
                                     <div class="kkt-item-control">
@@ -446,6 +498,23 @@
                                 <div class="kkt-item" style="padding-top:0;">
                                     <p class="kkt-item-hint" style="font-size:11px;color:#aaa;margin:0;line-height:1.5;">角色只会在正常聊天或原本触发的后台消息中购物，不会因消费额外触发后台回复。使用你的亲属卡默认关闭。</p>
                                 </div>
+                            </div>
+
+                            <!-- 角色动态与人脉 -->
+                            <div class="kkt-group" style="margin-top:15px;">
+                                <div class="kkt-item"><div class="kkt-item-label">动态与人脉<p class="kkt-item-hint">在 VOOM 风格动态页中使用，默认关闭</p></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">角色主动发动态</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-moments-post-enabled"><span class="kkt-slider"></span></label></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">角色主动发 Story</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-moments-story-enabled"><span class="kkt-slider"></span></label></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">角色自主刷动态</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-moments-browse-enabled"><span class="kkt-slider"></span></label></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">角色点赞评论</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-moments-interact-enabled"><span class="kkt-slider"></span></label></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">启用角色人脉</div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-moments-contacts-enabled"><span class="kkt-slider"></span></label></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">显示动态操作旁白<p class="kkt-item-hint">默认隐藏，角色仍能记住</p></div><div class="kkt-item-control"><label class="kkt-switch"><input type="checkbox" id="setting-moments-show-activity-narration"><span class="kkt-slider"></span></label></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">感知动态网名</div><div class="kkt-item-control"><select id="setting-moments-nickname-awareness"><option value="inherit">跟随动态设置</option><option value="on">允许</option><option value="off">禁止</option></select></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">自主修改动态网名</div><div class="kkt-item-control"><select id="setting-moments-self-rename"><option value="inherit">跟随动态设置</option><option value="on">允许</option><option value="off">禁止</option></select></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">动态图片</div><div class="kkt-item-control"><select id="setting-moments-image-mode"><option value="off">不生成</option><option value="manual">按需生成</option><option value="auto">自动生成</option><option value="ai">AI 决定</option></select></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">动态语音</div><div class="kkt-item-control"><select id="setting-moments-voice-mode"><option value="off">不生成</option><option value="manual">按需生成</option><option value="auto">自动生成</option><option value="ai">AI 决定</option></select></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">角色人脉</div><div class="kkt-item-control"><button type="button" id="setting-moments-contacts-btn" class="btn btn-small btn-secondary">管理人脉</button></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">生成一条角色动态</div><div class="kkt-item-control"><button type="button" id="setting-moments-generate-btn" class="btn btn-small btn-secondary">现在生成</button></div></div>
                             </div>
 
                             <!-- 提醒事项设置 -->

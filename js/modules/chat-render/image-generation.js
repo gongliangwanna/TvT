@@ -51,6 +51,8 @@ window._scheduleBackgroundNaiGen = function(msgId, chatId, chatType, pvContent) 
                         console.error('[Image Auto Background] 自动压缩失败，降级保存原图', compressErr);
                     }
                 }
+                // 预览与原图相同时只保存一份；下载逻辑会使用当前图片作为原图。
+                if (finalMetadata.originalImageUrl === finalImageUrl) delete finalMetadata.originalImageUrl;
                 isSuccess = true;
             }
         } catch (err) {

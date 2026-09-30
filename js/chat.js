@@ -48,6 +48,7 @@ function setupChatRoom() {
             // Build Swiper Structure
             const swiper = document.createElement('div');
             swiper.className = 'status-swiper';
+            const loadedSlides = new Set();
 
             // Helper function for Lazy Loading
             const loadSlideContent = (index) => {
@@ -67,9 +68,20 @@ function setupChatRoom() {
                 } else {
                     slideInner.innerHTML = processTemplate(htmlContent, char);
                 }
+                loadedSlides.add(index);
+            };
+
+            const unloadDistantSlides = (currentIndex) => {
+                if (slidesData.length <= 100) return;
+                for (const index of loadedSlides) {
+                    if (Math.abs(index - currentIndex) <= 2) continue;
+                    swiper.children[index].querySelector('.status-slide-inner').replaceChildren();
+                    loadedSlides.delete(index);
+                }
             };
 
             // Create empty slides first
+            const slidesFragment = document.createDocumentFragment();
             slidesData.forEach((item, index) => {
                 const slide = document.createElement('div');
                 slide.className = 'status-slide';
@@ -79,8 +91,9 @@ function setupChatRoom() {
                 // Content will be loaded lazily
                 
                 slide.appendChild(slideInner);
-                swiper.appendChild(slide);
+                slidesFragment.appendChild(slide);
             });
+            swiper.appendChild(slidesFragment);
 
             // Indicator
             const indicator = document.createElement('div');
@@ -116,6 +129,7 @@ function setupChatRoom() {
                     for (let i = currentIndex - 2; i <= currentIndex + 2; i++) {
                         loadSlideContent(i);
                     }
+                    unloadDistantSlides(currentIndex);
                 }
             });
 
@@ -237,6 +251,13 @@ function setupChatRoom() {
             const backBtn = document.querySelector('#memory-journal-screen .back-btn');
             if (backBtn) backBtn.setAttribute('data-target', 'chat-room-screen');
             switchScreen('memory-journal-screen');
+            const chat = currentChatType === 'private'
+                ? db.characters.find(c => c.id === currentChatId)
+                : db.groups.find(g => g.id === currentChatId);
+            if (chat?.journalNewestFirst === true) {
+                const content = document.querySelector('#memory-journal-screen .content');
+                if (content) content.scrollTop = 0;
+            }
             showPanel('none'); 
         });
     }
@@ -385,6 +406,7 @@ function setupChatRoom() {
     }
     
     messageArea.addEventListener('click', (e) => {
+        if (e.target.closest('.debug-thought-details summary')) return;
         if (isDebugMode) {
             const messageWrapper = e.target.closest('.message-wrapper');
             if (messageWrapper) {
@@ -684,6 +706,7 @@ function openChatRoom(chatId, type) {
     if (typeof chatRoomTitle !== 'undefined' && chatRoomTitle) {
         chatRoomTitle.textContent = (type === 'private') ? (chat.remarkName || chat.realName || chat.name) : chat.name;
     }
+    if (window.PokeSystem) window.PokeSystem.updateTriggerUI(chat, type);
     const subtitle = document.getElementById('chat-room-subtitle');
     if (type === 'private') {
         subtitle.style.display = (chat.showStatus !== false) ? 'flex' : 'none';

@@ -31,8 +31,8 @@ function renderPeekAlbum(photos) {
             const imgContainer = document.getElementById('peek-photo-image-container');
             const descriptionEl = document.getElementById('peek-photo-description');
             
-            imgContainer.innerHTML = `<div style="padding: 20px; text-align: left; color: #555; font-size: 16px; line-height: 1.6; height: 100%; overflow-y: auto;">${photo.imageDescription}</div>`;
-            descriptionEl.textContent = `批注：${photo.description}`;
+            imgContainer.innerHTML = `<div style="padding: 20px; text-align: left; color: #555; font-size: 16px; line-height: 1.6; height: 100%; overflow-y: auto;">${peekBilingualText(photo.imageDescription, photo.imageDescription)}</div>`;
+            descriptionEl.innerHTML = `批注：${peekBilingualText(photo.description)}`;
             
             modal.classList.add('visible');
         });
@@ -81,7 +81,7 @@ function renderPeekUnlock(data) {
                         </div>
                     </div>
                     <div class="unlock-post-card-content">
-                        ${(post.content || '').replace(/\n/g, '<br>')}
+                        ${peekBilingualText(post.content || '', (post.content || '').replace(/\n/g, '<br>'))}
                     </div>
                     <div class="unlock-post-card-actions">
                         <div class="action"><svg viewBox="0 0 24 24"><path d="M18,16.08C17.24,16.08 16.56,16.38 16.04,16.85L8.91,12.7C8.96,12.47 9,12.24 9,12C9,11.76 8.96,11.53 8.91,11.3L16.04,7.15C16.56,7.62 17.24,7.92 18,7.92C19.66,7.92 21,6.58 21,5C21,3.42 19.66,2 18,2C16.34,2 15,3.42 15,5C15,5.24 15.04,5.47 15.09,5.7L7.96,9.85C7.44,9.38 6.76,9.08 6,9.08C4.34,9.08 3,10.42 3,12C3,13.58 4.34,14.92 6,14.92C6.76,14.92 7.44,14.62 7.96,14.15L15.09,18.3C15.04,18.53 15,18.76 15,19C15,20.58 16.34,22 18,22C19.66,22 21,20.58 21,19C21,17.42 19.66,16.08 18,16.08Z"></path></svg> <span>分享</span></div>
@@ -110,7 +110,7 @@ function renderPeekUnlock(data) {
                 </div>
             </div>
             <div class="unlock-profile-bio">
-                <p>${bio.replace(/\n/g, '<br>')}</p>
+                <p>${peekBilingualText(bio, bio.replace(/\n/g, '<br>'))}</p>
             </div>
             <div class="unlock-profile-stats">
                 <div class="unlock-profile-stat">
@@ -169,7 +169,7 @@ function renderPeekUnlockPostDetail(post, unlockData) {
             <div class="${itemClass}">
                 <div class="unlock-comment-author">${peekEscapeHtml(c.author || '')}</div>
                 ${replyLabel}
-                <div class="unlock-comment-content">${(c.content || '').replace(/\n/g, '<br>')}</div>
+                <div class="unlock-comment-content">${c.author === nickname ? peekBilingualText(c.content || '', (c.content || '').replace(/\n/g, '<br>')) : peekEscapeHtml(c.content || '').replace(/\n/g, '<br>')}</div>
                 <div class="unlock-comment-time">${peekEscapeHtml(c.timestamp || '')}</div>
             </div>`;
     });
@@ -189,7 +189,7 @@ function renderPeekUnlockPostDetail(post, unlockData) {
                         <span class="timestamp">${peekEscapeHtml(post.timestamp || '')}</span>
                     </div>
                 </div>
-                <div class="unlock-post-card-content">${(post.content || '').replace(/\n/g, '<br>')}</div>
+                <div class="unlock-post-card-content">${peekBilingualText(post.content || '', (post.content || '').replace(/\n/g, '<br>'))}</div>
             </div>
             <div class="unlock-comments-section">
                 <h4 style="margin: 0 0 12px 0; font-size: 14px; color: #666;">评论 (${comments.length})</h4>
@@ -294,18 +294,18 @@ function showTimeThoughtDetail(thought) {
                 
                 <div class="detail-section">
                     <div class="detail-section-title">那时的我</div>
-                    <div class="detail-section-content">${peekEscapeHtml(thought.characterSelfDescription || '').replace(/\n/g, '<br>')}</div>
+                    <div class="detail-section-content">${peekBilingualText(thought.characterSelfDescription || '')}</div>
                 </div>
                 
                 <div class="detail-section">
                     <div class="detail-section-title">想对你说</div>
-                    <div class="detail-section-content">${peekEscapeHtml(thought.whatToSay || '').replace(/\n/g, '<br>')}</div>
+                    <div class="detail-section-content">${peekBilingualText(thought.whatToSay || '')}</div>
                 </div>
                 
                 ${thought.whatToDo ? `
                 <div class="detail-section">
                     <div class="detail-section-title">想和你做</div>
-                    <div class="detail-section-content">${peekEscapeHtml(thought.whatToDo).replace(/\n/g, '<br>')}</div>
+                    <div class="detail-section-content">${peekBilingualText(thought.whatToDo)}</div>
                 </div>
                 ` : ''}
             </div>
@@ -350,7 +350,7 @@ function renderPeekConversation(conversation) {
 
             const bubble = document.createElement('div');
             bubble.className = `message-bubble ${isSentByChar ? 'sent' : 'received'}`;
-            bubble.textContent = msg.content;
+            bubble.innerHTML = isSentByChar && !isImpersonated ? peekBilingualText(msg.content) : peekEscapeHtml(msg.content);
             // isImpersonated 仅保留在数据中，界面不显示任何标注，以假乱真
 
             if (isSentByChar) {

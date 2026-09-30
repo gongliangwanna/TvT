@@ -394,6 +394,11 @@
     color: var(--global-title-color) !important;
 }
 
+#chat-room-header-default .poke-title-trigger {
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
 #chat-room-header-default .back-btn,
 #chat-room-header-default .action-btn {
     color: var(--func-icon-color) !important;
@@ -739,6 +744,62 @@
 }
 
 /* 调试模式样式 */
+.debug-thought-visible {
+    margin: 5px 0;
+}
+
+.debug-thought-details {
+    max-width: min(86%, 520px);
+    margin-left: 0;
+    color: #777;
+    font-size: 12px;
+}
+
+.debug-thought-details summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 11px;
+    background: #fff;
+    border: 1px solid #e9e9e9;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .04);
+    cursor: pointer;
+    list-style: none;
+}
+
+.debug-thought-details summary::-webkit-details-marker {
+    display: none;
+}
+
+.debug-thought-details summary::before {
+    content: 'ⓘ';
+    font-size: 14px;
+    line-height: 1;
+}
+
+.debug-thought-body {
+    margin-top: 5px;
+    padding: 9px 11px;
+    border-radius: 9px;
+    background: #fff;
+    border: 1px solid #e9e9e9;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+}
+
+.debug-thought-entry.message-wrapper {
+    display: block;
+    margin: 0;
+}
+
+.debug-thought-entry + .debug-thought-entry {
+    border-top: 1px solid #eee;
+    margin-top: 9px;
+    padding-top: 9px;
+}
+
 .message-bubble.debug-visible {
     background-color: rgba(238, 238, 238, 0.8) !important;
     border: 1px dashed #999 !important;
@@ -1839,6 +1900,13 @@
     flex-direction: column;
     align-items: center;
     cursor: pointer;
+}
+
+#group-poke-expansion-btn {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    font: inherit;
 }
 
 .expansion-item-icon {
@@ -2951,3 +3019,8 @@
 .voice-transcript > *:last-child {
     margin-bottom: 0;
 }
+.bilingual-content { display: inline; }
+.bilingual-reveal { display: inline-block; margin: 0 0 0 5px; padding: 0; border: 0; background: transparent; color: #888; font-size: min(.82em, 12px); line-height: inherit; cursor: pointer; vertical-align: baseline; }
+.bilingual-reveal:disabled { opacity: .65; cursor: wait; }
+.bilingual-translation { display: block; margin-top: 4px; color: #777; font-size: min(.9em, 14px); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bilingual-translation[hidden] { display: none; }

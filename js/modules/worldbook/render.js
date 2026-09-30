@@ -165,6 +165,10 @@ function renderWorldBookList(expandedCategory = null) {
                             book.category = cat.replace(oldFullPath, newFullPath);
                         }
                     });
+                    (db.moments?.contacts || []).forEach(contact => {
+                        const paths = contact.worldBookBinding?.categoryPaths;
+                        if (Array.isArray(paths)) contact.worldBookBinding.categoryPaths = paths.map(path => path === oldFullPath || path.startsWith(`${oldFullPath}/`) ? newFullPath + path.slice(oldFullPath.length) : path);
+                    });
                     await saveData();
                     renderWorldBookList();
                     showToast('分类名已修改');

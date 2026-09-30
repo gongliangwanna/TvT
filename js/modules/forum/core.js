@@ -44,6 +44,10 @@ function forumAccountOwnsAuthor(authorId, accountId) {
     return authorId === forumLegacyAuthorId(accountId) || authorId === accountId || (accountId === 'main' && authorId === 'user');
 }
 
+function forumIsOtherPersonPost(post) {
+    return !!post && !forumGetAccountById(post.authorId);
+}
+
 function forumMessageBelongsToAccount(message, accountId) {
     accountId = accountId || forumCurrentAccountId();
     return (message.accountId || 'main') === accountId;

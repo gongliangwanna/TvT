@@ -1,0 +1,165 @@
+        <div id="moments-screen" class="screen moments-screen">
+            <header class="moments-header">
+                <button type="button" class="moments-icon-btn back-btn" data-target="more-screen" aria-label="返回"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+                <h1>VOOM</h1>
+                <button type="button" class="moments-icon-btn moments-heart-btn" id="moments-notifications-btn" aria-label="动态消息"><svg class="moments-header-heart" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg><span id="moments-unread-badge" hidden></span></button>
+                <button type="button" class="moments-icon-btn" id="moments-settings-btn" aria-label="动态设置"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+            </header>
+            <main class="moments-scroll" id="moments-scroll">
+                <div class="moments-story-strip" id="moments-story-strip"></div>
+                <div class="moments-feed" id="moments-feed"></div>
+            </main>
+            <button type="button" class="moments-fab" id="moments-create-btn" aria-label="发布动态"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+        </div>
+
+        <div id="moments-compose-screen" class="screen moments-screen">
+            <header class="moments-header">
+                <button type="button" class="moments-icon-btn back-btn" data-target="moments-screen" aria-label="取消"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+                <h1 id="moments-compose-title">发布动态</h1>
+                <button type="button" class="moments-publish-btn" id="moments-publish-btn">发布</button>
+            </header>
+            <main class="moments-scroll moments-compose-content">
+                <div class="moments-author-line" id="moments-compose-author"></div>
+                <label class="moments-field moments-compose-persona-field">以哪个身份发布<select id="moments-compose-persona"></select></label>
+                <div class="moments-compose-kind" role="group" aria-label="发布类型">
+                    <button type="button" data-kind="post" class="active">动态</button>
+                    <button type="button" data-kind="story">24 小时 Story</button>
+                </div>
+                <textarea id="moments-compose-text" placeholder="这一刻，想分享什么？" maxlength="5000"></textarea>
+                <div id="moments-compose-mentions" class="moments-mention-suggestions" hidden></div>
+                <div id="moments-compose-media" class="moments-compose-media"></div>
+                <div class="moments-compose-tools">
+                    <button type="button" id="moments-image-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span>图片</span></button>
+                    <button type="button" id="moments-video-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>视频</span></button>
+                    <button type="button" id="moments-audio-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span>音频</span></button>
+                    <button type="button" id="moments-record-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg><span>录音</span></button>
+                    <button type="button" id="moments-compose-sticker-btn" aria-label="添加表情包"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 14c1 2 2.4 3 4 3s3-1 4-3"/><circle cx="9" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1" fill="currentColor" stroke="none"/></svg><span>表情包</span></button>
+                </div>
+                <input id="moments-media-input" type="file" hidden>
+                <div class="moments-compose-options">
+                    <button type="button" id="moments-audience-btn"><span>谁可以看</span><span id="moments-audience-label">仅自己　›</span></button>
+                    <button type="button" id="moments-remind-btn"><span>提醒谁看</span><span id="moments-remind-label">选择角色　›</span></button>
+                    <label class="moments-field moments-view-choice">这条动态何时让提醒的人看<select id="moments-compose-view-mode"><option value="default">按动态设置</option><option value="now">马上观看</option><option value="later">过段时间观看</option></select></label>
+                </div>
+                <p class="moments-hint">马上观看只对“提醒谁看”的对象生效。@ 不会改变可见范围。</p>
+            </main>
+        </div>
+
+        <div id="moments-detail-screen" class="screen moments-screen">
+            <header class="moments-header"><button type="button" class="moments-icon-btn back-btn" data-target="moments-screen" aria-label="返回"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h1>动态详情</h1><span class="moments-header-spacer"></span></header>
+            <main class="moments-scroll" id="moments-detail-content"></main>
+            <div id="moments-reply-target" class="moments-reply-target" hidden><span id="moments-reply-target-label"></span><button type="button" id="moments-reply-cancel" aria-label="取消回复">×</button></div>
+            <div class="moments-comment-composer"><input id="moments-comment-input" type="text" autocomplete="off" placeholder="写下评论，输入 @ 可提及…"><button type="button" id="moments-comment-sticker-btn" class="moments-comment-sticker-btn" aria-label="发送表情包">☺</button><button type="button" id="moments-comment-send">发送</button></div>
+            <div id="moments-comment-mentions" class="moments-mention-suggestions" hidden></div>
+        </div>
+
+        <div id="moments-profile-screen" class="screen moments-screen">
+            <header class="moments-header"><button type="button" class="moments-icon-btn back-btn" data-target="moments-screen" aria-label="返回"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h1>个人主页</h1><span class="moments-header-spacer"></span></header>
+            <main class="moments-scroll" id="moments-profile-content"></main>
+        </div>
+
+        <div id="moments-notifications-screen" class="screen moments-screen">
+            <header class="moments-header"><button type="button" class="moments-icon-btn back-btn" data-target="moments-screen" aria-label="返回"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h1>动态消息</h1><button type="button" class="moments-icon-btn moments-notifications-manage" id="moments-notifications-manage">管理</button></header>
+            <div class="moments-notifications-toolbar" id="moments-notifications-toolbar" hidden><button type="button" id="moments-notifications-select-all">全选</button><button type="button" id="moments-notifications-delete" disabled>删除 (0)</button></div>
+            <main class="moments-scroll" id="moments-notifications-content"></main>
+        </div>
+
+        <div id="moments-settings-screen" class="screen moments-screen">
+            <header class="moments-header"><button type="button" class="moments-icon-btn back-btn" data-target="moments-screen" aria-label="返回"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h1>动态设置</h1><span class="moments-header-spacer"></span></header>
+            <main class="moments-scroll moments-settings-content">
+                <section class="moments-settings-card"><h2>动态名字</h2><label class="moments-field">角色未设置网名时显示<select id="moments-character-name-source"><option value="remark">角色备注</option><option value="real">真名</option></select></label><p class="moments-hint">点击个人主页上的名字，可为角色、人脉或当前用户身份设置独立的动态网名。</p></section>
+                <section class="moments-settings-card"><h2>网名互动</h2><div class="moments-nickname-switches"><label><span>角色感知网名</span><input type="checkbox" id="moments-character-nickname-awareness"></label><label><span>人脉感知网名</span><input type="checkbox" id="moments-contact-nickname-awareness"></label><label><span>角色自主修改网名</span><input type="checkbox" id="moments-character-self-rename"></label><label><span>人脉自主修改网名</span><input type="checkbox" id="moments-contact-self-rename"></label></div><p class="moments-hint">仅允许修改自己的动态网名，自主改名最多每天一次。具体角色和人脉可单独选择允许或禁止。</p></section>
+                <section class="moments-settings-card"><h2>互动可见范围</h2><label class="moments-field">谁能看见点赞和评论<select id="moments-interaction-visibility"><option value="mutual">共同人脉可见</option><option value="all">所有可看帖的人可见</option></select></label><p class="moments-hint">发帖者始终能看到自己动态下的全部互动。</p></section>
+                <section class="moments-settings-card"><h2>观看默认方式</h2><label class="moments-field">提醒谁看之后<select id="moments-default-view-mode"><option value="now">马上观看</option><option value="later">过段时间观看</option></select></label><p class="moments-hint">单条动态的选择优先于这里。</p></section>
+                <section class="moments-settings-card"><h2>可见分组</h2><div id="moments-groups-list"></div><div class="moments-inline-actions"><button type="button" id="moments-add-group-btn">＋ 新建分组</button></div><p class="moments-hint">分组只包含聊天角色。发布时会保存当时选中的角色名单。</p></section>
+                <section class="moments-settings-card"><h2>角色认识我的身份</h2><div id="moments-identity-bindings"></div><p class="moments-hint">发动态时按这里的人设区分可见身份；未指定的角色沿用当前展示档案。</p></section>
+                <section class="moments-settings-card"><h2>动态管理</h2><p class="moments-hint">搜索、按发布人筛选，或多选清除动态与 Story。</p><div class="moments-inline-actions"><button type="button" id="moments-manage-btn">管理动态</button></div></section>
+                <section class="moments-settings-card"><h2>主动动态</h2><p class="moments-hint">角色及人脉的开关在对应角色的聊天设置中管理。应用运行时，角色和人脉会按人设自行决定是否发帖、浏览和互动。</p><button type="button" id="moments-generate-now-btn">检查一次自主动态</button></section>
+            </main>
+        </div>
+
+        <div id="moments-manage-screen" class="screen moments-screen">
+            <header class="moments-header"><button type="button" class="moments-icon-btn back-btn" data-target="moments-settings-screen" aria-label="返回动态设置"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h1>动态管理</h1><span class="moments-header-spacer"></span></header>
+            <main class="moments-scroll moments-settings-content moments-manage-content">
+                <div class="moments-manage-filters"><input id="moments-manage-search" type="search" autocomplete="off" placeholder="搜索动态内容" aria-label="搜索动态内容"><select id="moments-manage-author" aria-label="按发布人筛选"><option value="">全部发布人</option></select></div>
+                <div class="moments-manage-toolbar"><span id="moments-manage-count"></span><button type="button" id="moments-manage-select-all">全选结果</button></div>
+                <div id="moments-manage-list" class="moments-manage-list"></div>
+            </main>
+            <div class="moments-manage-footer"><button type="button" id="moments-manage-clear-all">清除全部</button><button type="button" id="moments-manage-delete-selected" disabled>删除选中 (0)</button></div>
+        </div>
+
+        <div id="moments-contacts-screen" class="screen moments-screen">
+            <header class="moments-header"><button type="button" class="moments-icon-btn back-btn" data-target="chat-settings-screen" aria-label="返回聊天设置"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h1>角色人脉</h1><span class="moments-header-spacer"></span></header>
+            <main class="moments-scroll moments-settings-content">
+                <div class="moments-contacts-heading" id="moments-contacts-heading"></div>
+                <div class="moments-inline-actions"><button type="button" id="moments-add-person-btn">＋ 手动添加</button><button type="button" id="moments-link-char-btn">关联已有角色</button><button type="button" id="moments-ai-person-btn">AI 生成人脉</button><button type="button" id="moments-ai-batch-btn">批量生成</button></div>
+                <div id="moments-contacts-list"></div>
+            </main>
+        </div>
+
+        <div id="moments-picker" class="moments-picker" hidden>
+            <div class="moments-picker-shade" data-action="close-picker"></div>
+            <div class="moments-picker-panel"><div class="moments-picker-head"><button type="button" data-action="close-picker">取消</button><h2 id="moments-picker-title"></h2><button type="button" id="moments-picker-done">完成</button></div><div id="moments-picker-options" class="moments-picker-options"></div></div>
+        </div>
+
+        <div id="moments-sticker-picker" class="moments-picker" hidden>
+            <div class="moments-picker-shade" data-action="close-sticker-picker"></div>
+            <div class="moments-picker-panel moments-sticker-panel" role="dialog" aria-modal="true" aria-labelledby="moments-sticker-title">
+                <div class="moments-picker-head"><button type="button" data-action="close-sticker-picker">取消</button><h2 id="moments-sticker-title">选择表情包</h2><span class="moments-picker-head-spacer"></span></div>
+                <input id="moments-sticker-search" type="search" autocomplete="off" placeholder="搜索表情包" aria-label="搜索表情包">
+                <div id="moments-sticker-categories" class="moments-sticker-categories"></div>
+                <div id="moments-sticker-grid" class="moments-sticker-grid"></div>
+            </div>
+        </div>
+
+        <div id="moments-post-dialog" class="moments-picker moments-centered-dialog" hidden><div class="moments-picker-shade" data-action="close-post-dialog"></div><div class="moments-editor-panel moments-post-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="moments-post-dialog-title"><h2 id="moments-post-dialog-title">动态操作</h2><div id="moments-post-dialog-actions" class="moments-post-dialog-actions"></div><button type="button" class="moments-post-dialog-cancel" data-action="close-post-dialog">取消</button></div></div>
+
+        <div id="moments-comment-edit-dialog" class="moments-picker moments-centered-dialog" hidden>
+            <div class="moments-picker-shade" data-action="close-comment-edit"></div>
+            <form id="moments-comment-edit-form" class="moments-editor-panel" role="dialog" aria-modal="true" aria-labelledby="moments-comment-edit-title">
+                <h2 id="moments-comment-edit-title">编辑评论</h2>
+                <textarea id="moments-comment-edit-text" maxlength="1000" aria-label="评论内容"></textarea>
+                <div id="moments-comment-edit-mentions" class="moments-mention-suggestions" hidden></div>
+                <div class="moments-inline-actions"><button type="button" data-action="close-comment-edit">取消</button><button type="submit" id="moments-comment-edit-save" class="moments-primary-btn">保存</button></div>
+            </form>
+        </div>
+
+        <div id="moments-editor-dialog" class="moments-picker" hidden>
+            <div class="moments-picker-shade" data-action="close-editor"></div>
+            <form id="moments-editor-form" class="moments-editor-panel"><h2 id="moments-editor-title">添加人脉</h2><div id="moments-editor-fields"></div><div class="moments-inline-actions"><button type="button" data-action="close-editor">取消</button><button type="submit" class="moments-primary-btn">保存</button></div></form>
+        </div>
+
+        <div id="moments-batch-dialog" class="moments-picker moments-centered-dialog" hidden>
+            <div class="moments-picker-shade" data-batch-action="close"></div>
+            <div class="moments-editor-panel moments-batch-panel" role="dialog" aria-modal="true" aria-labelledby="moments-batch-title">
+                <h2 id="moments-batch-title">批量生成人脉</h2>
+                <div id="moments-batch-config">
+                    <p class="moments-hint">每组选择所属角色和人数，再逐人指定性别与关系；留空由 AI 决定。只填“母亲”会指定那一人，不会让整组都成为母亲。生成结果须检查并保存，扩展内容默认关闭。</p>
+                    <div id="moments-batch-groups"></div>
+                    <div class="moments-inline-actions"><button type="button" data-batch-action="add-group">＋ 添加一组</button></div>
+                    <div class="moments-batch-options" id="moments-batch-options"></div>
+                    <div id="moments-batch-world" hidden></div>
+                    <p id="moments-batch-status" class="moments-hint" role="status"></p>
+                    <div class="moments-inline-actions"><button type="button" data-batch-action="close">取消</button><button type="button" id="moments-batch-generate" class="moments-primary-btn">开始生成</button></div>
+                </div>
+                <div id="moments-batch-review" hidden>
+                    <p id="moments-batch-review-status" class="moments-hint" role="status"></p>
+                    <div id="moments-batch-candidates"></div>
+                    <div class="moments-inline-actions"><button type="button" data-batch-action="back">返回配置</button><button type="button" data-batch-action="retry-missing">补齐缺少</button><button type="button" id="moments-batch-save" class="moments-primary-btn">保存选中</button></div>
+                </div>
+            </div>
+            <div id="moments-batch-progress" class="moments-batch-progress" hidden>
+                <div class="moments-picker-shade"></div>
+                <div class="moments-editor-panel moments-batch-progress-panel" role="dialog" aria-modal="true" aria-labelledby="moments-batch-progress-title">
+                    <h2 id="moments-batch-progress-title">正在生成人脉</h2>
+                    <p id="moments-batch-progress-text" role="status" aria-live="polite"></p>
+                    <div id="moments-batch-progress-track" class="moments-batch-progress-track" role="progressbar" aria-label="人脉生成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="moments-batch-progress-fill"></span></div>
+                    <p id="moments-batch-progress-detail" class="moments-hint"></p>
+                    <div class="moments-inline-actions"><button type="button" data-batch-action="stop">停止生成</button></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="moments-story-viewer" class="moments-story-viewer" hidden><button type="button" id="moments-story-close" aria-label="关闭">×</button><div id="moments-story-content"></div></div>
+        <div id="moments-result-dialog" class="moments-picker moments-centered-dialog" hidden><div class="moments-picker-shade" data-action="close-result"></div><div class="moments-editor-panel"><h2>本次观看结果</h2><div id="moments-result-content"></div><div class="moments-inline-actions"><button type="button" data-action="close-result">关闭</button></div></div></div>
+        <div id="moments-friend-dialog" class="moments-picker moments-centered-dialog" hidden><div class="moments-picker-shade" data-action="close-friend"></div><div class="moments-editor-panel"><h2 id="moments-friend-title">添加好友</h2><p id="moments-friend-description" class="moments-hint"></p><div class="moments-inline-actions"><button type="button" data-action="close-friend">取消</button><button type="button" id="moments-friend-send" class="moments-primary-btn">发送申请</button></div></div></div>

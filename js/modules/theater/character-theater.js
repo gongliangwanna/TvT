@@ -117,6 +117,8 @@ async function generateCharTheater(charId) {
         userPrompt += `\n\n【额外创作要求】\n${customPrompt}`;
     }
 
+    systemPrompt += BilingualContent.prompt(char, 'theater', useHtml ? '作品中可见的文字，HTML 标签、CSS 与属性名不得翻译' : '角色创作的故事正文');
+
     userPrompt += `\n\n请现在写一段小剧场作品，题材和风格由你自由发挥，但需要体现你（${charName}）的性格特点，以及你与用户（${myName}）之间的关系和最近发生的事。`;
 
     const isCurrentChat = () => (typeof currentChatId !== 'undefined' && currentChatId === charId

@@ -107,4 +107,42 @@ assert.ok(dmSource.includes('forumMessageBelongsToAccount'), 'DM paths enforce a
 const aiInteractionSource = read('js/modules/forum/ai-interactions.js');
 assert.ok(aiInteractionSource.includes('p.authorId === targetUserId || p.npcId === targetUserId'), 'DM persona history follows stable NPC IDs instead of display names');
 
-console.log('Forum tests passed: migration, XSS safety, account isolation, reactions, stable NPCs, relationships, knowledge, stale jobs, story continuity, and local search.');
+vm.runInContext(read('js/modules/forum/settings-and-profile.js'), context, { filename: 'forum/settings-and-profile.js' });
+context.db.forumActiveAccountId = 'main';
+context.renderForumPosts = () => {};
+context.switchScreen = () => {};
+context.document.getElementById = () => null;
+context.document.querySelector = () => null;
+context.document.querySelectorAll = () => [
+    { dataset: { id: 'p_npc_1' } },
+    { dataset: { id: 'p_npc_2' } }
+];
+context.db.forumPosts = [
+    { id: 'p_main', authorId: 'user', title: '大号帖子', comments: [] },
+    { id: 'p_alt', authorId: 'alt_a', title: '小号帖子', comments: [] },
+    { id: 'p_npc_1', authorId: first, title: '他人帖子一', comments: [] },
+    { id: 'p_npc_2', authorId: second, title: '他人帖子二', comments: [] },
+    { id: 'p_npc_private', authorId: first, visibility: 'private', title: '不可见帖子', comments: [] }
+];
+context.forumTogglePostDeleteMode('others');
+assert.equal(context.forumPostMatchesDeleteMode(context.db.forumPosts[0]), false, 'other-post mode excludes the main account');
+assert.equal(context.forumPostMatchesDeleteMode(context.db.forumPosts[1]), false, 'other-post mode excludes owned alt accounts');
+assert.equal(context.forumPostMatchesDeleteMode(context.db.forumPosts[2]), true, 'other-post mode includes visible NPC posts');
+assert.equal(context.forumPostMatchesDeleteMode(context.db.forumPosts[4]), false, 'other-post mode excludes invisible posts');
+context.forumPostSelectAll();
+assert.equal(context.forumSelectedPostIds.size, 2, 'select all selects the visible other-person cards');
+context.forumPostDeleteSelected();
+assert.deepEqual(Array.from(context.db.forumPosts, post => post.id), ['p_main', 'p_alt', 'p_npc_private'], 'bulk deletion preserves own identities and invisible posts');
+context.forumDeletePost('p_alt', true);
+assert.ok(context.db.forumPosts.some(post => post.id === 'p_alt'), 'single other-person deletion cannot remove an owned alt post');
+context.forumDeletePost('p_npc_private', true);
+assert.ok(context.db.forumPosts.some(post => post.id === 'p_npc_private'), 'single deletion cannot remove an invisible post');
+context.db.forumPosts.find(post => post.id === 'p_npc_private').visibility = 'public';
+context.forumDeletePost('p_npc_private', true);
+assert.equal(context.db.forumPosts.some(post => post.id === 'p_npc_private'), false, 'single deletion removes a visible other-person post');
+context.forumTogglePostDeleteMode();
+assert.equal(context.forumPostMatchesDeleteMode(context.db.forumPosts[0]), true, 'existing own-post mode still includes the main account');
+assert.equal(context.forumPostMatchesDeleteMode(context.db.forumPosts[1]), false, 'existing own-post mode still excludes other identities');
+context.forumPostCancelDeleteMode();
+
+console.log('Forum tests passed: migration, XSS safety, account isolation, reactions, stable NPCs, relationships, knowledge, stale jobs, story continuity, local search, and post deletion modes.');

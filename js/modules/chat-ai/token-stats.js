@@ -1,8 +1,65 @@
 function estimateTokenFromText(text) {
     if (!text || typeof text !== 'string') return 0;
-    const chinese = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    if (/^data:image\//i.test(text)) return 0;
+    let chinese = 0;
+    for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        if (code >= 0x4e00 && code <= 0x9fa5) chinese++;
+    }
     const other = text.length - chinese;
     return Math.ceil(chinese * 1.2 + other * 0.4);
+}
+
+function captureChatTokenUsage(chat, response) {
+    const usage = response?.usage || response?.usageMetadata || response?.message?.usage;
+    if (!usage || !chat) return;
+    const input = Number(usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokenCount);
+    const output = Number(usage.completion_tokens ?? usage.output_tokens ?? usage.candidatesTokenCount);
+    if (!Number.isFinite(input) || input < 0) return;
+    chat._lastTokenUsage = { input, output: Number.isFinite(output) ? output : 0, at: Date.now() };
+}
+
+function getTokenHistoryInfo(chat) {
+    const limit = Math.max(1, Number(chat.maxMemory) || 20);
+    let history = (chat.history || []).slice(-limit).filter(Boolean);
+    if (typeof filterHistoryForAI === 'function') history = filterHistoryForAI(chat, history);
+    history = history.filter(message => message && !message.isContextDisabled && !message.excludeFromContext
+        && message.type !== 'mcp_activity' && !message.isThinking
+        && !(typeof message.content === 'string' && message.content.trim().startsWith('<thinking>')));
+    const texts = [];
+    const messageBreakdown = [];
+    let mediaCount = 0;
+    history.forEach((message, index) => {
+        const messageTexts = [];
+        if (Array.isArray(message.parts) && message.parts.length) {
+            message.parts.forEach(part => {
+                if (!part) return;
+                if (part.type === 'image') {
+                    mediaCount++;
+                    if (part.description) messageTexts.push(`[图片描述：${part.description}]`);
+                } else if ((part.type === 'text' || part.type === 'html') && part.text) {
+                    messageTexts.push(part.text);
+                }
+            });
+        } else if (typeof message.content === 'string' && !/^data:image\//i.test(message.content)) {
+            messageTexts.push(message.content);
+        } else if (typeof message.content === 'string' && /^data:image\//i.test(message.content)) {
+            mediaCount++;
+        }
+        const messageText = messageTexts.join('\n');
+        if (messageText) {
+            texts.push(messageText);
+            messageBreakdown.push({ index: index + 1, tokens: estimateTokenFromText(messageText),
+                preview: messageText.slice(0, 45).replace(/\s+/g, ' ') });
+        }
+    });
+    return { tokens: estimateTokenFromText(texts.join('\n')), mediaCount, messageCount: history.length,
+        largestMessages: messageBreakdown.sort((a, b) => b.tokens - a.tokens).slice(0, 5) };
+}
+
+function describeTokenHistory(info) {
+    const top = info.largestMessages.map(item => `第 ${item.index} 条 · 约 ${item.tokens} Token · ${item.preview}`).join('\n');
+    return `本次带入 ${info.messageCount} 条消息。${top ? `\n占用较多的消息：\n${top}` : ''}`;
 }
 
 // 估算当前对话上下文的 Token 数
@@ -183,49 +240,8 @@ function getChatTokenBreakdown(chatId, chatType = 'private') {
     const systemRulesTokens = Math.max(0, fullSystemTokens - identifiedPromptTokens);
 
     // 12) 短期记忆（对话历史）
-    let historySlice = (chat.history || []).slice(-(chat.maxMemory || 20));
-    historySlice = historySlice.filter(m => !m.isContextDisabled);
-    
-    let lastAiIndex = -1;
-    for (let i = historySlice.length - 1; i >= 0; i--) {
-        if (historySlice[i].role === 'assistant' || historySlice[i].role === 'char') {
-            lastAiIndex = i;
-            break;
-        }
-    }
-    
-    let historyForText = [];
-    let triggerMessages = [];
-    
-    if (lastAiIndex === -1) {
-        triggerMessages = historySlice;
-    } else {
-        historyForText = historySlice.slice(0, lastAiIndex + 1);
-        triggerMessages = historySlice.slice(lastAiIndex + 1);
-    }
-    
-    let shortTermText = '';
-    if (historyForText.length > 0) {
-        const historyLines = historyForText.map(m => {
-            let content = m.content || '';
-            if (m.parts && m.parts.length > 0) {
-                content = m.parts.map(p => p.text || '[图片]').join('');
-            }
-            const senderName = m.role === 'user' ? chat.myName : chat.realName;
-            return `${senderName}: ${content}`;
-        });
-        shortTermText += `<chat_history>\n【近期聊天记录】\n这是我们刚刚的聊天记录，请作为背景参考：\n${historyLines.join('\n')}\n</chat_history>\n\n`;
-    }
-    
-    triggerMessages.forEach(msg => {
-        shortTermText += msg.content || '';
-        if (msg.parts) {
-            msg.parts.forEach(p => {
-                if (p.type === 'text') shortTermText += p.text || '';
-            });
-        }
-    });
-    const shortTermTokens = estimateTokenFromText(shortTermText);
+    const historyInfo = getTokenHistoryInfo(chat);
+    const shortTermTokens = historyInfo.tokens;
 
     // 汇总
     const total = fullSystemTokens + shortTermTokens;
@@ -243,10 +259,24 @@ function getChatTokenBreakdown(chatId, chatType = 'private') {
         { key: 'groupMemory',    name: '群聊记忆',     value: groupMemoryTokens,  desc: '角色所在群聊的总结和最近聊天记录。' },
         { key: 'humanRun',       name: '活人运转',     value: humanRunTokens,     desc: '角色活人运转心理模型指令（HEXACO 等）。' },
         { key: 'reminder',       name: '提醒事项',     value: reminderTokens,     desc: '提醒事项/待办功能提示词，让角色可以创建和管理提醒。' },
-        { key: 'shortTermMemory',name: '对话历史',     value: shortTermTokens,    desc: '最近的对话消息，随轮次滑动窗口更新。' }
+        { key: 'shortTermMemory',name: '对话历史',     value: shortTermTokens,    desc: describeTokenHistory(historyInfo) }
     ].filter(d => d.value > 0);
 
-    return { total, details };
+    // 自定义模板可能重复插入同一来源；分类按系统提示词总量归一，保持合计一致。
+    const systemDetails = details.filter(d => d.key !== 'shortTermMemory');
+    const attributed = systemDetails.reduce((sum, item) => sum + item.value, 0);
+    if (attributed > fullSystemTokens && attributed > 0) {
+        let allocated = 0;
+        systemDetails.forEach((item, index) => {
+            item.value = index === systemDetails.length - 1
+                ? fullSystemTokens - allocated : Math.floor(item.value * fullSystemTokens / attributed);
+            allocated += item.value;
+        });
+    }
+
+    return { total, details: details.filter(d => d.value > 0), mediaCount: historyInfo.mediaCount,
+        messageCount: historyInfo.messageCount, systemTokens: fullSystemTokens, historyTokens: shortTermTokens,
+        actualUsage: chat._lastTokenUsage || null };
 }
 
 // 群聊 Token 分布（保持兼容，从完整 systemPrompt 拆分）
@@ -271,21 +301,11 @@ function _getChatTokenBreakdownGroup(chat, chatType = 'group') {
     const memoirText = memoirMatch ? memoirMatch[1].trim() : '';
     const personaPrompt = systemPrompt.replace(/<memoir>[\s\S]*?<\/memoir>/g, '').trim();
 
-    let historySlice = (chat.history || []).slice(-(chat.maxMemory || 20));
-    historySlice = historySlice.filter(m => !m.isContextDisabled);
-    let shortTermText = '';
-    historySlice.forEach(msg => {
-        shortTermText += msg.content || '';
-        if (msg.parts) {
-            msg.parts.forEach(p => {
-                if (p.type === 'text') shortTermText += p.text || '';
-            });
-        }
-    });
+    const historyInfo = getTokenHistoryInfo(chat);
 
     const promptPersonaTokens = estimateTokenFromText(personaPrompt);
     const longTermTokens = estimateTokenFromText(memoirText);
-    const shortTermTokens = estimateTokenFromText(shortTermText);
+    const shortTermTokens = historyInfo.tokens;
     const total = promptPersonaTokens + longTermTokens + shortTermTokens;
 
     const details = structuredPrompt
@@ -294,14 +314,31 @@ function _getChatTokenBreakdownGroup(chat, chatType = 'group') {
             name: entry.name,
             value: estimateTokenFromText(entry.text),
             desc: '条目化系统提示词中的独立条目。'
-        })).concat([{ key: 'shortTermMemory', name: '短期记忆', value: shortTermTokens, desc: '最近对话消息，随轮次滑动窗口更新。' }]).filter(d => d.value > 0)
+        })).concat([{ key: 'shortTermMemory', name: '短期记忆', value: shortTermTokens, desc: describeTokenHistory(historyInfo) }]).filter(d => d.value > 0)
         : [
             { key: 'promptPersona', name: '提示词人设', value: promptPersonaTokens, desc: '系统规则、角色设定、输出格式等发送给 AI 的固定提示词。' },
             { key: 'longTermMemory', name: '长期记忆', value: longTermTokens, desc: '已收藏的共同回忆（日记摘要），会长期保留在上下文中。' },
-            { key: 'shortTermMemory', name: '短期记忆', value: shortTermTokens, desc: '最近对话消息，随轮次滑动窗口更新。' }
+            { key: 'shortTermMemory', name: '短期记忆', value: shortTermTokens, desc: describeTokenHistory(historyInfo) }
         ].filter(d => d.value > 0);
 
-    return { total, details };
+    const systemDetails = details.filter(d => d.key !== 'shortTermMemory');
+    const attributed = systemDetails.reduce((sum, item) => sum + item.value, 0);
+    const systemTotal = promptPersonaTokens + longTermTokens;
+    if (attributed < systemTotal) {
+        details.push({ key: 'systemRemainder', name: '其他提示词', value: systemTotal - attributed,
+            desc: '本次发送的其余系统提示词内容。' });
+    } else if (attributed > systemTotal) {
+        let allocated = 0;
+        systemDetails.forEach((item, index) => {
+            item.value = index === systemDetails.length - 1
+                ? systemTotal - allocated : Math.floor(item.value * systemTotal / attributed);
+            allocated += item.value;
+        });
+    }
+
+    return { total, details: details.filter(d => d.value > 0), mediaCount: historyInfo.mediaCount,
+        messageCount: historyInfo.messageCount, systemTokens: promptPersonaTokens + longTermTokens,
+        historyTokens: shortTermTokens, actualUsage: chat._lastTokenUsage || null };
 }
 
 // --- 视频/语音通话专用 AI 逻辑 ---

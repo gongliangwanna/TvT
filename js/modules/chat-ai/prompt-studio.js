@@ -26,7 +26,7 @@
         ]],
         ['context', '动态功能模块', [
             ['{{当前节点}}', '当前剧情节点'], ['{{身份与伪装}}', '论坛小号/主号身份'], ['{{关系与功能上下文}}', '拉黑、亲属卡、窥屏、手机等'],
-            ['{{角色增强上下文}}', '提醒、头像、活人运转'], ['{{状态栏要求}}', '状态栏输出要求']
+            ['{{角色增强上下文}}', '提醒、头像、活人运转'], ['{{状态栏要求}}', '状态栏输出要求'], ['{{动态能力与已看内容}}', '已启用的动态能力与实际已看内容']
         ]],
         ['memory', '记忆', [
             ['{{共同回忆}}', '当前记忆模式内容'], ['{{用户收藏内容}}', '用户收藏的消息']
@@ -65,6 +65,7 @@
             item('persona.user', '用户人设', 'persona', '<user_settings>\n关于我的人设：{{用户人设}}\n{{用户时间年龄通知}}\n</user_settings>', 'userContext'),
             item('context.relationship', '关系与手机功能', 'context', '{{关系与功能上下文}}', 'relationshipContext'),
             item('context.enhancements', '提醒、头像与活人运转', 'context', '{{角色增强上下文}}', 'enhancementContext'),
+            item('context.moments', '动态能力与已看内容', 'context', '{{动态能力与已看内容}}', 'moments'),
             item('memory.primary', '共同回忆', 'memory', '<memoir>\n{{共同回忆}}\n</memoir>', 'memory'),
             item('capability.logic', '在线互动逻辑', 'capability', '<logic_rules>\n{{在线逻辑规则}}\n</logic_rules>', 'always', true),
             item('format.status-panel', '状态栏要求', 'format', '{{状态栏要求}}', 'statusPanel'),
@@ -280,7 +281,7 @@
         const replyRule = character.replyCountEnabled
             ? `你可以一次生成多条短消息，每次回复必须限定在${minReply}-${maxReply}条以内，保持数量的随机性和多样性。`
             : '你可以一次生成3-8条短消息，保持数量的随机性和多样性。';
-        const bilingual = character.bilingualModeEnabled ? `双语模式：当角色母语为中文以外的语言时，消息必须使用 [${character.realName}的消息：{外语原文}「中文翻译」] 格式；语音消息也必须带中文翻译。` : '';
+        const bilingual = character.bilingualModeEnabled ? `双语模式：当角色母语为中文以外的语言时，优先使用${character.bilingualLanguage || '符合人设的外语'}，消息必须使用 [${character.realName}的消息：{外语原文}「中文翻译」] 格式；语音消息也必须带中文翻译。` : '';
         const autoFavorite = character.characterAutoFavoriteEnabled ? `【消息收藏功能】\n你可以主动收藏用户发送的重要消息。使用 [FAVORITE:消息ID:收藏寄语]，只收藏用户消息，不要过度收藏，且不在对话中提及收藏行为。` : '';
         return {
             '当前时间': currentTime,
@@ -314,7 +315,8 @@
             '双语规则': bilingual,
             '回复条数规则': replyRule,
             '自主收藏规则': autoFavorite,
-            '用户收藏内容': buildUserFavorites(character)
+            '用户收藏内容': buildUserFavorites(character),
+            '动态能力与已看内容': window.Moments?.promptForCharacter(character.id) || ''
         };
     }
 
@@ -335,7 +337,8 @@
             statusPanel: !!variables['状态栏要求'],
             bilingual: !!variables['双语规则'],
             autoFavorite: !!variables['自主收藏规则'],
-            userFavorites: !!variables['用户收藏内容']
+            userFavorites: !!variables['用户收藏内容'],
+            moments: !!variables['动态能力与已看内容']
         };
         return condition in map ? map[condition] : true;
     }
@@ -395,12 +398,14 @@
         const unresolved = new Set();
         const details = [];
         const pieces = [];
-        normalizeItems(items).forEach((entry, index) => {
+        const normalized = normalizeItems(items);
+        normalized.forEach((entry, index) => {
             const active = entry.enabled && conditionMet(entry.condition, variables);
             const rendered = active ? renderTemplate(entry.content, variables, unresolved).trim() : '';
             if (rendered) pieces.push(rendered);
             details.push({ id: entry.id, name: entry.name, enabled: entry.enabled, active, text: rendered, order: index });
         });
+        if (variables['动态能力与已看内容'] && !normalized.some(entry => entry.id === 'context.moments' || entry.content.includes('{{动态能力与已看内容}}'))) pieces.push(variables['动态能力与已看内容']);
         if (!opts.preview && character.themeJustChangedByUser && pieces.some(piece => piece.includes('<chat_themes>'))) {
             character.themeJustChangedByUser = '';
         }

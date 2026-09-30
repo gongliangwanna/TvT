@@ -38,6 +38,7 @@ function generatePrivateSystemPrompt(character, opts) {
 
     // 处理用户自定义的底层系统提示词模板
     if (useCustomPrompt && template) {
+        const momentsInTemplate = template.includes('{{动态能力与已看内容}}');
         
         // 构建共同回忆字符串
         let commonMemories = '';
@@ -135,7 +136,7 @@ function generatePrivateSystemPrompt(character, opts) {
 
         // 补充必要的结尾和选项（如双语、自知等）
         if (character.bilingualModeEnabled) {
-            template += `\n✨双语模式特别指令✨：当你的角色的母语为中文以外的语言时，你的消息回复**必须**严格遵循双语模式下的普通消息格式：[${character.realName}的消息：{外语原文}「中文翻译」],例如: [${character.realName}的消息：Of course, I'd love to.「当然，我很乐意。」],中文翻译文本视为系统自翻译，不视为角色的原话;当你的角色想要说中文时，需要根据你的角色设定自行判断对于中文的熟悉程度来造句，并使用普通消息的标准格式: [${character.realName}的消息：{中文消息内容}] 。**语音消息**在双语模式下也须使用相同格式：[${character.realName}的语音：{外语原文}「中文翻译」]，例如：[${character.realName}的语音：Of course, I'd love to.「当然，我很乐意。」]。这条规则的优先级非常高，请务必遵守。\n`;
+            template += `\n✨双语模式特别指令✨：当你的角色的母语为中文以外的语言时（优先使用${character.bilingualLanguage || '符合人设的外语'}），你的消息回复**必须**严格遵循双语模式下的普通消息格式：[${character.realName}的消息：{外语原文}「中文翻译」],例如: [${character.realName}的消息：Of course, I'd love to.「当然，我很乐意。」],中文翻译文本视为系统自翻译，不视为角色的原话;当你的角色想要说中文时，需要根据你的角色设定自行判断对于中文的熟悉程度来造句，并使用普通消息的标准格式: [${character.realName}的消息：{中文消息内容}] 。**语音消息**在双语模式下也须使用相同格式：[${character.realName}的语音：{外语原文}「中文翻译」]，例如：[${character.realName}的语音：Of course, I'd love to.「当然，我很乐意。」]。这条规则的优先级非常高，请务必遵守。\n`;
         }
         
         if (character.replyCountEnabled) {
@@ -177,6 +178,7 @@ function generatePrivateSystemPrompt(character, opts) {
             template += '\n' + opts.historyText;
         }
 
+        if (!momentsInTemplate && window.Moments) template += window.Moments.promptForCharacter(character.id);
         return template;
     }
 
@@ -408,7 +410,7 @@ function generatePrivateSystemPrompt(character, opts) {
         nodePrompt += `</output_formats>\n\n`;
         
         if (character.bilingualModeEnabled) {
-            nodePrompt += `✨双语模式特别指令✨：当你的角色的母语为中文以外的语言时，则在角色的话语/内心话后面加双语括号翻译，如：“Of course, I'd love to.「当然，我很乐意。」”但正常的动作/环境等描述性文本不用加翻译。当你的角色想要说中文时，需要根据你的角色设定自行判断对于中文的熟悉程度来造句，这条规则的优先级非常高，请务必遵守。\n`;
+            nodePrompt += `✨双语模式特别指令✨：当你的角色的母语为中文以外的语言时（优先使用${character.bilingualLanguage || '符合人设的外语'}），则在角色的话语/内心话后面加双语括号翻译，如：“Of course, I'd love to.「当然，我很乐意。」”但正常的动作/环境等描述性文本不用加翻译。当你的角色想要说中文时，需要根据你的角色设定自行判断对于中文的熟悉程度来造句，这条规则的优先级非常高，请务必遵守。\n`;
         }
         
         if (character.myName) {
@@ -419,6 +421,7 @@ function generatePrivateSystemPrompt(character, opts) {
             nodePrompt += '\n' + opts.historyText;
         }
 
+        if (window.Moments) nodePrompt += window.Moments.promptForCharacter(character.id);
         return nodePrompt;
     }
 
@@ -848,7 +851,7 @@ function generatePrivateSystemPrompt(character, opts) {
     }
 
     if (character.bilingualModeEnabled) {
-        prompt += `✨双语模式特别指令✨：当你的角色的母语为中文以外的语言时，你的消息回复**必须**严格遵循双语模式下的普通消息格式：[${character.realName}的消息：{外语原文}「中文翻译」],例如: [${character.realName}的消息：Of course, I'd love to.「当然，我很乐意。」],中文翻译文本视为系统自翻译，不视为角色的原话;当你的角色想要说中文时，需要根据你的角色设定自行判断对于中文的熟悉程度来造句，并使用普通消息的标准格式: [${character.realName}的消息：{中文消息内容}] 。**语音消息**在双语模式下也须使用相同格式：[${character.realName}的语音：{外语原文}「中文翻译」]，例如：[${character.realName}的语音：Of course, I'd love to.「当然，我很乐意。」]。这条规则的优先级非常高，请务必遵守。\n`;
+        prompt += `✨双语模式特别指令✨：当你的角色的母语为中文以外的语言时（优先使用${character.bilingualLanguage || '符合人设的外语'}），你的消息回复**必须**严格遵循双语模式下的普通消息格式：[${character.realName}的消息：{外语原文}「中文翻译」],例如: [${character.realName}的消息：Of course, I'd love to.「当然，我很乐意。」],中文翻译文本视为系统自翻译，不视为角色的原话;当你的角色想要说中文时，需要根据你的角色设定自行判断对于中文的熟悉程度来造句，并使用普通消息的标准格式: [${character.realName}的消息：{中文消息内容}] 。**语音消息**在双语模式下也须使用相同格式：[${character.realName}的语音：{外语原文}「中文翻译」]，例如：[${character.realName}的语音：Of course, I'd love to.「当然，我很乐意。」]。这条规则的优先级非常高，请务必遵守。\n`;
     }
     const minReply = character.replyCountMin || 3;
     const maxReply = character.replyCountMax || 8;
@@ -916,6 +919,7 @@ function generatePrivateSystemPrompt(character, opts) {
         prompt += '\n' + opts.historyText;
     }
 
+    if (window.Moments) prompt += window.Moments.promptForCharacter(character.id);
     return prompt;
 }
 

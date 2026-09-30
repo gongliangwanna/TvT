@@ -434,6 +434,7 @@ function showAppConfirmDialog(options = {}) {
         confirmBtn.textContent = confirmText;
         cancelBtn.textContent = cancelText;
         dismissBtn.textContent = dismissText;
+        cancelBtn.style.display = cancelText ? '' : 'none';
         dismissBtn.style.display = dismissText ? '' : 'none';
 
         let settled = false;
@@ -858,8 +859,11 @@ function getMixedContent(responseData) {
 
 // 过滤聊天记录用于 AI 上下文 (包含状态栏剔除和双语格式化)
 function filterHistoryForAI(chat, historySlice, ignoreContextDisabled = false) {
-    // 1. 基础过滤：深度克隆并过滤掉被屏蔽上下文的消息
-    let filteredHistory = JSON.parse(JSON.stringify(historySlice || chat.history));
+    // 仅复制下方过滤逻辑会改动的消息及 part；图片数据字符串保持引用，避免每次请求复制整份 Base64。
+    let filteredHistory = (historySlice || chat.history || []).map(message => ({
+        ...message,
+        parts: Array.isArray(message.parts) ? message.parts.map(part => ({ ...part })) : message.parts
+    }));
     if (!ignoreContextDisabled) {
         filteredHistory = filteredHistory.filter(m => !m.isContextDisabled);
     }
@@ -1128,14 +1132,14 @@ function normalizeMessagesForProvider(messages, provider) {
 
 const API_NODE_FEATURES = Object.freeze({
     chat: '私聊回复', groupChat: '群聊回复', background: '后台主动消息', call: '通话回复',
-    summary: '对话总结', journal: '日记', forum: '论坛', theater: '小剧场', peek: '查手机',
+    summary: '对话总结', journal: '日记', forum: '论坛', moments: '动态', theater: '小剧场', peek: '查手机',
     shop: '商店内容', pomodoro: '番茄钟互动', battery: '电量互动', imageChat: '聊天图片理解',
     stickerVision: '表情包理解', avatarVision: '头像理解', callVision: '通话画面理解',
     memorySummary: '记忆总结', webSearch: '联网搜索'
 });
 
 const API_GENERATION_PARAMETER_DEFINITIONS = Object.freeze({
-    temperature: { label: '回复随机性', apiName: 'Temperature', type: 'number', min: 0, max: 2, step: 0.1, defaultValue: 1, defaultEnabled: true, support: ['openai_chat', 'deepseek', 'anthropic', 'gemini', 'ollama', 'custom'] },
+    temperature: { label: '温度', apiName: 'Temperature', type: 'number', min: 0, max: 2, step: 0.1, defaultValue: 0.8, defaultEnabled: true, support: ['openai_chat', 'deepseek', 'anthropic', 'gemini', 'ollama', 'custom'] },
     topP: { label: '核采样范围', apiName: 'Top P', type: 'number', min: 0, max: 1, step: 0.05, defaultValue: 1, support: ['openai_chat', 'deepseek', 'anthropic', 'gemini', 'ollama', 'custom'] },
     topK: { label: '候选词数量', apiName: 'Top K', type: 'integer', min: 1, max: 500, step: 1, defaultValue: 40, support: ['anthropic', 'gemini', 'ollama', 'custom'] },
     minP: { label: '最低概率阈值', apiName: 'Min P', type: 'number', min: 0, max: 1, step: 0.01, defaultValue: 0, support: ['ollama', 'custom'] },

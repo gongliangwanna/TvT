@@ -152,6 +152,7 @@
         prompt += '- 你和用户最近的对话（含用户拉黑你后独自说的话）：\n' + (lastMessages || '（无）') + '\n\n';
         prompt += '请以 JSON 格式回复，且只输出这一行，不要其他内容：\n';
         prompt += '{"reason":"你的好友申请理由（50字以内，符合你的性格，体现情绪递进，不重复之前写过的）"}\n';
+        prompt += BilingualContent.prompt(char, 'friendRequest', '好友申请理由，保持简短并符合角色语气');
 
         var result = await callBlockApi('你是一个角色扮演助手。请严格只输出要求的 JSON，不要 markdown 代码块，不要多余文字。', prompt);
         if (!result.ok) return { ok: false, error: result.error };
@@ -174,6 +175,7 @@
         prompt += '请以 JSON 格式回复，且只输出这一行：\n';
         prompt += '{"shouldSendNow":true或false,"reason":"若shouldSendNow为true则写申请理由(50字内)","nextCheckMinutes":数字}\n';
         prompt += 'nextCheckMinutes 表示多少分钟后再来问你（心急角色可填1~5，慢热可填60~180）。';
+        prompt += BilingualContent.prompt(char, 'friendRequest', '若发送好友申请，reason 字段中的申请理由');
 
         var result = await callBlockApi('你是一个角色扮演助手。只输出一行 JSON，不要 markdown。', prompt);
         if (!result.ok) {
@@ -245,7 +247,7 @@
 
         avatarEl.src = (char.avatar && char.avatar.trim()) ? char.avatar : '';
         nameEl.textContent = char.realName || char.remarkName || '角色';
-        reasonEl.textContent = req.reason || '';
+        reasonEl.innerHTML = BilingualContent.html(req.reason || '', char, 'friendRequest', 'chat');
         metaEl.textContent = metaText;
         modal.classList.add('visible');
     }

@@ -285,9 +285,11 @@ const saveSingleChatRecord = async (table, collection, id, queueMap, label) => {
                 if (!record) return;
                 await table.put(record);
             } while (state.requested);
+            return true;
         } catch (error) {
             console.error(`${label} failed:`, error);
             if (typeof showToast === 'function') showToast('保存聊天数据失败: ' + error.message, 6000);
+            return false;
         } finally {
             queueMap.delete(id);
         }
@@ -331,6 +333,59 @@ const saveGlobalSettings = async (keys) => {
 window.saveCharacter = saveCharacter;
 window.saveGroup = saveGroup;
 window.saveGlobalSettings = saveGlobalSettings;
+
+// 清除旧消息中完全相同的媒体副本。每个会话单独落盘；中断后再次运行仍可继续。
+let chatMediaCompactionPromise = null;
+const compactLegacyChatMedia = () => {
+    if (chatMediaCompactionPromise) return chatMediaCompactionPromise;
+    chatMediaCompactionPromise = (async () => {
+        const result = { chats: 0, duplicateCharacters: 0 };
+        for (const [collection, save] of [[db.characters || [], saveCharacter], [db.groups || [], saveGroup]]) {
+            for (const chat of collection) {
+                let changed = false;
+                let removed = 0;
+                for (const message of (chat.history || [])) {
+                    if (!message) continue;
+                    const imagePart = Array.isArray(message.parts)
+                        ? message.parts.find(part => part && part.type === 'image' && typeof part.data === 'string') : null;
+                    if (imagePart && typeof message.content === 'string'
+                        && message.content.startsWith('data:image/') && message.content === imagePart.data) {
+                        const textPart = message.parts.find(part => part && part.type === 'text' && part.text);
+                        message.content = textPart ? textPart.text : '[发来了一张图片：]';
+                        removed += imagePart.data.length;
+                        changed = true;
+                    }
+                    if (message.imageGenerationMeta?.originalImageUrl
+                        && message.imageGenerationMeta.originalImageUrl === message.novelAiImageUrl) {
+                        removed += message.imageGenerationMeta.originalImageUrl.length;
+                        delete message.imageGenerationMeta.originalImageUrl;
+                        changed = true;
+                    }
+                    for (const version of (message._imageVersions || [])) {
+                        if (version?.metadata?.originalImageUrl
+                            && version.metadata.originalImageUrl === version.imageUrl) {
+                            removed += version.metadata.originalImageUrl.length;
+                            delete version.metadata.originalImageUrl;
+                            changed = true;
+                        }
+                    }
+                }
+                if (changed) {
+                    if (await save(chat.id)) {
+                        result.duplicateCharacters += removed;
+                        result.chats++;
+                    }
+                }
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+        }
+        window.__chatMediaCompactionResult = result;
+        window.dispatchEvent(new CustomEvent('ovo-chat-media-compacted', { detail: result }));
+        return result;
+    })().finally(() => { chatMediaCompactionPromise = null; });
+    return chatMediaCompactionPromise;
+};
+window.compactLegacyChatMedia = compactLegacyChatMedia;
 
 const loadData = async () => {
     const tables = [
@@ -400,6 +455,7 @@ const loadData = async () => {
             globalCssPresets: [],
             homeSignature: '编辑个性签名...',
             forumPosts: [],
+            moments: null,
             forumBindings: { worldBookIds: [], charIds: [], userPersonaIds: [] },
             forumUserProfile: { username: '', avatar: 'https://i.postimg.cc/GtbTnxhP/o-o-1.jpg', bio: '', joinDate: 0 },
             forumSettings: { postsPerGeneration: 8, commentsPerPost: { min: 4, max: 8 }, generateDetailedStranger: false },
@@ -532,6 +588,7 @@ const loadData = async () => {
                 regexPattern: '',
                 replacePattern: '',
                 historyLimit: 3,
+                historyRetentionLimit: 20,
                 currentStatusRaw: '',
                 currentStatusHtml: '',
                 history: []
@@ -751,14 +808,40 @@ const dataStorage = {
             apiAndCore: 0,
             other: 0
         };
+        const chatDetails = [];
+        const imageLength = value => typeof value === 'string' && value.startsWith('data:image/') ? value.length : 0;
+        const getMessageImageLength = message => {
+            if (!message) return 0;
+            let length = imageLength(message.content) + imageLength(message.novelAiImageUrl)
+                + imageLength(message.imageGenerationMeta?.originalImageUrl);
+            for (const part of (message.parts || [])) length += imageLength(part?.data);
+            for (const version of (message._imageVersions || [])) {
+                length += imageLength(version?.imageUrl) + imageLength(version?.metadata?.originalImageUrl);
+            }
+            return length;
+        };
 
         if (!db || !db.characters) {
             await loadData();
         }
 
         // 1. Messages (History)
-        for (const char of (db.characters || [])) categorizedSizes.messages += await measure(char.history);
-        for (const group of (db.groups || [])) categorizedSizes.messages += await measure(group.history);
+        for (const [collection, type] of [[db.characters || [], 'private'], [db.groups || [], 'group']]) {
+            for (const chat of collection) {
+                const size = await measure(chat.history);
+                categorizedSizes.messages += size;
+                let imageSize = 0;
+                const largestImages = [];
+                (chat.history || []).forEach((message, index) => {
+                    const bytes = getMessageImageLength(message);
+                    imageSize += bytes;
+                    if (bytes > 0) largestImages.push({ index: index + 1, size: bytes });
+                });
+                largestImages.sort((a, b) => b.size - a.size);
+                chatDetails.push({ id: chat.id, type, name: chat.remarkName || chat.realName || chat.name || '未命名会话',
+                    messages: chat.history?.length || 0, size, imageSize, largestImages: largestImages.slice(0, 5) });
+            }
+        }
 
         // 2. Characters and Groups (metadata)
         for (const char of (db.characters || [])) {
@@ -815,7 +898,8 @@ const dataStorage = {
 
         return {
             totalSize,
-            categorizedSizes
+            categorizedSizes,
+            chatDetails: chatDetails.sort((a, b) => b.size - a.size)
         };
     }
 };

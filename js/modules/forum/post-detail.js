@@ -105,7 +105,8 @@ function renderPostDetail(post) {
                         <svg viewBox="0 0 24 24" fill="${isFavorited ? '#ffd700' : 'none'}" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
                         <span>收藏</span>
                     </div>
-                    ${isOwnPost ? `<button type="button" class="action-item" id="edit-post-btn" data-post-id="${forumEscapeHtml(post.id)}" style="border:none;background:none;"><span>编辑</span></button><button type="button" class="action-item" id="delete-post-btn" data-post-id="${forumEscapeHtml(post.id)}" style="color:#ff4757;border:none;background:none;"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/></svg><span>删除</span></button>` : ''}
+                    ${isOwnPost ? `<button type="button" class="action-item" id="edit-post-btn" data-post-id="${forumEscapeHtml(post.id)}" style="border:none;background:none;"><span>编辑</span></button>` : ''}
+                    ${isOwnPost || forumIsOtherPersonPost(post) ? `<button type="button" class="action-item" id="delete-post-btn" data-post-id="${forumEscapeHtml(post.id)}" style="color:#ff4757;border:none;background:none;"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/></svg><span>删除</span></button>` : ''}
                 </div>
             </div>
         </div>
@@ -154,7 +155,7 @@ function renderPostDetail(post) {
     }
 
     const deleteBtn = detailScreen.querySelector('#delete-post-btn');
-    if (deleteBtn) deleteBtn.addEventListener('click', () => forumDeletePost(post.id));
+    if (deleteBtn) deleteBtn.addEventListener('click', () => forumDeletePost(post.id, !isOwnPost));
     const editBtn = detailScreen.querySelector('#edit-post-btn');
     if (editBtn) editBtn.addEventListener('click', () => forumOpenPostEditModal(post.id));
 

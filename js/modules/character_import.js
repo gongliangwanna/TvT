@@ -39,6 +39,7 @@ function setupAddCharModal() {
                 regexPattern: '',
                 replacePattern: '',
                 historyLimit: 3,
+                historyRetentionLimit: 20,
                 currentStatusRaw: '',
                 currentStatusHtml: '',
                 history: []
@@ -249,6 +250,7 @@ async function createCharacterFromData(data, avatar, options) {
             regexPattern: '',
             replacePattern: '',
             historyLimit: 3,
+            historyRetentionLimit: 20,
             currentStatusRaw: '',
             currentStatusHtml: '',
             history: []

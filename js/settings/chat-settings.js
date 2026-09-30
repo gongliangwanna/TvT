@@ -1038,6 +1038,13 @@ function setupChatSettings() {
         });
     }
 
+    const retentionUnlimited = document.getElementById('setting-status-retention-unlimited');
+    if (retentionUnlimited) {
+        retentionUnlimited.addEventListener('change', () => {
+            document.getElementById('setting-status-retention-limit').disabled = retentionUnlimited.checked;
+        });
+    }
+
     const replyCountSwitch = document.getElementById('setting-reply-count-enabled');
     if (replyCountSwitch) {
         replyCountSwitch.addEventListener('change', (e) => {
@@ -1378,6 +1385,7 @@ function loadSettingsToSidebar() {
         }
         const nameDisplay = document.getElementById('setting-char-name-display');
         if(nameDisplay) nameDisplay.textContent = e.remarkName;
+        if (window.Moments) window.Moments.loadCharacterSettings(e);
         const realNameEl = document.getElementById('setting-char-real-name');
         if (realNameEl) realNameEl.value = e.realName || '';
         
@@ -1556,6 +1564,8 @@ function loadSettingsToSidebar() {
         }
         
         document.getElementById('setting-reply-count-enabled').checked = e.replyCountEnabled || false;
+        const showDebugContentEl = document.getElementById('setting-show-debug-content');
+        if (showDebugContentEl) showDebugContentEl.checked = !!e.showDebugContent;
         const replyCountContainer = document.getElementById('setting-reply-count-container');
         if (replyCountContainer) {
             replyCountContainer.style.display = e.replyCountEnabled ? 'flex' : 'none';
@@ -1603,6 +1613,8 @@ function loadSettingsToSidebar() {
         
         const journalFavTopEl = document.getElementById('setting-journal-favorite-top');
         if (journalFavTopEl) journalFavTopEl.checked = e.journalFavoriteTop !== false; // 默认开启
+        const journalNewestFirstEl = document.getElementById('setting-journal-newest-first');
+        if (journalNewestFirstEl) journalNewestFirstEl.checked = e.journalNewestFirst === true;
 
         // 加载单人思维链设置
         const charCotEnabledEl = document.getElementById('setting-char-cot-enabled');
@@ -1859,13 +1871,18 @@ function loadSettingsToSidebar() {
         }
 
         document.getElementById('setting-bilingual-mode').checked = e.bilingualModeEnabled || false;
+        document.getElementById('setting-bilingual-language').value = e.bilingualLanguage || '';
+        BilingualContent.syncSettingsUi();
         document.getElementById('setting-bilingual-style').value = e.bilingualBubbleStyle || 'under';
+        document.getElementById('setting-auto-expand-translation').checked = e.autoExpandTranslation === true;
 
         if (window.PokeSystem) window.PokeSystem.ensureSettings(e);
         const pokeEnabledEl = document.getElementById('setting-poke-enabled');
         const pokeOptionsEl = document.getElementById('setting-poke-options');
         if (pokeEnabledEl) pokeEnabledEl.checked = e.pokeEnabled === true;
         if (pokeOptionsEl) pokeOptionsEl.style.display = e.pokeEnabled === true ? 'block' : 'none';
+        const pokeTriggerModeEl = document.getElementById('setting-poke-trigger-mode');
+        if (pokeTriggerModeEl) pokeTriggerModeEl.value = ['auto', 'both', 'avatar', 'title'].includes(e.pokeTriggerMode) ? e.pokeTriggerMode : 'auto';
         const pokeCharacterEl = document.getElementById('setting-poke-character-initiated');
         if (pokeCharacterEl) pokeCharacterEl.checked = e.pokeAllowCharacterInitiated !== false;
         const pokeReplyEl = document.getElementById('setting-poke-trigger-reply');
@@ -1946,6 +1963,12 @@ function loadSettingsToSidebar() {
         document.getElementById('setting-status-regex').value = sp.regexPattern || '';
         document.getElementById('setting-status-replace').value = sp.replacePattern || '';
         document.getElementById('setting-status-history-limit').value = sp.historyLimit !== undefined ? sp.historyLimit : 3;
+        const retentionLimit = sp.historyRetentionLimit;
+        const retentionUnlimited = document.getElementById('setting-status-retention-unlimited');
+        const retentionInput = document.getElementById('setting-status-retention-limit');
+        retentionUnlimited.checked = retentionLimit === 0;
+        retentionInput.value = Number.isSafeInteger(retentionLimit) && retentionLimit > 0 ? retentionLimit : 20;
+        retentionInput.disabled = retentionUnlimited.checked;
         
         const statusPanelContainer = document.getElementById('status-panel-settings-container');
         if (statusPanelContainer) {
@@ -2395,6 +2418,31 @@ function loadSettingsToSidebar() {
 async function saveSettingsFromSidebar() {
     const e = db.characters.find(e => e.id === currentChatId);
     if (e) {
+        const retentionInput = document.getElementById('setting-status-retention-limit');
+        const retentionUnlimited = document.getElementById('setting-status-retention-unlimited').checked;
+        const retentionText = retentionInput.value.trim();
+        const retentionLimit = retentionUnlimited ? 0 : Number(retentionText);
+        if (!retentionUnlimited && (!/^\d+$/.test(retentionText) || !Number.isSafeInteger(retentionLimit) || retentionLimit < 1)) {
+            showToast('请输入大于 0 的整数作为本地保留条数');
+            retentionInput.focus();
+            return;
+        }
+        const previousRetention = e.statusPanel?.historyRetentionLimit;
+        const previousLimit = Number.isSafeInteger(previousRetention) && previousRetention >= 0 ? previousRetention : 20;
+        const statusHistory = Array.isArray(e.statusPanel?.history) ? e.statusPanel.history : [];
+        const shouldTrimRetention = retentionLimit !== previousLimit && retentionLimit > 0 && statusHistory.length > retentionLimit;
+        if (shouldTrimRetention) {
+            const removedCount = statusHistory.length - retentionLimit;
+            const decision = await showAppConfirmDialog({
+                title: '调整状态栏保留数量',
+                message: `保存后将删除较早的 ${removedCount} 条状态栏历史，此操作无法撤销。`,
+                confirmText: '删除并保存',
+                cancelText: '取消',
+                dismissText: ''
+            });
+            if (decision !== 'confirm') return;
+        }
+        if (window.Moments) window.Moments.saveCharacterSettings(e);
         const avatarPreviewEl = document.getElementById('setting-char-avatar-preview');
         if (avatarPreviewEl) {
             e.avatar = avatarPreviewEl.src;
@@ -2497,6 +2545,8 @@ async function saveSettingsFromSidebar() {
         }
 
         e.replyCountEnabled = document.getElementById('setting-reply-count-enabled').checked;
+        const showDebugContentEl = document.getElementById('setting-show-debug-content');
+        if (showDebugContentEl) e.showDebugContent = showDebugContentEl.checked;
         e.replyCountMin = parseInt(document.getElementById('setting-reply-count-min').value, 10) || 3;
         e.replyCountMax = parseInt(document.getElementById('setting-reply-count-max').value, 10) || 8;
         const stickerSmartMatchCb = document.getElementById('setting-sticker-smart-match');
@@ -2525,6 +2575,8 @@ async function saveSettingsFromSidebar() {
         } else if (e.journalFavoriteTop === undefined) {
             e.journalFavoriteTop = true; // 如果元素不存在且未定义过，默认保护为 true
         }
+        const journalNewestFirstEl = document.getElementById('setting-journal-newest-first');
+        if (journalNewestFirstEl) e.journalNewestFirst = journalNewestFirstEl.checked;
 
         // 保存单人思维链设置
         const charCotEnabledSave = document.getElementById('setting-char-cot-enabled');
@@ -2589,7 +2641,9 @@ async function saveSettingsFromSidebar() {
             e.currentBubbleCssPresetName = matched ? matched.name : '';
         }
         e.bilingualModeEnabled = document.getElementById('setting-bilingual-mode').checked;
+        e.bilingualLanguage = document.getElementById('setting-bilingual-language').value.trim();
         e.bilingualBubbleStyle = document.getElementById('setting-bilingual-style').value;
+        e.autoExpandTranslation = document.getElementById('setting-auto-expand-translation').checked;
         
         e.avatarMode = document.getElementById('setting-avatar-mode').value;
         e.avatarRadius = parseInt(document.getElementById('setting-avatar-radius').value, 10);
@@ -2636,6 +2690,8 @@ async function saveSettingsFromSidebar() {
         e.showReminderMsg = document.getElementById('setting-show-reminder-msg').checked;
         const pokeEnabledEl = document.getElementById('setting-poke-enabled');
         e.pokeEnabled = !!(pokeEnabledEl && pokeEnabledEl.checked);
+        const pokeTriggerModeEl = document.getElementById('setting-poke-trigger-mode');
+        e.pokeTriggerMode = pokeTriggerModeEl ? pokeTriggerModeEl.value : 'auto';
         const pokeCharacterEl = document.getElementById('setting-poke-character-initiated');
         e.pokeAllowCharacterInitiated = !pokeCharacterEl || pokeCharacterEl.checked;
         const pokeReplyEl = document.getElementById('setting-poke-trigger-reply');
@@ -2652,6 +2708,7 @@ async function saveSettingsFromSidebar() {
         e.pokeNotificationMode = pokeNotificationEl ? pokeNotificationEl.value : 'in_chat';
         const pokeContextEl = document.getElementById('setting-poke-context');
         e.pokeContextEnabled = !pokeContextEl || pokeContextEl.checked;
+        if (window.PokeSystem) window.PokeSystem.updateTriggerUI(e, 'private');
         e.avatarSystemEnabled = document.getElementById('setting-avatar-system-enabled').checked;
         e.charSenseAvatarChangeEnabled = _senseAvatarChangeEnabled;
         const charCanSwitchInput = document.getElementById('setting-char-can-switch-avatar');
@@ -2676,6 +2733,10 @@ async function saveSettingsFromSidebar() {
         e.statusPanel.replacePattern = document.getElementById('setting-status-replace').value;
         const historyLimitInput = parseInt(document.getElementById('setting-status-history-limit').value, 10);
         e.statusPanel.historyLimit = isNaN(historyLimitInput) ? 3 : historyLimitInput;
+        e.statusPanel.historyRetentionLimit = retentionLimit;
+        if (shouldTrimRetention) {
+            e.statusPanel.history = statusHistory.slice(0, retentionLimit);
+        }
 
         // 保存角色正则过滤设置
         if (!e.regexFilter) e.regexFilter = {};

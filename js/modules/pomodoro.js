@@ -221,7 +221,7 @@ function setupPomodoroApp() {
         element.innerHTML = '对方正在输入中<span class="typing-dots"><span>.</span><span>.</span><span>.</span></span>';
     }
 
-    function showTypewriterMessage(element, text) {
+    function showTypewriterMessage(element, text, onComplete) {
         let i = 0;
         element.innerHTML = ''; 
         const typingInterval = setInterval(() => {
@@ -230,6 +230,7 @@ function setupPomodoroApp() {
                 i++;
             } else {
                 clearInterval(typingInterval);
+                if (onComplete) onComplete();
             }
         }, 50);
     }
@@ -335,6 +336,7 @@ function setupPomodoroApp() {
                 systemPromptContent += `\n\n【补充设定】\n${globalWorldBooksAfter}`;
             }
             systemPromptContent += `\n\n【我的角色设定】\n我的名字是${character.myName}，人设是：${userPersona}。`;
+            systemPromptContent += BilingualContent.prompt(character, 'pomodoro', '鼓励与回复用户的话');
 
             const endpoint = `${url}/v1/chat/completions`;
             const headers = {
@@ -358,7 +360,7 @@ function setupPomodoroApp() {
                 pomodoroSessionHistory.splice(0, 2);
             }
 
-            showTypewriterMessage(messageP, reply);
+            showTypewriterMessage(messageP, reply, () => { if (messageP.isConnected) messageP.innerHTML = BilingualContent.html(reply, character, 'pomodoro', 'pomodoro'); });
 
             if (promptType === 'poke') {
                 setTimeout(() => {

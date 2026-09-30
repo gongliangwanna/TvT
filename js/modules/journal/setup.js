@@ -669,9 +669,12 @@ function setupMemoryJournalScreen() {
         editDetailBtn.style.display = '';
         saveDetailBtn.style.display = 'none';
 
-        titleEl.textContent = journal.title;
+        titleEl.innerHTML = journal.bilingualAuthored !== false && !journal.isNodeSummary && currentChatType === 'private'
+            ? BilingualContent.html(journal.title, chat, 'journal', 'journal') : escapeJournalHtml(journal.title);
         document.getElementById('journal-detail-meta').textContent = `创建于 ${formattedDate} | 消息范围: ${journal.range.start}-${journal.range.end}`;
-        document.getElementById('journal-detail-content').textContent = journal.content;
+        contentEl.innerHTML = journal.bilingualAuthored !== false && !journal.isNodeSummary && currentChatType === 'private'
+            ? BilingualContent.html(journal.content, chat, 'journal', 'journal')
+            : escapeJournalHtml(journal.content).replace(/\n/g, '<br>');
         
         switchScreen('memory-journal-detail-screen');
     });
@@ -681,6 +684,9 @@ function setupMemoryJournalScreen() {
 
         const titleEl = document.getElementById('journal-detail-title');
         const contentEl = document.getElementById('journal-detail-content');
+        const chat = currentChatType === 'private' ? db.characters.find(c => c.id === currentChatId) : db.groups.find(g => g.id === currentChatId);
+        const journal = chat?.memoryJournals?.find(item => item.id === currentJournalDetailId);
+        if (journal) { titleEl.textContent = journal.title; contentEl.textContent = journal.content; }
 
         titleEl.setAttribute('contenteditable', 'true');
         contentEl.setAttribute('contenteditable', 'true');

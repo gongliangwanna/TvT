@@ -75,6 +75,7 @@ function setupContactsScreen() {
     const tokenDistCloseBtn = document.getElementById('token-distribution-close-btn');
     const tokenDistModal = document.getElementById('token-distribution-modal');
     if (tokenDistCloseBtn) tokenDistCloseBtn.addEventListener('click', () => { if (tokenDistModal) tokenDistModal.classList.remove('visible'); });
+    document.getElementById('token-storage-link')?.addEventListener('click', () => switchScreen('storage-analysis-screen'));
     if (tokenDistModal) {
         tokenDistModal.addEventListener('click', (e) => {
             if (e.target === tokenDistModal) tokenDistModal.classList.remove('visible');
@@ -393,9 +394,19 @@ function openTokenDistributionModal(charId) {
     const modal = document.getElementById('token-distribution-modal');
     const chartContainer = document.getElementById('token-chart-container');
     const totalEl = document.getElementById('token-distribution-total');
+    const messageCountEl = document.getElementById('token-message-count');
+    const imageCountEl = document.getElementById('token-image-count');
     const listEl = document.getElementById('token-details-list');
     const descEl = document.getElementById('token-detail-desc');
     if (!modal || !chartContainer || !totalEl || !listEl) return;
+
+    if (messageCountEl) messageCountEl.textContent = data?.messageCount || 0;
+    if (imageCountEl) imageCountEl.textContent = data?.mediaCount || 0;
+    const actualUsageEl = document.getElementById('token-actual-usage');
+    if (actualUsageEl) {
+        actualUsageEl.hidden = !data?.actualUsage;
+        if (data?.actualUsage) actualUsageEl.textContent = `上次实际输入 ${data.actualUsage.input} · 输出 ${data.actualUsage.output} Token`;
+    }
 
     if (!data || data.total === 0) {
         totalEl.textContent = '0';
@@ -414,7 +425,8 @@ function openTokenDistributionModal(charId) {
         '#ff80ab', '#90caf9', '#a5d6a7', '#fff59d', '#b39ddb', '#ffcc80',
         '#80deea', '#f48fb1', '#c5e1a5', '#ffe082', '#ce93d8', '#a1887f'
     ];
-    const chartData = data.details.map((d, i) => ({ name: d.name, value: d.value, itemStyle: { color: colorPalette[i % colorPalette.length] } }));
+    const sortedDetails = [...data.details].sort((a, b) => b.value - a.value);
+    const chartData = sortedDetails.map((d, i) => ({ name: d.name, value: d.value, itemStyle: { color: colorPalette[i % colorPalette.length] } }));
 
     if (typeof echarts !== 'undefined') {
         if (window.__tokenDistChart) window.__tokenDistChart.dispose();
@@ -447,7 +459,7 @@ function openTokenDistributionModal(charId) {
 
     listEl.innerHTML = '';
     const total = data.total;
-    data.details.forEach((item, index) => {
+    sortedDetails.forEach((item, index) => {
         const color = colorPalette[index % colorPalette.length];
         const pct = total > 0 ? ((item.value / total) * 100).toFixed(1) : 0;
         const div = document.createElement('div');
@@ -459,6 +471,7 @@ function openTokenDistributionModal(charId) {
                 <span class="token-detail-value">${item.value} Token</span>
             </div>
             <span class="token-detail-percent">${pct}%</span>
+            <div class="token-detail-bar"><div class="token-detail-bar-fill" style="width:${pct}%;background:${color}"></div></div>
         `;
         div.dataset.desc = item.desc || '';
         div.addEventListener('click', function () {

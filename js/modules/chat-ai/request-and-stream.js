@@ -1,6 +1,49 @@
 const OVO_REPLY_IDLE_TIMEOUT_MS = 90 * 1000;
 const OVO_REPLY_TOTAL_TIMEOUT_MS = 10 * 60 * 1000;
 
+function restoreMissingThinkingStart(response, cotEnabled, chat) {
+    if (!cotEnabled || !response) return response;
+    const tagPairs = [['<thinking>', '</thinking>'], ['<think>', '</think>']];
+    if (chat?._cotTagStart && chat?._cotTagEnd) tagPairs.push([chat._cotTagStart, chat._cotTagEnd]);
+    const lowerResponse = response.toLowerCase();
+    const missingStart = tagPairs
+        .map(([start, end]) => ({ start, index: lowerResponse.indexOf(end.toLowerCase()) }))
+        .filter(({ start, index }) => index >= 0 && !lowerResponse.slice(0, index).includes(start.toLowerCase()))
+        .sort((a, b) => a.index - b.index)[0];
+    return missingStart ? missingStart.start + response : response;
+}
+
+function collapseStickerPartsForAI(parts) {
+    const result = [];
+    for (const part of parts) {
+        if (part.type !== 'sticker') {
+            result.push(part);
+            continue;
+        }
+
+        let nameIndex = -1;
+        for (let i = result.length - 1; i >= 0; i--) {
+            const item = result[i];
+            if ((item.type === 'text' || item.type === 'html') &&
+                typeof item.text === 'string' &&
+                /\[[^\]]+(?:发送的|的)表情包[：:][^\]]+\]/.test(item.text)) {
+                nameIndex = i;
+                break;
+            }
+        }
+        const description = typeof part.description === 'string' ? part.description.trim() : '';
+        if (nameIndex >= 0) {
+            if (description) {
+                const namePart = result[nameIndex];
+                result[nameIndex] = { ...namePart, text: `${namePart.text}（同一张表情包的画面：${description}）` };
+            }
+        } else {
+            result.push({ type: 'text', text: description ? `[一个表情包，画面：${description}]` : '[一个表情包]' });
+        }
+    }
+    return result;
+}
+
 async function getAiReply(chatId, chatType, isBackground = false, isSummary = false, isCharBlockedMonologue = false, isPhoneControlRevokeAttempt = false, replyOptions = {}) {
     if (isGenerating && !isBackground && !replyOptions.recoveryTaskId) return;
 
@@ -193,7 +236,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
 
     try {
         let requestBody;
-        let historySlice = chat.history.slice(-chat.maxMemory);
+        let historySlice = chat.history.filter(message => !message.isMomentsActivity).slice(-chat.maxMemory);
         
         // 节点系统：上下文截断与记忆隔离
         if (chatType === 'private' && chat.activeNodeId && chat.nodes) {
@@ -209,7 +252,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 }
                 if (startIndex !== -1) {
                     // 无论是否开启 readMemory，当前对话视口严格只保留节点内的消息
-                    const nodeMsgs = chat.history.slice(startIndex + 1);
+                    const nodeMsgs = chat.history.slice(startIndex + 1).filter(message => !message.isMomentsActivity);
                     historySlice = nodeMsgs.slice(-chat.maxMemory);
                     
                     // 上下文截断 (保留摘要)
@@ -298,6 +341,10 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
 
         let systemPrompt;
         if (chatType === 'private') {
+            if (!isSummary && window.Moments && typeof window.Moments.prepareForChat === 'function') {
+                const lastUserText = [...historySlice].reverse().find(message => message.role === 'user')?.content || '';
+                await window.Moments.prepareForChat(chat, lastUserText, isBackground);
+            }
             if (chat.memoryMode === 'vector' && typeof prepareVectorMemoryContext === 'function') {
                 try {
                     await prepareVectorMemoryContext(chat);
@@ -382,7 +429,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                     let content = `[${chat.myName}引用“${msg.quote.content}”并回复：${replyText}]`;
                     parts = [{text: content}];
                 } else if (msg.parts && msg.parts.length > 0) {
-                    parts = msg.parts.map(p => {
+                    parts = collapseStickerPartsForAI(msg.parts).map(p => {
                         if (p.type === 'text' || p.type === 'html') {
                             return {text: p.text};
                         } else if (p.type === 'image') {
@@ -398,12 +445,6 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                                     }
                                     return {inline_data: {mime_type: match[1], data: match[3]}};
                                 }
-                            }
-                        } else if (p.type === 'sticker') {
-                            if (p.description) {
-                                return {text: `[表情包画面：${p.description}]`};
-                            } else {
-                                return {text: `[一个表情包]`}; // 兜底，不再尝试发送表情包的原图数据给API
                             }
                         }
                         return null;
@@ -535,7 +576,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                } else {
                    if (msg.parts && msg.parts.length > 0) {
                        let prefixAdded = false;
-                       content = msg.parts.map(p => {
+                       content = collapseStickerPartsForAI(msg.parts).map(p => {
                            if (p.type === 'text' || p.type === 'html') {
                                const textContent = (!prefixAdded) ? (prefix + p.text) : p.text;
                                prefixAdded = true;
@@ -562,16 +603,6 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                                    ];
                                } else {
                                    return {type: 'image_url', image_url: {url: p.data}};
-                               }
-                           } else if (p.type === 'sticker') {
-                               if (p.description) {
-                                   const textContent = (!prefixAdded) ? (prefix + `[表情包画面：${p.description}]`) : `[表情包画面：${p.description}]`;
-                                   prefixAdded = true;
-                                   return {type: 'text', text: textContent};
-                               } else {
-                                   const textContent = (!prefixAdded) ? (prefix + `[一个表情包]`) : `[一个表情包]`;
-                                   prefixAdded = true;
-                                   return {type: 'text', text: textContent};
                                }
                            }
                            return null;
@@ -906,13 +937,15 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 return true;
             }
         }
-        console.log('[DEBUG] AutoReply Request Body:', JSON.stringify(requestBody));
+        console.log('[DEBUG] AutoReply Request:', provider, model,
+            'messages:', (requestBody.contents || requestBody.messages || []).length);
         let endpoint = (provider === 'gemini') ? `${url}/v1beta/models/${model}:streamGenerateContent?key=${getRandomValue(key)}` : `${url}/v1/chat/completions`;
         let headers = (provider === 'gemini') ? {'Content-Type': 'application/json'} : {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${key}`
         };
-        const unpreparedRequestBody = JSON.parse(JSON.stringify(requestBody));
+        // prepareAiProviderRequest 自己复制请求体；保留原对象供重试，避免额外序列化图片。
+        const unpreparedRequestBody = requestBody;
         const preparedRequest = prepareAiProviderRequest(apiConfig, requestBody, headers, endpoint, streamEnabled);
         requestBody = preparedRequest.body; headers = preparedRequest.headers; endpoint = preparedRequest.endpoint; provider = preparedRequest.provider;
         if (latestTurnProtectionEnabled && latestTurnIds.length) {
@@ -973,6 +1006,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             try {
                 result = await response.json();
                 touchReplyProgress();
+                if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, result);
                 console.log('【API完整响应数据】:', result);
             } catch (e) {
                 const text = await response.text();
@@ -983,10 +1017,6 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             let fullResponse = "";
             const extracted = extractAiProviderResponse(result, provider);
             fullResponse = extracted.content;
-            if (extracted.reasoning) {
-                chat._lastNativeReasoning = extracted.reasoning;
-                fullResponse = `<thinking>${extracted.reasoning}</thinking>\n${fullResponse}`;
-            }
             
             // === 【补丁：把被吃掉的开头补回来】 ===
             // 仅在 CoT 开启且检测到闭合标签时补全
@@ -1014,10 +1044,10 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 cotEnabled = useCharCot ? chat.cotSettings.chatEnabled : (db.cotSettings && db.cotSettings.enabled);
             }
             // 【修改】去掉了 !isBackground，确保后台模式也能正确补全标签
-            if (cotEnabled && fullResponse && !fullResponse.trim().startsWith('<thinking>')) {
-                 if (fullResponse.includes('</thinking>')) {
-                     fullResponse = '<thinking>' + fullResponse;
-                 }
+            fullResponse = restoreMissingThinkingStart(fullResponse, cotEnabled, chat);
+            if (extracted.reasoning) {
+                chat._lastNativeReasoning = extracted.reasoning;
+                fullResponse = `<thinking>${extracted.reasoning}</thinking>\n${fullResponse}`;
             }
             // ===================================
             
@@ -1078,7 +1108,9 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         if (!data) return false;
         if (data.trim() === '[DONE]') return true;
         try {
-            const extracted = extractAiProviderResponse(JSON.parse(data), apiType, true);
+            const parsed = JSON.parse(data);
+            if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, parsed);
+            const extracted = extractAiProviderResponse(parsed, apiType, true);
             fullResponse += extracted.content;
             fullReasoning += extracted.reasoning || '';
         } catch (error) {
@@ -1136,6 +1168,7 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         try {
             const parsedStream = JSON.parse(accumulatedChunk);
             fullResponse = parsedStream.map(item => {
+                if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, item);
                 const extracted = extractAiProviderResponse(item, apiType, true);
                 fullReasoning += extracted.reasoning || '';
                 return extracted.content;
@@ -1147,10 +1180,6 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         }
     }
     if (replyTask && window.ReplyResilience) window.ReplyResilience.checkpoint(replyTask, fullResponse, fullReasoning);
-    if (fullReasoning) {
-        chat._lastNativeReasoning = fullReasoning;
-        fullResponse = `<thinking>${fullReasoning}</thinking>\n${fullResponse}`;
-    }
     // === 【补丁：补全流式输出时丢失的开头标签】 ===
     // 无论前台后台，只要是CoT开启且被预填吃掉了开头，都要补回来
     let isOfflineNode = false;
@@ -1177,11 +1206,10 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         cotEnabled = useCharCot ? chat.cotSettings.chatEnabled : (db.cotSettings && db.cotSettings.enabled);
     }
     // 【修改】去掉了 !isBackground，确保后台模式也能正确补全标签
-    if (cotEnabled && fullResponse && !fullResponse.trim().startsWith('<thinking>')) {
-         // 这里判断：如果内容里有闭合的 </thinking> 但开头没有 <thinking>，说明开头被 Prefill 吃掉了
-         if (fullResponse.includes('</thinking>')) {
-             fullResponse = '<thinking>' + fullResponse;
-         }
+    fullResponse = restoreMissingThinkingStart(fullResponse, cotEnabled, chat);
+    if (fullReasoning) {
+        chat._lastNativeReasoning = fullReasoning;
+        fullResponse = `<thinking>${fullReasoning}</thinking>\n${fullResponse}`;
     }
 
     // ===================

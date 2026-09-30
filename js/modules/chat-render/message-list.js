@@ -5,6 +5,27 @@ const _naiAutoGenQueue = [];
 let _naiAutoGenRunning = false;
 // 标记：仅新消息触发自动生图，历史消息加载时不触发
 let _naiAutoGenNewMsgIds = new Set();
+function appendChatBubble(container, bubble) {
+    const previous = container.lastElementChild;
+    if (bubble.classList.contains('debug-thought-visible') && previous?.classList.contains('debug-thought-visible')) {
+        const previousRequestId = previous.dataset.replyRequestId;
+        const nextRequestId = bubble.dataset.replyRequestId;
+        const previousTime = Number(previous.dataset.debugTimestamp);
+        const nextTime = Number(bubble.dataset.debugTimestamp);
+        const sameReply = previousRequestId && nextRequestId
+            ? previousRequestId === nextRequestId
+            : previousTime > 0 && nextTime > 0 && Math.abs(nextTime - previousTime) < 60000;
+        const previousBody = previous.querySelector('.debug-thought-body');
+        const nextBody = bubble.querySelector('.debug-thought-body');
+        if (sameReply && previousBody && nextBody) {
+            while (nextBody.firstChild) previousBody.appendChild(nextBody.firstChild);
+            previous.dataset.debugTimestamp = bubble.dataset.debugTimestamp;
+            return previous;
+        }
+    }
+    container.appendChild(bubble);
+    return bubble;
+}
 async function _naiAutoGenProcess() {
     if (_naiAutoGenRunning) return;
     _naiAutoGenRunning = true;
@@ -65,6 +86,7 @@ function renderMessages(isLoadMore = false, forceScrollToBottom = false) {
             });
         }
     }
+    if (currentChatType === 'private' && !chat.momentsSettings?.showActivityNarration) displayHistory = displayHistory.filter(message => !message.isMomentsActivity);
 
     const totalMessages = displayHistory.length;
     
@@ -80,7 +102,7 @@ function renderMessages(isLoadMore = false, forceScrollToBottom = false) {
     let lastMsgTime = 0;
     
     if (start > 0) {
-        lastMsgTime = chat.history[start - 1].timestamp;
+        lastMsgTime = displayHistory[start - 1].timestamp;
     }
 
     messagesToRender.forEach((msg, index) => {
@@ -139,7 +161,7 @@ function renderMessages(isLoadMore = false, forceScrollToBottom = false) {
 
         const bubble = createMessageBubbleElement(msg, isContinuous);
         if (bubble) {
-            fragment.appendChild(bubble);
+            appendChatBubble(fragment, bubble);
             
             // 节点系统：渲染独立摘要
             if (msg.nodeSummary) {

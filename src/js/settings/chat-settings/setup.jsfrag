@@ -1038,6 +1038,13 @@ function setupChatSettings() {
         });
     }
 
+    const retentionUnlimited = document.getElementById('setting-status-retention-unlimited');
+    if (retentionUnlimited) {
+        retentionUnlimited.addEventListener('change', () => {
+            document.getElementById('setting-status-retention-limit').disabled = retentionUnlimited.checked;
+        });
+    }
+
     const replyCountSwitch = document.getElementById('setting-reply-count-enabled');
     if (replyCountSwitch) {
         replyCountSwitch.addEventListener('change', (e) => {

@@ -118,7 +118,8 @@ function setupGroupChatSystem() {
     const groupAutoSaveChanges = [
         'setting-group-theme-color', 'setting-group-use-custom-css', 'setting-group-show-timestamp',
         'setting-group-show-notice', 'setting-group-allow-gossip', 'setting-group-avatar-radius',
-        'setting-group-bilingual-mode', 'setting-group-bilingual-style', 'setting-group-auto-journal-enabled',
+        'setting-group-bilingual-mode', 'setting-group-bilingual-style', 'setting-group-auto-expand-translation', 'setting-group-auto-journal-enabled',
+        'setting-group-journal-newest-first', 'setting-group-journal-favorite-top',
         'setting-group-poke-enabled', 'setting-group-poke-character-initiated', 'setting-group-poke-member-to-member',
         'setting-group-poke-self', 'setting-group-poke-trigger-reply', 'setting-group-poke-effect-mode',
         'setting-group-poke-vibration', 'setting-group-poke-notification-mode', 'setting-group-poke-context',

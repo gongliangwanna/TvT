@@ -4,6 +4,7 @@
     const PAIR_COOLDOWN_MS = 1500;
     const MAX_AI_POKES_PER_REPLY = 2;
     const WITHDRAW_MS = 2 * 60 * 1000;
+    const TRIGGER_MODES = ['auto', 'both', 'avatar', 'title'];
     let lastTap = null;
     const recentPairs = new Map();
 
@@ -28,6 +29,34 @@
         if (typeof chat.pokeUserSuffix !== 'string') chat.pokeUserSuffix = '';
         if (typeof chat.pokeCharacterSuffix !== 'string') chat.pokeCharacterSuffix = '';
         return chat;
+    }
+
+    function getTriggerMode(chat) {
+        return TRIGGER_MODES.includes(chat.pokeTriggerMode) ? chat.pokeTriggerMode : 'auto';
+    }
+
+    function allowsAvatarTrigger(chat) {
+        const mode = getTriggerMode(chat);
+        return mode === 'avatar' || mode === 'both' || (mode === 'auto' && chat.avatarMode !== 'hidden');
+    }
+
+    function allowsTitleTrigger(chat) {
+        const mode = getTriggerMode(chat);
+        return mode === 'title' || mode === 'both' || (mode === 'auto' && chat.avatarMode === 'hidden');
+    }
+
+    function updateTriggerUI(chat, chatType) {
+        lastTap = null;
+        const title = document.getElementById('chat-room-title');
+        const groupButton = document.getElementById('group-poke-expansion-btn');
+        const titleEnabled = chatType === 'private' && !!chat?.pokeEnabled && allowsTitleTrigger(ensureSettings(chat));
+        if (title) {
+            title.classList.toggle('poke-title-trigger', titleEnabled);
+            if (titleEnabled) title.setAttribute('title', '连点两次拍一拍');
+            else title.removeAttribute('title');
+        }
+        const groupEnabled = chatType === 'group' && !!chat?.pokeEnabled;
+        if (groupButton) groupButton.style.display = groupEnabled ? 'flex' : 'none';
     }
 
     function cleanSuffix(value) {
@@ -167,7 +196,7 @@
     function findVisibleAvatar(targetId) {
         if (typeof messageArea === 'undefined' || !messageArea) return null;
         const avatars = Array.from(messageArea.querySelectorAll(`.message-avatar[data-poke-target-id="${CSS.escape(targetId)}"]`));
-        return avatars.reverse().find(avatar => avatar.offsetParent !== null) || avatars[0] || null;
+        return avatars.reverse().find(avatar => avatar.offsetParent !== null && !avatar.classList.contains('avatar-hidden') && !avatar.classList.contains('avatar-invisible')) || null;
     }
 
     function playEffect(effect) {
@@ -193,6 +222,14 @@
                     void avatar.offsetWidth;
                     avatar.classList.add('poke-avatar-shake');
                     setTimeout(() => avatar.classList.remove('poke-avatar-shake'), 650);
+                } else if (currentChatType === 'private' && message.targetId === chat.id && allowsTitleTrigger(ensureSettings(chat))) {
+                    const title = document.getElementById('chat-room-title');
+                    if (title) {
+                        title.classList.remove('poke-avatar-shake');
+                        void title.offsetWidth;
+                        title.classList.add('poke-avatar-shake');
+                        setTimeout(() => title.classList.remove('poke-avatar-shake'), 650);
+                    }
                 }
             }
             if (chat.pokeVibrationEnabled !== false && typeof triggerHapticFeedback === 'function') {
@@ -271,7 +308,7 @@
         if (!avatar || !document.getElementById('chat-room-screen')?.classList.contains('active')) return;
         if ((typeof isInMultiSelectMode !== 'undefined' && isInMultiSelectMode) || (typeof isDebugMode !== 'undefined' && isDebugMode)) return;
         const chat = getChat(currentChatId, currentChatType);
-        if (!chat?.pokeEnabled) return;
+        if (!chat?.pokeEnabled || (currentChatType === 'private' && !allowsAvatarTrigger(ensureSettings(chat)))) return;
         const now = Date.now();
         if (lastTap && lastTap.avatar === avatar && now - lastTap.time <= DOUBLE_TAP_MS) {
             event.preventDefault();
@@ -287,12 +324,29 @@
         const avatar = event.target.closest('.message-avatar[data-poke-target-id]');
         if (!avatar) return;
         const chat = getChat(currentChatId, currentChatType);
-        if (!chat?.pokeEnabled || typeof createContextMenu !== 'function') return;
+        if (!chat?.pokeEnabled || (currentChatType === 'private' && !allowsAvatarTrigger(ensureSettings(chat))) || typeof createContextMenu !== 'function') return;
         event.preventDefault();
         event.stopPropagation();
         createContextMenu([
             { label: '拍一拍', action: () => handleUserPoke(avatar.dataset.pokeTargetId) }
         ], event.clientX, event.clientY);
+    }
+
+    function onTitleClick(event) {
+        const title = event.target.closest('#chat-room-title');
+        if (!title || !document.getElementById('chat-room-screen')?.classList.contains('active') || currentChatType !== 'private') return;
+        if ((typeof isInMultiSelectMode !== 'undefined' && isInMultiSelectMode) || (typeof isDebugMode !== 'undefined' && isDebugMode)) return;
+        const chat = getChat(currentChatId, currentChatType);
+        if (!chat?.pokeEnabled || !allowsTitleTrigger(ensureSettings(chat))) return;
+        const now = Date.now();
+        if (lastTap && lastTap.avatar === title && now - lastTap.time <= DOUBLE_TAP_MS) {
+            event.preventDefault();
+            event.stopPropagation();
+            lastTap = null;
+            handleUserPoke(chat.id);
+            return;
+        }
+        lastTap = { avatar: title, time: now };
     }
 
     function showGroupPicker() {
@@ -338,8 +392,15 @@
 
     function init() {
         document.addEventListener('click', onAvatarClick, true);
+        document.addEventListener('click', onTitleClick, true);
         document.addEventListener('contextmenu', onAvatarContextMenu, true);
         document.getElementById('setting-group-poke-member-btn')?.addEventListener('click', showGroupPicker);
+        document.getElementById('group-poke-expansion-btn')?.addEventListener('click', () => {
+            const chat = getChat(currentChatId, currentChatType);
+            if (currentChatType !== 'group' || !chat?.pokeEnabled) return;
+            if (typeof showPanel === 'function') showPanel('none');
+            showGroupPicker();
+        });
         const groupToggle = document.getElementById('setting-group-poke-enabled');
         const groupOptions = document.getElementById('setting-group-poke-options');
         if (groupToggle && groupOptions) {
@@ -357,6 +418,7 @@
         consumeAiCommands,
         renderMessage,
         playFeedback,
+        updateTriggerUI,
         withdraw,
         init
     };

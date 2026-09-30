@@ -243,11 +243,6 @@ function setupCustomizeApp() {
         if (target.matches('#widget-manage-presets')) {
             openWidgetManageModal();
         }
-        if (target.matches('#widget-presets-close-modal')) {
-            const m = document.getElementById('widget-presets-modal');
-            if (m) m.style.display = 'none';
-        }
-
         if (target.matches('#widget-wallpaper-apply-preset')) {
             const select = document.getElementById('widget-wallpaper-preset-select');
             const presetName = select && select.value;

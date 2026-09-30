@@ -99,8 +99,8 @@ function showUpdateModal() {
         if (note.includes('————')) {
             // 分割线
             notesHtml += '<hr style="margin: 15px 0; border: 0; border-top: 1px dashed #ccc;">';
-        } else if (/^\d+\./.test(note)) {
-            // 标题行 (例如 "1.日记功能升级！")
+        } else if (/^\d+\./.test(note) || note === '共同更新｜反馈中心试用' || note === '9.28 更新') {
+            // 标题行
             notesHtml += `<h4 style="margin: 15px 0 8px; color: #333; font-size: 15px; font-weight: 600;">${formattedNote}</h4>`;
         } else {
             // 普通内容行
@@ -491,4 +491,3 @@ function customAlert(message, title = '提示') {
         okBtn.onclick = () => { cleanup(); resolve(); };
     });
 }
-
