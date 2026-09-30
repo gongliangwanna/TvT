@@ -1843,25 +1843,85 @@ const TavernSync = {
         map.set(key, failed);
         return failed.timer ? '将自动重试。' : '自动重试已停止，可再次确认推送重试。';
     },
+    IMAGE_DESCRIPTION_TIMEOUT_MS: 60000,
+    async _fetchTavernImageResponse(settings, body, headers, endpoint, state) {
+        // 使用小手机的提供商适配，只有互通额外识图的请求带独立取消信号。
+        const prepared = prepareAiProviderRequest({ ...settings, streamEnabled: false }, body, headers, endpoint, false);
+        const response = await fetch(prepared.endpoint, {
+            method: 'POST', headers: prepared.headers, body: JSON.stringify(prepared.body),
+            signal: state.controller.signal
+        });
+        if (!response.ok) {
+            const error = new Error(`API Error: ${response.status} ${await response.text()}`);
+            error.response = response;
+            throw error;
+        }
+        if ((response.headers.get('content-type') || '').includes('text/event-stream')) {
+            return readStreamResponse(response, prepared.provider);
+        }
+        const text = await response.text();
+        let data;
+        try { data = JSON.parse(text); }
+        catch (e) {
+            // 兼容没有正确标注 Content-Type 的流式接口，与主 API 的兜底一致。
+            let content = '';
+            for (const line of text.split('\n')) {
+                if (!line.startsWith('data: ') || line.includes('[DONE]')) continue;
+                try { content += extractAiProviderResponse(JSON.parse(line.slice(6)), prepared.provider, true).content || ''; }
+                catch (_) { /* 跳过心跳或不完整的数据行 */ }
+            }
+            if (content) return content;
+            throw new Error('识图接口返回的内容无法解析');
+        }
+        return extractAiProviderResponse(data, prepared.provider).content;
+    },
     async _generateTavernImageDescription(msg, char, api) {
         // 原识图函数会吞掉 API 错误；按本次独立配置对象捕获，主聊天请求不受影响。
         if (typeof fetchAiResponse === 'function' && !fetchAiResponse._tavernImageErrors) {
             const original = fetchAiResponse;
             const errors = this._imageApiErrors;
+            const sync = this;
             const wrapped = async function (settings, ...args) {
-                try { return await original.call(this, settings, ...args); }
-                catch (e) { if (errors.has(settings)) errors.set(settings, e); throw e; }
+                const state = errors.get(settings);
+                if (!state) return original.call(this, settings, ...args);
+                try {
+                    if (state.expired) throw state.timeoutError;
+                    const result = typeof prepareAiProviderRequest === 'function' && typeof fetch === 'function'
+                        ? await sync._fetchTavernImageResponse(settings, args[0], args[1], args[2], state)
+                        : await original.call(this, settings, ...args);
+                    if (state.expired) throw state.timeoutError;
+                    return result;
+                } catch (e) { state.error = state.expired ? state.timeoutError : e; throw state.error; }
             };
             wrapped._tavernImageErrors = true;
             fetchAiResponse = wrapped;
         }
         const settings = { ...api };
-        this._imageApiErrors.set(settings, null);
+        const state = { controller: new AbortController(), expired: false, error: null,
+            timeoutError: new Error(`图片识别超时（${this.IMAGE_DESCRIPTION_TIMEOUT_MS / 1000} 秒）`) };
+        this._imageApiErrors.set(settings, state);
+        // 原函数直接修改传入消息。用独立副本隔离超时后才返回的结果。
+        const working = { ...msg, parts: msg.parts.map(p => p && { ...p }) };
+        let timer;
+        const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                state.expired = true;
+                state.controller.abort();
+                reject(state.timeoutError);
+            }, this.IMAGE_DESCRIPTION_TIMEOUT_MS);
+        });
+        const task = Promise.resolve().then(() => generateImageDescription(working, char, settings));
+        // 图片转换也可能挂起：保留任务状态，迟到后禁止它再发送 API 请求。
+        task.then(() => this._imageApiErrors.delete(settings), () => this._imageApiErrors.delete(settings));
         try {
-            await generateImageDescription(msg, char, settings);
-            const error = this._imageApiErrors.get(settings);
-            if (error) throw error;
-        } finally { this._imageApiErrors.delete(settings); }
+            await Promise.race([task, timeout]);
+            if (state.error) throw state.error;
+            working.parts.forEach((part, i) => {
+                const current = msg.parts[i];
+                if (part?.type === 'image' && current?.type === 'image' && current.data === part.data
+                    && !current.description && part.description) current.description = part.description;
+            });
+        } finally { clearTimeout(timer); }
     },
     _startImageDescriptions(target, ids, opts = {}) {
         this.describeImagesAfterReply(target.uwuCharId, ids, { ...opts, target }).catch(e => {
@@ -1910,36 +1970,23 @@ const TavernSync = {
             // 必须先等待同一张图的请求。曾开始过不等于已经完成。
             const active = this._imageDescriptionJobs.get(key);
             if (active) { await active; return; }
-            if (!msg.parts.some(p => p?.type === 'image' && !p.description)) {
-                // 上次可能已识图成功但本地保存失败；保存真正成功后再撤掉错误。
-                if (this._imageDescriptionFailures.has(key) && typeof saveCharacter === 'function') {
-                    try {
-                        if (await saveCharacter(char.id) === false) throw new Error('图片描述未能保存到小手机');
-                    } catch (e) {
-                        this._retryImageTask(this._imageDescriptionFailures, key, e,
-                            () => this._startImageDescriptions(target, [msg.id], { requirePushed }));
-                        return;
-                    }
-                }
-                this._clearImageFailure(this._imageDescriptionFailures, key);
-                this.resolveIssues(kind);
-                this._queueImageDescriptionSync(target, msg.id);
-                return;
-            }
             if (opts.retry) this._clearImageFailure(this._imageDescriptionFailures, key);
             const failed = this._imageDescriptionFailures.get(key);
             if (!opts.retry && failed && Date.now() < failed.retryAt) return;
             const job = Promise.resolve().then(async () => {
                 try {
-                    if (typeof generateImageDescription !== 'function') throw Object.assign(new Error('小手机的图片识别功能没有加载'), { noRetry: true });
-                    const saved = db.imageRecognitionApiSettings;
-                    const isReady = api => typeof isApiConfigReady === 'function'
-                        ? isApiConfigReady(api) : !!(api && api.url && api.key && api.model);
-                    const api = isReady(saved) ? saved : db.apiSettings;
-                    if (!isReady(api) || api.imageMode === 'reject' || api.imageMode === 'description') {
-                        throw Object.assign(new Error('请在小手机的 API 设置中配置能看图的识图 API'), { noRetry: true });
+                    // 本地保存失败也共享同一个任务、冷却和次数上限；已有描述不重复请求 API。
+                    if (msg.parts.some(p => p?.type === 'image' && !p.description)) {
+                        if (typeof generateImageDescription !== 'function') throw Object.assign(new Error('小手机的图片识别功能没有加载'), { noRetry: true });
+                        const saved = db.imageRecognitionApiSettings;
+                        const isReady = api => typeof isApiConfigReady === 'function'
+                            ? isApiConfigReady(api) : !!(api && api.url && api.key && api.model);
+                        const api = isReady(saved) ? saved : db.apiSettings;
+                        if (!isReady(api) || api.imageMode === 'reject' || api.imageMode === 'description') {
+                            throw Object.assign(new Error('请在小手机的 API 设置中配置能看图的识图 API'), { noRetry: true });
+                        }
+                        await this._generateTavernImageDescription(msg, char, api);
                     }
-                    await this._generateTavernImageDescription(msg, char, api);
                     for (const part of msg.parts) {
                         if (part?.type === 'image' && typeof part.description === 'string' && !part.description.trim()) part.description = '';
                     }
@@ -2017,6 +2064,8 @@ const TavernSync = {
         // 读取酒馆期间也可能改绑定；不能用变化后的地址保存刚读到的旧聊天。
         const current = this.findBindingForChar(target.uwuCharId);
         if (!current || current.stChatFile !== target.stChatFile || current.stCharAvatar !== target.stCharAvatar) return;
+        // 读取期间可能删图或替换整个角色数据，不能使用读取前缓存的消息继续补写。
+        if (!db.characters.includes(char) || !char.history.includes(msg)) return;
         let changed = false;
         for (const stMsg of stMsgs) {
             if (this._patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine, new Set([messageId]))) changed = true;
