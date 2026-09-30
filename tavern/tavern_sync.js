@@ -165,7 +165,7 @@ const TavernSync = {
         console.error('[酒馆外挂]', text);
         this.loadIssues();
         const last = this.issues[this.issues.length - 1];
-        if (last && last.text === text) { last.count++; last.time = Date.now(); }
+        if (last && last.text === text && last.kind === (kind || undefined)) { last.count++; last.time = Date.now(); }
         else {
             this.issues.push({ text, time: Date.now(), count: 1, kind: kind || undefined });
             if (this.issues.length > 20) this.issues.shift();
@@ -1809,46 +1809,124 @@ const TavernSync = {
     },
 
     // 主聊天模型能直接看原图并回答，但它的回答不会自动写入图片的 description。
-    // 已绑定聊天开启额外识图后，在回复后或推送前补全描述；同一页面内失败也不反复请求。
-    _imageDescriptionAttempts: new Set(),
-    async describeImagesAfterReply(charId, messageIds) {
+    // 同一张图共享正在进行的请求；自动失败冷却 30 秒，最多尝试三次，手动推送允许重试。
+    _imageDescriptionJobs: new Map(),
+    _imageDescriptionFailures: new Map(),
+    async describeImagesAfterReply(charId, messageIds, opts = {}) {
         if (!Array.isArray(messageIds) || !messageIds.length) return;
         const char = db.characters.find(c => c.id === charId);
-        if (!char || !this.pushImageDescriptionsFor(this.findBindingForChar(charId))) return;
+        const binding = this.findBindingForChar(charId);
+        if (!char || !this.pushImageDescriptionsFor(binding)) return;
+        const target = { ...binding }; // 请求期间换了绑定，不能把结果写到另一个聊天。
         const wanted = new Set(messageIds);
         const pending = (char.history || []).filter(m => m && wanted.has(m.id) && m.role === 'user'
-            && Array.isArray(m.parts) && m.parts.some(p => p?.type === 'image' && !p.description)
-            && !this._imageDescriptionAttempts.has(m.id));
-        if (!pending.length) return;
-        if (typeof generateImageDescription !== 'function') {
-            this.reportIssue('小手机的图片识别功能没有加载，图片内容暂时无法补到酒馆');
-            return;
-        }
-        const saved = db.imageRecognitionApiSettings;
-        const savedReady = typeof isApiConfigReady === 'function'
-            ? isApiConfigReady(saved) : !!(saved && saved.url && saved.key && saved.model);
-        const api = savedReady ? saved : db.apiSettings;
-        const ready = typeof isApiConfigReady === 'function'
-            ? isApiConfigReady(api) : !!(api && api.url && api.key && api.model);
-        if (!ready || api.imageMode === 'reject' || api.imageMode === 'description') {
-            this.reportIssue('图片内容未能同步：请在小手机的 API 设置中配置能看图的识图 API');
-            return;
-        }
+            && Array.isArray(m.parts) && m.parts.some(p => p?.type === 'image'));
         for (const msg of pending) {
-            // 等待前一张识图时，用户可能已经关掉开关。
             if (!this.pushImageDescriptionsFor(this.findBindingForChar(charId))) break;
-            this._imageDescriptionAttempts.add(msg.id);
-            try {
-                await generateImageDescription(msg, char, api);
-                if (msg.parts.some(p => p?.type === 'image' && !p.description)) {
-                    this.reportIssue('图片内容未能同步：识图没有返回描述，酒馆暂时保留空的图片消息');
-                } else if (typeof saveCharacter === 'function') {
-                    await saveCharacter(char.id);
+            const key = JSON.stringify([charId, msg.id]);
+            const kind = 'image-description:' + key;
+            // 必须先等待同一张图的请求。曾开始过不等于已经完成。
+            const active = this._imageDescriptionJobs.get(key);
+            if (active) { await active; continue; }
+            if (!msg.parts.some(p => p?.type === 'image' && !p.description)) {
+                // 上次可能已识图成功但本地保存失败；保存真正成功后再撤掉错误。
+                if (this._imageDescriptionFailures.has(key) && typeof saveCharacter === 'function') {
+                    try {
+                        if (await saveCharacter(char.id) === false) continue;
+                    } catch (e) { continue; }
                 }
-            } catch (e) {
-                this.reportIssue('图片内容未能同步：' + e.message);
+                this._imageDescriptionFailures.delete(key);
+                this.resolveIssues(kind);
+                this._queueImageDescriptionSync(target, msg.id);
+                continue;
+            }
+            const failed = this._imageDescriptionFailures.get(key);
+            if (!opts.retry && failed && (failed.count >= 3 || Date.now() < failed.retryAt)) continue;
+            const job = Promise.resolve().then(async () => {
+                try {
+                    if (typeof generateImageDescription !== 'function') throw new Error('小手机的图片识别功能没有加载');
+                    const saved = db.imageRecognitionApiSettings;
+                    const isReady = api => typeof isApiConfigReady === 'function'
+                        ? isApiConfigReady(api) : !!(api && api.url && api.key && api.model);
+                    const api = isReady(saved) ? saved : db.apiSettings;
+                    if (!isReady(api) || api.imageMode === 'reject' || api.imageMode === 'description') {
+                        throw new Error('请在小手机的 API 设置中配置能看图的识图 API');
+                    }
+                    await generateImageDescription(msg, char, api);
+                    if (msg.parts.some(p => p?.type === 'image' && !p.description)) throw new Error('识图没有返回描述');
+                    if (typeof saveCharacter === 'function' && await saveCharacter(char.id) === false) {
+                        throw new Error('图片描述未能保存到小手机');
+                    }
+                    this._imageDescriptionFailures.delete(key);
+                    this.resolveIssues(kind);
+                    // 排在写入队列后面补已推送的行，不等待它，避免推送正在等待本次识图时互相卡住。
+                    this._queueImageDescriptionSync(target, msg.id);
+                } catch (e) {
+                    this._imageDescriptionFailures.set(key, { count: opts.retry ? 1 : (failed?.count || 0) + 1, retryAt: Date.now() + 30000 });
+                    this.resolveIssues(kind);
+                    this.reportIssue(`「${char.remarkName || char.name || char.myName || '当前角色'}」图片识图失败：${e.message}。图片内容暂时留空，可再次确认推送重试。`, kind);
+                }
+            }).finally(() => this._imageDescriptionJobs.delete(key));
+            this._imageDescriptionJobs.set(key, job);
+            await job;
+        }
+    },
+
+    _queueImageDescriptionSync(target, messageId) {
+        const kind = 'image-write:' + JSON.stringify([target.uwuCharId, messageId]);
+        this.syncRecognizedImage(target, messageId).catch(e => {
+            this.resolveIssues(kind);
+            this.reportIssue('图片识别成功，但补写酒馆失败：' + e.message, kind);
+        });
+    },
+
+    _patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine, onlyIds) {
+        const ids = stMsg?.extra?.uwu_msg_ids;
+        if (!stMsg?.extra?.from_uwu || !Array.isArray(ids) || stMsg.extra.uwu_summary) return false;
+        let stored = this._blockLines(stMsg);
+        if (!stored && ids.length === 1 && !Array.isArray(stMsg.extra.uwu_line_lens)) {
+            const own = lastPhoneBlock(stMsg.mes);
+            if (own && own.text.startsWith('<phone_chat>\n') && own.text.endsWith('\n</phone_chat>')) {
+                stored = new Map([[ids[0], own.text.slice('<phone_chat>\n'.length, -'\n</phone_chat>'.length)]]);
             }
         }
+        if (!stored) return false;
+        const replacements = new Map();
+        for (const id of ids) {
+            if (onlyIds && !onlyIds.has(id)) continue;
+            const m = phoneById.get(id);
+            if (m?.role !== 'user' || !Array.isArray(m.parts) || !m.parts.some(p => p?.type === 'image')) continue;
+            const oldLine = stored.get(id) || '';
+            const prefix = oldLine.match(/^(\[时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n)/)?.[1] || '';
+            const oldBody = oldLine.slice(prefix.length);
+            if (!/^\[[^\]\r\n]*发来了一张图片[：:]\]$/.test(oldBody) && !/^data:image\/[^;,]+;base64,/i.test(oldBody)) continue;
+            const newLine = toLine(m);
+            if (newLine && newLine !== oldBody) replacements.set(id, prefix + newLine);
+        }
+        if (!replacements.size) return false;
+        this._rebuildPhoneBlock(stMsg, ids, phoneById, toLine, replacements, withTimeLine);
+        return true;
+    },
+
+    // 只补这张图片已经存在的酒馆行；不新推消息，也不执行删除同步。
+    async syncRecognizedImage(target, messageId) {
+        const binding = this.findBindingForChar(target.uwuCharId);
+        if (!this.pushImageDescriptionsFor(binding) || binding.stChatFile !== target.stChatFile
+            || binding.stCharAvatar !== target.stCharAvatar) return;
+        const char = db.characters.find(c => c.id === target.uwuCharId);
+        const msg = char?.history?.find(m => m.id === messageId);
+        if (!msg?.parts?.some(p => p?.type === 'image' && p.description)) return;
+        const { phoneById, toLine, withTimeLine } = this._pushHelpers(char, binding);
+        const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+        let changed = false;
+        for (const stMsg of stMsgs) {
+            if (this._patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine, new Set([messageId]))) changed = true;
+        }
+        if (changed) {
+            await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: stMsgs });
+            this._notifyData();
+        }
+        this.resolveIssues('image-write:' + JSON.stringify([char.id, messageId]));
     },
 
     _pushHelpers(char, binding) {
@@ -2075,6 +2153,10 @@ const TavernSync = {
     // opts.noLog：这次推送不记进 recentPushes（兜底补推时用，免得你在酒馆里故意删的被一遍遍推回来）
     // opts.allowBulkDelete：一次要从酒馆删很多条时也照删（推送窗口里你点了「从酒馆删掉」时才传，见 BULK_DELETE_LIMIT）
     async pushToTavern(binding, pushCount, trackProgress = true, opts = {}) {
+        // 手动推送允许重试失败的识图，并等待后台已有请求；等待结束后才读取酒馆。
+        if (Array.isArray(opts.messages) && !opts.recovering) {
+            await this.describeImagesAfterReply(binding.uwuCharId, opts.messages.map(m => m.id), { retry: true });
+        }
         return this._pushToTavern(binding, pushCount, trackProgress, opts);
     },
     // 小手机里一次少了这么多条已经推到酒馆的消息时，不自动从酒馆删，先等你在推送窗口里决定。
@@ -2102,15 +2184,6 @@ const TavernSync = {
     async _pushToTavern(binding, pushCount, trackProgress = true, opts = {}) {
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (!char) throw new Error('找不到角色');
-        let stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
-        // 兜底：先核对最近 5 分钟推过的还在不在（被酒馆盖掉的就补推）。
-        // 核对直接用刚读到的聊天，不用再下载一遍；真的补推了（酒馆聊天变了）才重新读
-        if (!opts.messages && !opts.recovering) {
-            try {
-                const rr = await this._recoverLostPushes(binding, { stMsgs });
-                if (rr.recovered) stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
-            } catch (e) { this.reportIssue('核对被酒馆盖掉的推送时出错：' + e.message, 'push'); }
-        }
         // 兼容修复前已经推过空占位的图片：若后面已有 AI 回复，推送时也补查描述。
         // 尚未收到回复的新图片保持空占位。一次最多处理最近三张，避免旧聊天一次发出大量识图请求。
         const answeredImages = [];
@@ -2122,6 +2195,14 @@ const TavernSync = {
                 && m.parts.some(p => p?.type === 'image' && !p.description)) answeredImages.push(m.id);
         }
         if (answeredImages.length) await this.describeImagesAfterReply(char.id, answeredImages.reverse());
+        let stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+        // 等识图后再读酒馆，避免把漫长识图期间酒馆新增的内容覆盖掉。
+        if (!opts.messages && !opts.recovering) {
+            try {
+                const rr = await this._recoverLostPushes(binding, { stMsgs });
+                if (rr.recovered) stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+            } catch (e) { this.reportIssue('核对被酒馆盖掉的推送时出错：' + e.message, 'push'); }
+        }
         const { allUwuMsgs, toLine, withTimeLine, hasTimeLine, phoneById } = this._pushHelpers(char, binding);
         // 小手机里还在的消息。只有从小手机里真的删掉了，才去酒馆里删（改推送设置不算删）。
         // binding.keptIds：被“重新生成”换掉的旧回复。它们在小手机里没了，但酒馆里的旧版本要保留，所以当作还在（yuan 版新增）
@@ -2178,33 +2259,7 @@ const TavernSync = {
         // 旧版误推的图片编码也换成可读文字。只改能确定原文位置的行，保留手工修改过的楼层。
         let hadImageUpdates = false;
         for (const stMsg of all) {
-            const ids = stMsg?.extra?.uwu_msg_ids;
-            if (!Array.isArray(ids) || stMsg.extra.uwu_summary) continue;
-            let stored = this._blockLines(stMsg);
-            // 更旧的单条图片楼层没有长度记录；整段只有这一条时仍能安全认出原文。
-            if (!stored && ids.length === 1 && !Array.isArray(stMsg.extra.uwu_line_lens)) {
-                const own = lastPhoneBlock(stMsg.mes);
-                if (own && own.text.startsWith('<phone_chat>\n') && own.text.endsWith('\n</phone_chat>')) {
-                    stored = new Map([[ids[0], own.text.slice('<phone_chat>\n'.length, -'\n</phone_chat>'.length)]]);
-                }
-            }
-            if (!stored) continue;
-            const replacements = new Map();
-            for (const id of ids) {
-                const m = phoneById.get(id);
-                if (m?.role !== 'user' || !Array.isArray(m.parts) || !m.parts.some(p => p?.type === 'image')) continue;
-                const oldLine = stored.get(id);
-                const prefix = (oldLine || '').match(/^(\[时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n)/)?.[1] || '';
-                const oldBody = (oldLine || '').slice(prefix.length);
-                if (!/^\[[^\]\r\n]*发来了一张图片[：:]\]$/.test(oldBody)
-                    && !/^data:image\/[^;,]+;base64,/i.test(oldBody)) continue;
-                const newLine = toLine(m);
-                if (newLine && newLine !== oldBody) replacements.set(id, prefix + newLine);
-            }
-            if (replacements.size) {
-                this._rebuildPhoneBlock(stMsg, ids, phoneById, toLine, replacements, withTimeLine);
-                hadImageUpdates = true;
-            }
+            if (this._patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine)) hadImageUpdates = true;
         }
 
         // 给旧推送补时间行：只有长度记录仍能准确拆出每条原文时才改；用户改过且拆不准的楼层原样保留。
@@ -2275,7 +2330,12 @@ const TavernSync = {
         let pushLines = [];
         let rawLines = [];      // 和 newMsgs 一一对应（写空的也在），用来记每一段有多长
         if (newMsgs.length > 0) {
-            await this.describeImagesAfterReply(char.id, newMsgs.map(m => m.id));
+            if (!opts.imagesPrepared && this.pushImageDescriptionsFor(binding)
+                && newMsgs.some(m => m.parts?.some(p => p?.type === 'image' && !p.description))) {
+                await this.describeImagesAfterReply(char.id, newMsgs.map(m => m.id));
+                // 识图有等待时，重新读取最新酒馆记录后再计算写入内容。
+                return this._pushToTavern(binding, pushCount, trackProgress, { ...opts, imagesPrepared: true });
+            }
             rawLines = newMsgs.map(toLine);
             pushLines = rawLines.filter(l => l && l.trim());
             // 新消息剥掉状态栏等之后全部为空，就当没有新消息（删除照样处理）
@@ -4030,14 +4090,14 @@ function setupTavernSyncScreen() {
             <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; font-size:13px; cursor:pointer;">
                 <div>
                     <div>推送在线状态到酒馆</div>
-                    <div style="font-size:12px; color:#888; line-height:1.6; margin-top:2px;">在线状态是 AI 写的“[角色更新状态为：…]”，用来改小手机界面上那行状态文字。默认不推。</div>
+                    <div style="font-size:12px; color:#888; line-height:1.6; margin-top:2px;">在线状态是 AI 写的“[角色更新状态为：…]”，用来改小手机界面上那行状态文字。</div>
                 </div>
                 <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" id="ts-cc-online" ${onlineOn ? 'checked' : ''}><span class="kkt-slider"></span></span>
             </label>
             <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; font-size:13px; cursor:pointer;">
                 <div>
                     <div>推送识图结果到酒馆</div>
-                    <div style="font-size:12px; color:#888; line-height:1.6; margin-top:2px;">开启后，为没有描述的图片额外请求识图，优先使用后台自动识图 API，未配置时使用主 API。关闭后只使用已有描述，没有描述时留空。默认关闭。</div>
+                    <div style="font-size:12px; color:#888; line-height:1.6; margin-top:2px;">开启后，为没有描述的图片额外请求识图，优先使用后台自动识图 API，未配置时使用主 API。关闭后只使用已有描述，没有描述时留空。</div>
                 </div>
                 <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" id="ts-cc-image" ${imageOn ? 'checked' : ''}><span class="kkt-slider"></span></span>
             </label>
@@ -4935,8 +4995,11 @@ async function showAutoPushModal(binding, onDone) {
         const box = modal.querySelector(boxId);
         if (!msgs.length) { box.textContent = '这个范围里没有消息'; return; }
         const shown = msgs.slice(-12);
+        const char = db.characters.find(c => c.id === binding.uwuCharId);
+        const helpers = char ? TavernSync._pushHelpers(char, binding) : null;
         const lines = shown.map(m => {
-            const text = m.content.length > 80 ? m.content.slice(0, 80) + '...' : m.content;
+            const content = helpers ? helpers.toLine(helpers.phoneById.get(m.id) || m) : '';
+            const text = content.length > 80 ? content.slice(0, 80) + '...' : content;
             const done = markPushed && pushed.has(m.id) ? '（酒馆里已有）' : '';
             return esc(text) + done;
         });
@@ -4961,6 +5024,22 @@ async function showAutoPushModal(binding, onDone) {
         });
     });
     refreshPreviews();
+
+    // 描述可能由后台请求稍后写入；窗口打开时更新预览，关闭后停止。
+    const imagePreviewVersion = () => JSON.stringify(['auto-raw', 'auto-clean'].map(prefix =>
+        readRange(prefix, true).msgs.slice(-12).map(m => [m.id,
+            (m.parts || []).filter(p => p?.type === 'image').map(p => p.description || '')])));
+    let lastImagePreview = imagePreviewVersion();
+    const watchImagePreview = () => {
+        if (!overlay.isConnected) return;
+        const version = imagePreviewVersion();
+        if (version !== lastImagePreview) {
+            lastImagePreview = version;
+            refreshPreviews();
+        }
+        setTimeout(watchImagePreview, 500);
+    };
+    setTimeout(watchImagePreview, 500);
 
     const confirmBtn = modal.querySelector('#auto-confirm');
     modal.querySelectorAll('.auto-push-tab').forEach(btn => {
@@ -6485,7 +6564,7 @@ async function showBindingEditor(onSave) {
 TavernSync._writeQueue = Promise.resolve();
 // 精简、取回原文、只补摘要也会改同一份聊天记录，一起排队，免得和后台自动同步同时进行时互相覆盖。
 // （同步里面要精简时调的是不排队的 _trimFloors，否则会自己等自己）
-['pushToTavern', 'pushSummaryToTavern', 'pullFromTavern', 'replaceRegeneratedInTavern', 'resetImportRange', 'removePushedFromTavern', 'writeBackFloorEdit', 'updatePushedMessage',
+['pushToTavern', 'pushSummaryToTavern', 'pullFromTavern', 'replaceRegeneratedInTavern', 'resetImportRange', 'removePushedFromTavern', 'writeBackFloorEdit', 'updatePushedMessage', 'syncRecognizedImage',
     'trimFloors', 'restoreRawFloors', 'refreshSummaries', 'removeOtherChatFloors', 'changeChatFile', 'recoverLostPushes',
     // 推送小手机人设/世界书：会改小手机世界书条目上的记录、加绑定，也排进来（里面互相调用的是不排队的版本）
     'pushWorldBooksToTavern', 'createTavernCharacter',
