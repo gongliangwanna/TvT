@@ -88,6 +88,15 @@ function stripOwnPhoneBlock(mes) {
     if (!b) return (mes || '').trim();
     return (mes.slice(0, b.start) + mes.slice(b.end)).trim();
 }
+// 新建楼层后来也可能被手工补过剧情；只有移除手机块后确实为空才删整楼。
+function clearOwnPhoneBlock(stMsg) {
+    const rest = stripOwnPhoneBlock(stMsg.mes);
+    if (stMsg.extra.uwu_created && !rest) return true;
+    stMsg.mes = rest;
+    for (const key of ['from_uwu', 'uwu_created', 'uwu_summary', 'uwu_msg_ids', 'uwu_push_time',
+        'uwu_line_lens', 'uwu_time_flags', 'uwu_image_description_ids']) delete stMsg.extra[key];
+    return false;
+}
 // 把小手机那一段换成新的
 function replaceOwnPhoneBlock(mes, block) {
     const b = lastPhoneBlock(mes);
@@ -1733,14 +1742,11 @@ const TavernSync = {
             floorIds.forEach(id => { if (!surviving.includes(id)) removedIds.add(id); });
             changed = true;
             if (!surviving.length) {
-                if (stMsg.extra.uwu_created) {
+                if (clearOwnPhoneBlock(stMsg)) {
                     // 整楼都是小手机内容 → 整楼删掉
                     all.splice(i, 1); i--; continue;
                 }
                 // 合并在酒馆原有楼层里的 → 只去掉小手机那一段
-                stMsg.mes = stripOwnPhoneBlock(stMsg.mes);
-                delete stMsg.extra.from_uwu; delete stMsg.extra.uwu_msg_ids; delete stMsg.extra.uwu_push_time; delete stMsg.extra.uwu_line_lens;
-                delete stMsg.extra.uwu_image_description_ids;
                 continue;
             }
             this._rebuildPhoneBlock(stMsg, surviving, phoneById, toLine, null, withTimeLine);
@@ -2114,31 +2120,36 @@ const TavernSync = {
     _patchImageDescriptionLines(stMsg, phoneById, toLine, withTimeLine, onlyIds, updatedIds) {
         const ids = stMsg?.extra?.uwu_msg_ids;
         if (!stMsg?.extra?.from_uwu || !Array.isArray(ids) || stMsg.extra.uwu_summary) return false;
-        let stored = this._blockLines(stMsg);
+        let stored = this._blockSegments(stMsg);
         if (!stored && ids.length === 1 && !Array.isArray(stMsg.extra.uwu_line_lens)) {
             const own = lastPhoneBlock(stMsg.mes);
             if (own && own.text.startsWith('<phone_chat>\n') && own.text.endsWith('\n</phone_chat>')) {
-                stored = new Map([[ids[0], own.text.slice('<phone_chat>\n'.length, -'\n</phone_chat>'.length)]]);
+                stored = [own.text.slice('<phone_chat>\n'.length, -'\n</phone_chat>'.length)];
             }
         }
         if (!stored) return false;
         const replacements = new Map();
         const allowed = new Set(stMsg.extra.uwu_image_description_ids || []);
-        for (const id of ids) {
+        for (let i = 0; i < ids.length; i++) {
+            const id = ids[i];
             if (!allowed.has(id)) continue;
             if (onlyIds && !onlyIds.has(id)) continue;
             const m = phoneById.get(id);
             if (m?.role !== 'user' || !Array.isArray(m.parts) || !m.parts.some(p => p?.type === 'image')) continue;
-            const oldLine = stored.get(id) || '';
-            const prefix = oldLine.match(/^(\[时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n)/)?.[1] || '';
+            const oldLine = stored[i] || '';
+            const prefix = this._storedTimePrefix(stMsg, i, oldLine);
             const oldBody = oldLine.slice(prefix.length);
             if (!/^\[[^\]\r\n]*发来了一张图片[：:]\]$/.test(oldBody) && !/^data:image\/[^;,]+;base64,/i.test(oldBody)) continue;
             const newLine = toLine(m);
-            if (newLine && newLine !== oldBody) replacements.set(id, prefix + newLine);
+            if (newLine && newLine !== oldBody) replacements.set(i, prefix + newLine);
         }
         if (!replacements.size) return false;
-        this._rebuildPhoneBlock(stMsg, ids, phoneById, toLine, replacements, withTimeLine);
-        if (updatedIds) for (const id of replacements.keys()) updatedIds.add(id);
+        // 按位置补写，历史重复编号的两份正文可能已被分别修改。
+        const lines = stored.map((line, i) => replacements.has(i) ? replacements.get(i) : line);
+        stMsg.mes = replaceOwnPhoneBlock(stMsg.mes, `<phone_chat>\n${lines.filter(line => line && line.trim()).join('\n')}\n</phone_chat>`);
+        stMsg.extra.uwu_line_lens = this._lineLens(lines);
+        this._rebuildPhoneBlock(stMsg, ids, phoneById, toLine, null, withTimeLine);
+        if (updatedIds) for (const i of replacements.keys()) updatedIds.add(ids[i]);
         return true;
     },
 
@@ -2281,50 +2292,85 @@ const TavernSync = {
             if (callMode === 'context' || callMode === 'both') base += callLines(rec);
             return base;
         };
-        // 和小手机聊天框的时间分隔线用同一规则：首条、跨天、或与上一条相隔超过 10 分钟。
-        // 先按聊天框的可见消息找上一条；酒馆剧情卡片也会影响间隔，但本身不会被推送回来。
-        const previousTime = new Map();
+        // 和小手机聊天框用同一规则。时间条可能落在不推送的系统消息上，
+        // 此时把它留给下一条实际推送的消息，避免时间条在酒馆里消失。
         const archived = new Set((char.nodes || []).filter(n => n.status === 'archived').map(n => n.id));
-        let inArchived = null, lastVisibleTime = 0;
+        const pushable = new Set(allUwuMsgs.filter(m => String(toLine(m) || '').trim()).map(m => m.id));
+        const dividerTime = new Map();
+        const timestampOf = m => {
+            const value = m?.timestamp;
+            if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return NaN;
+            const timestamp = Number(value);
+            const date = new Date(timestamp);
+            return Number.isFinite(timestamp) && Number.isFinite(date.getTime())
+                && date.getFullYear() >= 0 && date.getFullYear() <= 9999 ? timestamp : NaN;
+        };
+        let inArchived = null, lastVisibleTime = 0, pendingDividers = [];
         (char.history || []).forEach(m => {
             if (!m) return;
-            if (m.isNodeBoundary && m.nodeAction === 'start' && archived.has(m.nodeId)) { inArchived = m.nodeId; return; }
-            if (m.isNodeBoundary && m.nodeAction === 'end' && m.nodeId === inArchived) { inArchived = null; return; }
-            if (inArchived || (m.nodeId && archived.has(m.nodeId))) return;
+            if (archived.size) {
+                if (m.nodeId && archived.has(m.nodeId)) return;
+                if (m.isNodeBoundary && m.nodeAction === 'start' && archived.has(m.nodeId)) { inArchived = m.nodeId; return; }
+                if (m.isNodeBoundary && m.nodeAction === 'end' && m.nodeId === inArchived) { inArchived = null; return; }
+                if (inArchived) return;
+            }
             if (!char.momentsSettings?.showActivityNarration && m.isMomentsActivity) return;
-            previousTime.set(m.id, lastVisibleTime);
-            lastVisibleTime = Number(m.timestamp) || 0;
+            const timestamp = timestampOf(m);
+            if (!Number.isFinite(timestamp)) return;
+            const date = new Date(timestamp), previous = new Date(lastVisibleTime);
+            // 导入的酒馆剧情只参与间隔判断；它自己的时间条不再塞回手机消息，避免成批重复导出。
+            if (!m.fromTavern && (!lastVisibleTime || timestamp - lastVisibleTime > 10 * 60 * 1000
+                || date.toDateString() !== previous.toDateString())) pendingDividers.push(timestamp);
+            if (pushable.has(m.id) && pendingDividers.length) {
+                dividerTime.set(m.id, pendingDividers);
+                pendingDividers = [];
+            }
+            lastVisibleTime = timestamp;
         });
         const timeLine = (m, forceFirst = false) => {
-            const timestamp = Number(m && m.timestamp);
-            if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
-            const date = new Date(timestamp);
-            const prev = previousTime.get(m.id) || 0;
-            const prevDate = prev ? new Date(prev) : null;
-            const sameDay = prevDate && date.toDateString() === prevDate.toDateString();
-            if (!forceFirst && prev && timestamp - prev <= 10 * 60 * 1000 && sameDay) return '';
+            const stamps = forceFirst ? [timestampOf(m)] : (dividerTime.get(m?.id) || []);
             const pad2 = n => String(n).padStart(2, '0');
-            return `[时间：${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}]`;
+            return stamps.filter(ts => Number.isFinite(ts) && Number.isFinite(new Date(ts).getTime())).map(ts => {
+                const date = new Date(ts);
+                return `[时间：${String(date.getFullYear()).padStart(4, '0')}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}]`;
+            }).join('\n');
         };
-        const hasTimeLine = line => /^\[时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n/.test(line);
         const withTimeLine = (m, line, forceFirst = false) => {
-            if (!line || hasTimeLine(line)) return line;
+            if (!line) return line;
             const stamp = timeLine(m, forceFirst);
             return stamp ? `${stamp}\n${line}` : line;
         };
+        withTimeLine.marker = timeLine;
+        withTimeLine.timestampOf = timestampOf;
         // 小手机里现在还在的全部消息（不管设置让不让推送）。
         // 判断“酒馆里某条小手机消息是不是被删了”只看它在不在小手机里：
         // 改了推送设置（比如关掉状态栏、通话改成不推送）只影响以后推送，不会把酒馆里以前推过的删掉。
         const phoneById = new Map();
         char.history.forEach(m => { if (m && !m.fromTavern && m.id != null) phoneById.set(m.id, m); });
         const toLineSafe = (m) => { const l = toLine(m); return typeof l === 'string' ? l : ''; };
-        return { allUwuMsgs, toLine: toLineSafe, withTimeLine, hasTimeLine, phoneById };
+        return { allUwuMsgs, toLine: toLineSafe, timeLine, timestampOf, withTimeLine, phoneById };
+    },
+
+    // 读取已保存消息前属于补丁的时间行。旧版未记归属时只兼容原来的一行，绝不吞掉后面的正文。
+    _storedTimePrefix(stMsg, index, line) {
+        const flags = stMsg?.extra?.uwu_time_flags;
+        const flag = Array.isArray(flags) && flags.length === stMsg.extra.uwu_msg_ids?.length ? flags[index] : null;
+        const count = flag === true ? 1 : flag === false ? 0
+            : (Number.isInteger(flag) && flag >= 0 ? flag : 1);
+        let prefix = '', body = line;
+        for (let i = 0; i < count; i++) {
+            const part = body.match(/^\[时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n/);
+            if (!part) return '';
+            prefix += part[0];
+            body = body.slice(part[0].length);
+        }
+        return prefix;
     },
 
     // 酒馆楼层里小手机那一段，每条消息写进去的那一行（按 uwu_msg_ids 的顺序）。
     // 推送时在楼层上记下每一行有多长（extra.uwu_line_lens，写空的记 0），靠它从现有文字里把每一行原样切出来。
     // 返回 Map(编号 → 那一行)；没记过、或者这一段的文字被改过（长度对不上）返回 null
-    _blockLines(stMsg) {
+    _blockSegments(stMsg) {
         const ex = stMsg && stMsg.extra;
         const ids = ex && ex.uwu_msg_ids, lens = ex && ex.uwu_line_lens;
         if (!Array.isArray(ids) || !Array.isArray(lens) || lens.length !== ids.length) return null;
@@ -2336,14 +2382,25 @@ const TavernSync = {
         const filled = lens.filter(n => n > 0);
         const expect = filled.reduce((s, n) => s + n, 0) + Math.max(0, filled.length - 1);
         if (inner.length !== expect) return null;
-        const map = new Map();
-        let pos = 0;
-        ids.forEach((id, i) => {
-            if (!lens[i]) { map.set(id, ''); return; }
-            map.set(id, inner.slice(pos, pos + lens[i]));
-            pos += lens[i] + 1;
-        });
-        return map;
+        const segments = [];
+        let pos = 0, hadFilled = false;
+        for (const len of lens) {
+            if (!len) { segments.push(''); continue; }
+            if (hadFilled) {
+                if (inner[pos] !== '\n') return null;
+                pos++;
+            }
+            if (pos + len > inner.length) return null;
+            segments.push(inner.slice(pos, pos + len));
+            pos += len;
+            hadFilled = true;
+        }
+        return pos === inner.length ? segments : null;
+    },
+    _blockLines(stMsg) {
+        const segments = this._blockSegments(stMsg);
+        if (!segments) return null;
+        return new Map(stMsg.extra.uwu_msg_ids.map((id, i) => [id, segments[i]]));
     },
     // 每一行的长度（和 uwu_msg_ids 一一对应，写空的是 0）
     _lineLens(lines) {
@@ -2354,35 +2411,65 @@ const TavernSync = {
     // 按小手机现有消息重新生成会把它们的文字弄丢；改了推送设置也不该回头改以前推过去的行。
     // 原来那一行找不到的（修好之前推的旧楼层）才按小手机现在的消息生成，小手机里也没有的就只能去掉
     _rebuildPhoneBlock(stMsg, nextIds, phoneById, toLine, replacements, withTimeLine) {
-        const stored = this._blockLines(stMsg);
-        const lines = nextIds.map(id => {
-            if (replacements && replacements.has(id)) return replacements.get(id);
-            if (stored && stored.has(id)) return stored.get(id);
-            const m = phoneById.get(id);
-            const body = m ? toLine(m) : '';
-            return body && withTimeLine ? withTimeLine(m, body) : body;
+        const oldIds = stMsg.extra.uwu_msg_ids || [];
+        const stored = this._blockSegments(stMsg);
+        if (!stored && (Array.isArray(stMsg.extra.uwu_line_lens) || Array.isArray(stMsg.extra.uwu_time_flags))) {
+            throw new Error('酒馆里的小手机内容已被修改，无法准确定位每条消息；请先核对该楼层，再整段清理或重新推送。');
+        }
+        const oldFlags = Array.isArray(stMsg.extra.uwu_time_flags) && stMsg.extra.uwu_time_flags.length === oldIds.length
+            ? stMsg.extra.uwu_time_flags : [];
+        const places = new Map();
+        oldIds.forEach((id, i) => {
+            if (!places.has(id)) places.set(id, []);
+            places.get(id).push(i);
         });
-        // 删除或重新生成后重新判断时间线。比如跨天的第一条被删了，后面那条要接过日期行。
-        // 只剥掉本补丁写的时间行，酒馆里原有的正文和手工内容不动。
+        const flags = [];
+        const sourced = [];
+        const lines = nextIds.map(id => {
+            const oldIndex = places.get(id)?.shift();
+            const fromStored = !!stored && oldIndex !== undefined;
+            sourced.push(fromStored);
+            const oldFlag = fromStored ? oldFlags[oldIndex] : 0;
+            flags.push(oldFlag === true ? 1 : oldFlag === false ? 0
+                : (Number.isInteger(oldFlag) && oldFlag >= 0 ? oldFlag : null));
+            if (replacements && replacements.has(id)) return replacements.get(id);
+            if (fromStored) return stored[oldIndex];
+            const m = phoneById.get(id);
+            return m ? toLine(m) : '';
+        });
+        // 只有逐条标记确认为补丁写入的时间行才能剥掉。用户正文中的同形文字必须原样留下。
+        // 删除或重新生成后重算时间线，跨天首条被删时由下一条接过日期。
         if (withTimeLine) {
             let previous = null;
             lines.forEach((line, i) => {
                 if (!line || !line.trim()) return;
                 const m = phoneById.get(nextIds[i]);
                 if (!m) { previous = null; return; }
-                const body = line.replace(/^\[时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n/, '');
-                const a = previous && Number(previous.timestamp), b = Number(m.timestamp);
-                const gap = !previous || (Number.isFinite(a) && Number.isFinite(b)
-                    && (b - a > 10 * 60 * 1000 || new Date(a).toDateString() !== new Date(b).toDateString()));
-                lines[i] = withTimeLine(m, body, gap);
+                let body = line;
+                for (let n = 0; n < flags[i]; n++) {
+                    const prefix = body.match(/^\[时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n/);
+                    if (!prefix) { flags[i] = 0; previous = m; return; }
+                    body = body.slice(prefix[0].length);
+                }
+                // 旧楼层没有逐条标记，无法区分旧版时间行和用户手写的同形文字；保留它，不猜测归属。
+                if (flags[i] === null && sourced[i] && /^\[时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n/.test(body)) {
+                    previous = m; return;
+                }
+                const a = withTimeLine.timestampOf(previous), b = withTimeLine.timestampOf(m);
+                const gap = !Number.isFinite(a) || b < a || b - a > 10 * 60 * 1000
+                    || new Date(a).toDateString() !== new Date(b).toDateString();
+                const marker = withTimeLine.marker(m) || (gap ? withTimeLine.marker(m, true) : '');
+                lines[i] = marker ? `${marker}\n${body}` : body;
+                flags[i] = marker ? marker.split('\n').length : 0;
                 previous = m;
             });
         }
         const phoneChat = `<phone_chat>\n${lines.filter(l => l && l.trim()).join('\n')}\n</phone_chat>`;
-        if (stMsg.extra.uwu_created) stMsg.mes = phoneChat;
-        else stMsg.mes = replaceOwnPhoneBlock(stMsg.mes || '', phoneChat);
+        stMsg.mes = replaceOwnPhoneBlock(stMsg.mes || '', phoneChat);
         stMsg.extra.uwu_msg_ids = nextIds;
         stMsg.extra.uwu_line_lens = this._lineLens(lines);
+        // 与消息编号逐条对应：0 表示无时间行，正整数表示写入行数，null 表示旧行归属不明。
+        stMsg.extra.uwu_time_flags = flags;
         if (Array.isArray(stMsg.extra.uwu_image_description_ids)) {
             const surviving = new Set(nextIds);
             stMsg.extra.uwu_image_description_ids = stMsg.extra.uwu_image_description_ids.filter(id => surviving.has(id));
@@ -2444,7 +2531,7 @@ const TavernSync = {
                 if (rr.recovered) stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
             } catch (e) { this.reportIssue('核对被酒馆盖掉的推送时出错：' + e.message, 'push'); }
         }
-        const { allUwuMsgs, toLine, withTimeLine, hasTimeLine, phoneById } = this._pushHelpers(char, binding);
+        const { allUwuMsgs, toLine, timeLine, timestampOf, withTimeLine, phoneById } = this._pushHelpers(char, binding);
         // 小手机里还在的消息。只有从小手机里真的删掉了，才去酒馆里删（改推送设置不算删）。
         // binding.keptIds：被“重新生成”换掉的旧回复。它们在小手机里没了，但酒馆里的旧版本要保留，所以当作还在（yuan 版新增）
         // binding.keepInTavern：小手机里删了、但你在推送窗口里选了「留在酒馆」的
@@ -2473,19 +2560,24 @@ const TavernSync = {
             if (!stMsg?.extra?.from_uwu || !Array.isArray(stMsg.extra.uwu_msg_ids)) continue;
             const survivingIds = stMsg.extra.uwu_msg_ids.filter(id => stillHere.has(id));
             if (survivingIds.length === stMsg.extra.uwu_msg_ids.length) continue; // 无变化
+            if (survivingIds.length && !stMsg.extra.uwu_summary && !this._blockSegments(stMsg)
+                && (Array.isArray(stMsg.extra.uwu_line_lens) || Array.isArray(stMsg.extra.uwu_time_flags))) {
+                if (!lastPhoneBlock(stMsg.mes)) {
+                    // 酒馆重新抽卡已经盖掉整个手机块，只清理失效标记，保留新剧情。
+                    clearOwnPhoneBlock(stMsg);
+                    hadDeletions = true;
+                } else {
+                    this.reportIssue('酒馆里的小手机内容已被修改，暂未自动删除其中的消息，以免覆盖手改正文；请核对该楼层后再清理。', 'push-content');
+                }
+                continue;
+            }
             hadDeletions = true;
             if (survivingIds.length === 0) {
-                if (stMsg.extra.uwu_created) {
+                if (clearOwnPhoneBlock(stMsg)) {
                     // 整楼都是小手机新开的，可以整楼删掉
                     all.splice(i, 1); i--; continue;
                 }
                 // 合并到剧情楼里的：只去掉小手机那一段，保留原来的剧情
-                stMsg.mes = stripOwnPhoneBlock(stMsg.mes);
-                delete stMsg.extra.from_uwu;
-                delete stMsg.extra.uwu_msg_ids;
-                delete stMsg.extra.uwu_push_time;
-                delete stMsg.extra.uwu_line_lens;
-                delete stMsg.extra.uwu_image_description_ids;
                 continue;
             }
             if (stMsg.extra.uwu_summary) {
@@ -2509,19 +2601,55 @@ const TavernSync = {
         let hadTimestampUpdates = false;
         for (const stMsg of all) {
             const ids = stMsg?.extra?.uwu_msg_ids;
-            if (!Array.isArray(ids) || stMsg.extra.uwu_summary) continue;
-            const stored = this._blockLines(stMsg);
+            if (!stMsg?.extra?.from_uwu || !Array.isArray(ids) || stMsg.extra.uwu_summary
+                || new Set(ids).size !== ids.length) continue;
+            const stored = this._blockSegments(stMsg);
             if (!stored) continue;
-            const first = ids.findIndex(id => !!stored.get(id));
+            const first = stored.findIndex(Boolean);
+            const oldFlags = Array.isArray(stMsg.extra.uwu_time_flags) && stMsg.extra.uwu_time_flags.length === ids.length
+                ? stMsg.extra.uwu_time_flags : Array(ids.length).fill(null);
+            // 已明确归属的时间条按当前时间重算，正文仍从酒馆原样取回。
+            if (oldFlags.every(flag => typeof flag === 'boolean' || (Number.isInteger(flag) && flag >= 0))) {
+                const draft = { ...stMsg, extra: { ...stMsg.extra } };
+                this._rebuildPhoneBlock(draft, ids, phoneById, toLine, null, withTimeLine);
+                const block = lastPhoneBlock(draft.mes);
+                const nextText = block ? replaceOwnPhoneBlock(stMsg.mes, block.text) : stMsg.mes;
+                if (nextText !== stMsg.mes || JSON.stringify(oldFlags) !== JSON.stringify(draft.extra.uwu_time_flags)) {
+                    stMsg.mes = nextText;
+                    stMsg.extra = draft.extra;
+                    hadTimestampUpdates = true;
+                }
+                continue;
+            }
+            const newFlags = oldFlags.slice();
             const replacements = new Map();
+            let safe = true;
             ids.forEach((id, i) => {
-                const m = phoneById.get(id), line = stored.get(id);
-                if (!m || !line || hasTimeLine(line)) return;
-                const stamped = withTimeLine(m, line, i === first);
-                if (stamped !== line) replacements.set(id, stamped);
+                const m = phoneById.get(id), line = stored[i];
+                if (!m || !line || oldFlags[i]) return;
+                const body = toLine(m);
+                if (line === body) {
+                    newFlags[i] = 0;
+                    const marker = timeLine(m) || (i === first ? timeLine(m, true) : '');
+                    if (marker) { replacements.set(id, `${marker}\n${line}`); newFlags[i] = marker.split('\n').length; }
+                    return;
+                }
+                const prefix = line.match(/^(\[时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n)/)?.[1] || '';
+                // 升级上次版本已经写过、但还没有逐条归属记录的时间行。
+                if (prefix && line.slice(prefix.length) === body && prefix.trim() === timeLine(m, i === first)) {
+                    newFlags[i] = 1;
+                } else {
+                    safe = false; // 推送规则已变或酒馆里手工改过字：整楼不自动改。
+                }
             });
+            if (!safe) continue;
+            if (replacements.size || newFlags.some((flag, i) => flag !== oldFlags[i])) {
+                stMsg.extra.uwu_time_flags = newFlags;
+            }
             if (replacements.size) {
                 this._rebuildPhoneBlock(stMsg, ids, phoneById, toLine, replacements, withTimeLine);
+                hadTimestampUpdates = true;
+            } else if (newFlags.some((flag, i) => flag !== oldFlags[i])) {
                 hadTimestampUpdates = true;
             }
         }
@@ -2595,10 +2723,28 @@ const TavernSync = {
             // 手动重推可能含同一个编号。放进同一段会使逐条长度和识图资格无法区分两份副本。
             const newIds = new Set(newMsgs.map(m => m.id));
             const overlaps = lastMsg?.extra?.uwu_msg_ids?.some(id => newIds.has(id));
-            const appendToLast = !overlaps && (lastIsOwnFloor || (pushMode === 'append' && lastMsg));
+            const damagedOwnBlock = lastMsg?.extra?.from_uwu && !this._blockSegments(lastMsg);
+            const appendToLast = !overlaps && !lastMsg?.extra?.uwu_summary && !damagedOwnBlock
+                && (lastIsOwnFloor || (pushMode === 'append' && lastMsg));
             const own = appendToLast && lastMsg.extra?.from_uwu ? lastPhoneBlock(lastMsg.mes) : null;
-            const firstFilled = rawLines.findIndex(l => l && l.trim());
-            rawLines = rawLines.map((line, i) => line ? withTimeLine(newMsgs[i], line, i === firstFilled && !own) : line);
+            const previousSegments = own ? this._blockSegments(lastMsg) : null;
+            let previousWritten = null;
+            if (previousSegments) {
+                for (let i = previousSegments.length - 1; i >= 0; i--) {
+                    if (previousSegments[i]) { previousWritten = phoneById.get(lastMsg.extra.uwu_msg_ids[i]); break; }
+                }
+            }
+            const timeFlags = [];
+            rawLines = rawLines.map((line, i) => {
+                if (!line || !line.trim()) { timeFlags.push(0); return ''; }
+                const m = newMsgs[i], before = timestampOf(previousWritten), now = timestampOf(m);
+                const needsAnchor = !Number.isFinite(before) || now < before || now - before > 10 * 60 * 1000
+                    || new Date(now).toDateString() !== new Date(before).toDateString();
+                const marker = timeLine(m) || (needsAnchor ? timeLine(m, true) : '');
+                timeFlags.push(marker ? marker.split('\n').length : 0);
+                previousWritten = m;
+                return marker ? `${marker}\n${line}` : line;
+            });
             const lines = rawLines.filter(l => l && l.trim());
             const mergedContent = `<phone_chat>\n${lines.join('\n')}\n</phone_chat>`;
             if (appendToLast) {
@@ -2609,6 +2755,9 @@ const TavernSync = {
                 // 接着写之前先看原来每一行的长度记录还对不对得上，对得上才接着记（对不上就不记，以后重写这一楼时按旧办法）
                 const hadIds = !!(target.extra && Array.isArray(target.extra.uwu_msg_ids) && target.extra.uwu_msg_ids.length);
                 const oldLens = own ? (this._blockLines(target) ? target.extra.uwu_line_lens : null) : (hadIds ? null : []);
+                const oldCount = target.extra?.uwu_msg_ids?.length || 0;
+                const oldTimeFlags = Array.isArray(target.extra?.uwu_time_flags) && target.extra.uwu_time_flags.length === oldCount
+                    ? target.extra.uwu_time_flags : Array(oldCount).fill(null);
                 if (own) {
                     const inner = own.text.slice(0, own.text.length - '</phone_chat>'.length);
                     target.mes = existingContent.slice(0, own.start) + inner + lines.join('\n') + '\n</phone_chat>' + existingContent.slice(own.end);
@@ -2625,6 +2774,7 @@ const TavernSync = {
                 target.extra.uwu_msg_ids = [...(target.extra.uwu_msg_ids || []), ...newMsgs.map(m => m.id)];
                 if (oldLens) target.extra.uwu_line_lens = [...oldLens, ...this._lineLens(rawLines)];
                 else delete target.extra.uwu_line_lens;
+                target.extra.uwu_time_flags = [...oldTimeFlags, ...timeFlags];
                 target.extra.uwu_push_time = Date.now();
             } else {
                 // 新楼层模式（默认）：推送为 user 侧消息，方便用正则只剥离 AI 输出的 phone_chat
@@ -2634,7 +2784,7 @@ const TavernSync = {
                     is_user: true, is_system: false,
                     send_date: new Date().toISOString(),
                     mes: mergedContent,
-                    extra: { from_uwu: true, uwu_created: true, uwu_push_time: Date.now(), uwu_msg_ids: newMsgs.map(m => m.id), uwu_image_description_ids: imageDescriptionIds, uwu_line_lens: this._lineLens(rawLines), st_char_name: stCharName },
+                    extra: { from_uwu: true, uwu_created: true, uwu_push_time: Date.now(), uwu_msg_ids: newMsgs.map(m => m.id), uwu_image_description_ids: imageDescriptionIds, uwu_line_lens: this._lineLens(rawLines), uwu_time_flags: timeFlags, st_char_name: stCharName },
                 });
             }
         }
@@ -2692,21 +2842,36 @@ const TavernSync = {
             const ids = stMsg && stMsg.extra && stMsg.extra.uwu_msg_ids;
             if (!Array.isArray(ids) || !ids.includes(msg.id)) continue;
             if (stMsg.extra.uwu_summary) continue;   // 小总结那一楼是总结文字，没有原来那一行
-            const stored = this._blockLines(stMsg);
-            const at = typeof stMsg.mes === 'string' ? stMsg.mes.indexOf(oldLine) : -1;
-            if (at < 0) continue;
-            // 用切开再拼的办法换，不用 replace：总结里带 $ 符号时 replace 会把它当成特殊指令
-            stMsg.mes = stMsg.mes.slice(0, at) + newLine + stMsg.mes.slice(at + oldLine.length);
-            // 每一行的长度记录跟着改（原来记录就对不上的，改完也对不上，不用管）
-            if (stored && stored.get(msg.id) === oldLine) {
-                stMsg.extra.uwu_line_lens = stMsg.extra.uwu_line_lens.slice();
-                stMsg.extra.uwu_line_lens[ids.indexOf(msg.id)] = newLine.length;
-            } else if (stored && stored.get(msg.id)?.endsWith('\n' + oldLine)) {
-                stMsg.extra.uwu_line_lens = stMsg.extra.uwu_line_lens.slice();
-                stMsg.extra.uwu_line_lens[ids.indexOf(msg.id)] += newLine.length - oldLine.length;
+            const own = lastPhoneBlock(stMsg.mes);
+            if (!own || !own.text.startsWith('<phone_chat>\n') || !own.text.endsWith('\n</phone_chat>')) continue;
+            const segments = this._blockSegments(stMsg);
+            // 没有长度记录的旧单条楼层可以安全按整段核对；多条且拆不准时不冒险改别人的同一句。
+            const parts = segments || (ids.length === 1
+                ? [own.text.slice('<phone_chat>\n'.length, -'\n</phone_chat>'.length)] : null);
+            if (!parts) continue;
+            let pos = own.start + '<phone_chat>\n'.length, seen = false;
+            for (let i = 0; i < ids.length; i++) {
+                const part = parts[i];
+                if (!part) continue;
+                if (seen) pos++;
+                seen = true;
+                if (ids[i] === msg.id) {
+                    const prefix = this._storedTimePrefix(stMsg, i, part);
+                    const head = part === oldLine ? 0 : (prefix && part.slice(prefix.length) === oldLine ? prefix.length : -1);
+                    if (head >= 0) {
+                        const at = pos + head;
+                        // 只替换这个编号对应的正文，保留它前面的时间行和同楼其他相同文字。
+                        stMsg.mes = stMsg.mes.slice(0, at) + newLine + stMsg.mes.slice(at + oldLine.length);
+                        if (segments) {
+                            stMsg.extra.uwu_line_lens = stMsg.extra.uwu_line_lens.slice();
+                            stMsg.extra.uwu_line_lens[i] += newLine.length - oldLine.length;
+                        }
+                        updated = true;
+                        pos += newLine.length - oldLine.length;
+                    }
+                }
+                pos += part.length;
             }
-            updated = true;
-            break;
         }
         if (updated) {
             await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: all });
@@ -2731,7 +2896,8 @@ const TavernSync = {
         let changed = false;
         let intoSummary = false;   // 新回复是不是换进了小总结楼（那样只算“被小总结推过”，不算推过原文）
         let inserted = false;   // 新回复只放进第一处出现旧回复的地方
-        for (const stMsg of all) {
+        for (let i = 0; i < all.length; i++) {
+            const stMsg = all[i];
             const ids = stMsg && stMsg.extra && stMsg.extra.from_uwu && Array.isArray(stMsg.extra.uwu_msg_ids) ? stMsg.extra.uwu_msg_ids : null;
             if (!ids || !ids.some(id => oldSet.has(id))) continue;
             const nextIds = [];
@@ -2744,6 +2910,10 @@ const TavernSync = {
                 // 旧回复已经被浓缩进一段小总结：总结文字不动，只把“覆盖了哪几条”换成新回复
                 stMsg.extra.uwu_msg_ids = nextIds;
                 if (hereNew) intoSummary = true;
+            } else if (!nextIds.length) {
+                if (clearOwnPhoneBlock(stMsg)) {
+                    all.splice(i--, 1);
+                }
             } else {
                 rebuild(stMsg, nextIds);
             }
