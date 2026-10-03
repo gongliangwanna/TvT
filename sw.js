@@ -1,7 +1,7 @@
 // Service Worker - 应用壳离线恢复与系统推送通知
 try {
     // A new import URL also reaches users whose older page still uses the default HTTP cache policy.
-    importScripts('./sw-assets.js?ovo-manifest=file-update-1');
+    importScripts('./sw-assets.js?ovo-manifest=tavern-21d8a0ba329f8b3c');
 } catch (error) {
     console.warn('Service worker asset manifest unavailable:', error);
 }

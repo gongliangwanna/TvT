@@ -10,6 +10,35 @@
 // 所以仓库叫什么名字、装在酒馆的哪个文件夹都不用改这里。
 const PHONE_URL = new URL('../index.html', import.meta.url).href;
 
+// 酒馆页面不受小手机的旧离线缓存控制，可以在打开前先把缓存版本更新完。
+let phoneUpdateTask = null;
+function preparePhoneUpdate() {
+    if (phoneUpdateTask) return phoneUpdateTask;
+    phoneUpdateTask = (async () => {
+        if (!globalThis.isSecureContext || !globalThis.navigator?.serviceWorker) return;
+        const base = new URL('./', PHONE_URL).href;
+        const registration = await navigator.serviceWorker.register(new URL('sw.js', base).href,
+            { scope: base, updateViaCache: 'none' });
+        let candidate = registration.installing;
+        const found = () => { candidate = registration.installing; };
+        registration.addEventListener('updatefound', found);
+        try {
+            await registration.update();
+            const deadline = Date.now() + 180000;
+            while (true) {
+                if (candidate?.state === 'redundant') throw new Error('新版本下载或校验失败，请稍后重试');
+                if (!registration.installing && !registration.waiting && registration.active
+                    && registration.active.state === 'activated') break;
+                if (Date.now() >= deadline) throw new Error('更新检查超时，请检查网络后重试');
+                await new Promise(resolve => setTimeout(resolve, 250));
+            }
+        } finally {
+            registration.removeEventListener('updatefound', found);
+        }
+    })().finally(() => { phoneUpdateTask = null; });
+    return phoneUpdateTask;
+}
+
 function addPhoneMenuButton() {
     const menu = document.getElementById('extensionsMenu');
     if (!menu) {
@@ -27,9 +56,25 @@ function addPhoneMenuButton() {
             <span>小手机</span>
         </div>
     `;
-    container.addEventListener('click', () => {
+    container.addEventListener('click', async () => {
         // 让事件冒泡（酒馆会自动收起 wand menu）
-        window.open(PHONE_URL, '_blank', 'noopener');
+        // 先同步开一个窗口，避免等待下载以后被浏览器当成弹窗拦截。
+        const phone = window.open('about:blank', '_blank');
+        if (!phone) return;
+        phone.opener = null;
+        phone.document.title = '小手机';
+        phone.document.body.textContent = '正在检查小手机更新，首次下载新版本可能需要一点时间…';
+        try {
+            await preparePhoneUpdate();
+            const url = new URL(PHONE_URL);
+            url.searchParams.set('tavern-open', Date.now().toString());
+            if (!phone.closed) phone.location.replace(url.href);
+        } catch (error) {
+            console.warn('[小手机] 更新检查失败:', error);
+            if (!phone.closed) {
+                phone.document.body.textContent = `小手机更新检查失败：${error.message}。请关闭此页，稍后从酒馆重新打开。`;
+            }
+        }
     });
     menu.appendChild(container);
     console.log('[小手机] 入口按钮已注入:', PHONE_URL);
