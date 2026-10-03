@@ -359,6 +359,16 @@ function openProfileCard(charId) {
     }
     const memoryEl = document.getElementById('pc-stat-memory');
     if (memoryEl) memoryEl.textContent = tokenCount;
+    if (window.ChatTokenStats) {
+        try {
+            const snapshot = getChatTokenBreakdown(char.id, 'private');
+            if (snapshot.encoding && !snapshot.textExact) ChatTokenStats.refine(snapshot).then(() => {
+                if (document.getElementById('pc-message-btn')?.dataset.charId !== char.id) return;
+                const fresh = getChatTokenBreakdown(char.id, 'private');
+                if (fresh.fingerprint === snapshot.fingerprint && memoryEl) memoryEl.textContent = fresh.total;
+            }).catch(() => {});
+        } catch (_) { if (memoryEl) memoryEl.textContent = '待检测'; }
+    }
 
     let lastChat = '-';
     if (char.history && char.history.length > 0) {
@@ -389,8 +399,7 @@ function openProfileCard(charId) {
 }
 
 // 打开 Token 分布弹窗（饼图 + 可点击详情 + 汇总）
-function openTokenDistributionModal(charId) {
-    const data = typeof getChatTokenBreakdown === 'function' ? getChatTokenBreakdown(charId, 'private') : null;
+function renderTokenDistributionModal(charId, data) {
     const modal = document.getElementById('token-distribution-modal');
     const chartContainer = document.getElementById('token-chart-container');
     const totalEl = document.getElementById('token-distribution-total');
@@ -405,7 +414,7 @@ function openTokenDistributionModal(charId) {
     const actualUsageEl = document.getElementById('token-actual-usage');
     if (actualUsageEl) {
         actualUsageEl.hidden = !data?.actualUsage;
-        if (data?.actualUsage) actualUsageEl.textContent = `上次实际输入 ${data.actualUsage.input} · 输出 ${data.actualUsage.output} Token`;
+        if (data?.actualUsage) actualUsageEl.textContent = `上次实际输入 ${data.actualUsage.input ?? '未返回'} · 输出 ${data.actualUsage.output ?? '未返回'} Token（${new Date(data.actualUsage.at).toLocaleTimeString()}${data.actualUsage.model ? ' · ' + data.actualUsage.model : ''}）`;
     }
 
     if (!data || data.total === 0) {
@@ -433,6 +442,7 @@ function openTokenDistributionModal(charId) {
         window.__tokenDistChart = null;
         modal.classList.add('visible');
         setTimeout(function () {
+            if (modal._tokenData && modal._tokenData.fingerprint !== data.fingerprint) return;
             if (!chartContainer || !modal.classList.contains('visible')) return;
             window.__tokenDistChart = echarts.init(chartContainer);
             window.__tokenDistChart.setOption({

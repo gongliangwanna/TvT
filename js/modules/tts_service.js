@@ -32,14 +32,18 @@ const TTSService = {
         // Minimax
         groupId: '',
         apiKey: '',
-        domain: 'api.minimaxi.chat',
+        domain: 'api.minimax.cn',
         model: 'speech-2.8-hd',
         volcAppId: '',
         volcAccessToken: '',
         volcResourceId: 'seed-tts-2.0',
         volcVoiceType: '',
         volcUrl: 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
-        volcFormat: 'mp3'
+        volcFormat: 'mp3',
+        elevenApiKey: '',
+        elevenModel: 'eleven_multilingual_v2',
+        elevenVoiceId: '',
+        elevenUrl: 'https://api.elevenlabs.io'
     },
 
     // 用户 TTS 配置（独立存储）
@@ -49,18 +53,28 @@ const TTSService = {
         // Minimax
         groupId: '',
         apiKey: '',
-        domain: 'api.minimaxi.chat',
+        domain: 'api.minimax.cn',
         model: 'speech-2.8-hd',
         volcAppId: '',
         volcAccessToken: '',
         volcResourceId: 'seed-tts-2.0',
         volcVoiceType: '',
         volcUrl: 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
-        volcFormat: 'mp3'
+        volcFormat: 'mp3',
+        elevenApiKey: '',
+        elevenModel: 'eleven_multilingual_v2',
+        elevenVoiceId: '',
+        elevenUrl: 'https://api.elevenlabs.io'
     },
 
     // 音频缓存 (文本+音色ID作为key，用户缓存加 user_ 前缀)
     audioCache: new Map(),
+    pendingSynthesis: new Map(),
+    requestControllers: new Set(),
+    playbackGeneration: 0,
+    queueGeneration: 0,
+    configGeneration: 0,
+    finishPlayback: null,
     
     // 当前播放的音频对象
     currentAudio: null,
@@ -149,8 +163,10 @@ const TTSService = {
     // 保存角色 TTS 配置
     saveConfig: function(newConfig) {
         try {
-            this.config = { ...this.config, ...newConfig };
-            localStorage.setItem('minimax_tts_config', JSON.stringify(this.config));
+            const next = { ...this.config, ...newConfig };
+            localStorage.setItem('minimax_tts_config', JSON.stringify(next));
+            if (JSON.stringify(this.config) !== JSON.stringify(next)) this.configGeneration++;
+            this.config = next;
             console.log('[TTS] 配置已保存', { provider: this.config.provider, enabled: this.config.enabled });
             return true;
         } catch (err) {
@@ -162,8 +178,10 @@ const TTSService = {
     // 保存用户 TTS 配置
     saveUserConfig: function(newConfig) {
         try {
-            this.userConfig = { ...this.userConfig, ...newConfig };
-            localStorage.setItem('minimax_user_tts_config', JSON.stringify(this.userConfig));
+            const next = { ...this.userConfig, ...newConfig };
+            localStorage.setItem('minimax_user_tts_config', JSON.stringify(next));
+            if (JSON.stringify(this.userConfig) !== JSON.stringify(next)) this.configGeneration++;
+            this.userConfig = next;
             console.log('[TTS] 用户配置已保存', { provider: this.userConfig.provider, enabled: this.userConfig.enabled });
             return true;
         } catch (err) {
@@ -174,24 +192,37 @@ const TTSService = {
 
     // 检查角色 TTS 配置是否完整
     isConfigured: function() {
-        if (!this.config.enabled) return false;
-        if (this.config.provider === 'volcengine') return !!(this.config.volcAppId && this.config.volcAccessToken && this.config.volcResourceId && this.config.volcVoiceType && this.config.volcUrl);
-        return !!(this.config.groupId && this.config.apiKey);
+        return this.isConfigComplete(this.config);
     },
 
     // 检查用户 TTS 配置是否完整（仅当启用时要求配置）
     isUserConfigured: function() {
-        if (!this.userConfig.enabled) return false;
-        if (this.userConfig.provider === 'volcengine') return !!(this.userConfig.volcAppId && this.userConfig.volcAccessToken && this.userConfig.volcResourceId && this.userConfig.volcVoiceType && this.userConfig.volcUrl);
-        return !!(this.userConfig.groupId && this.userConfig.apiKey);
+        return this.isConfigComplete(this.userConfig);
+    },
+
+    isConfigComplete: function(cfg) {
+        if (!cfg?.enabled) return false;
+        const provider = cfg.provider || 'minimax';
+        if (provider === 'volcengine') return !!(cfg.volcAppId && cfg.volcAccessToken && cfg.volcResourceId && cfg.volcVoiceType && cfg.volcUrl);
+        if (provider === 'elevenlabs') return !!(cfg.elevenApiKey && cfg.elevenModel);
+        if (provider === 'minimax') return !!cfg.apiKey;
+        return false;
+    },
+
+    resolveVoiceId: function(voiceId, cfg) {
+        if (cfg.provider !== 'elevenlabs') return voiceId;
+        const isMinimaxVoice = globalThis.VoiceSelector?.voices?.some(item => item.id === voiceId);
+        return (voiceId && !isMinimaxVoice ? voiceId : cfg.elevenVoiceId) || '';
     },
 
     // 合成语音。options.forUser === true 时使用用户 TTS 配置
     synthesize: async function(text, voiceId, language = 'auto', options = {}) {
         const forUser = !!options.forUser;
-        const cfg = forUser ? this.userConfig : this.config;
+        const cfg = options.config || (forUser ? this.userConfig : this.config);
 
-        if (forUser) {
+        if (options.config) {
+            if (!this.isConfigComplete(cfg)) throw new Error('TTS 配置不完整');
+        } else if (forUser) {
             if (!this.isUserConfigured()) {
                 throw new Error('用户 TTS 未配置或未启用');
             }
@@ -202,31 +233,55 @@ const TTSService = {
         }
 
         // 清理文本
-        const cleanText = this.cleanText(text);
+        const cleanText = this.cleanText(text, cfg);
         if (!cleanText) {
             throw new Error('文本为空');
         }
 
-        const speed = Math.min(2, Math.max(0.5, Number(options.speed) || 1));
         const provider = cfg.provider || 'minimax';
+        const speed = provider === 'elevenlabs'
+            ? Math.min(1.2, Math.max(0.7, Number(options.speed) || 1))
+            : Math.min(2, Math.max(0.5, Number(options.speed) || 1));
+        voiceId = this.resolveVoiceId(voiceId, cfg);
+        if (provider === 'elevenlabs' && !voiceId) throw new Error('请先选择 ElevenLabs 音色或填写 Voice ID');
 
         // 检查缓存（提供商也作为 key 的一部分）
-        const cacheKey = (forUser ? 'user_' : '') + `${provider}_${cleanText}_${voiceId}_${language}_${speed}`;
-        if (this.audioCache.has(cacheKey)) {
-            console.log('[TTS] 使用缓存:', cacheKey);
+        const cacheKey = JSON.stringify([forUser, this.configGeneration, provider, cleanText, voiceId, language, speed,
+            cfg.model, cfg.domain, cfg.groupId, cfg.volcUrl, cfg.volcResourceId, cfg.volcVoiceType, cfg.volcFormat,
+            cfg.elevenModel, cfg.elevenUrl]);
+        if (!options.config && this.audioCache.has(cacheKey)) {
+            console.log('[TTS] 使用音频缓存');
             return this.audioCache.get(cacheKey);
         }
 
-        console.log('[TTS] 开始合成:', { forUser, provider, text: cleanText, voiceId, language });
+        if (!options.config && this.pendingSynthesis.has(cacheKey)) return this.pendingSynthesis.get(cacheKey);
+        const task = this._synthesizeAudio(cleanText, voiceId, language, speed, cfg, cacheKey, !!options.config);
+        if (!options.config) this.pendingSynthesis.set(cacheKey, task);
+        try {
+            return await task;
+        } finally {
+            if (this.pendingSynthesis.get(cacheKey) === task) this.pendingSynthesis.delete(cacheKey);
+        }
+    },
+
+    _synthesizeAudio: async function(cleanText, voiceId, language, speed, cfg, cacheKey, uncached) {
+        const provider = cfg.provider || 'minimax';
+        const controller = new AbortController();
+        this.requestControllers.add(controller);
+        let timedOut = false;
+        const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 60000);
+        const generation = this.configGeneration;
 
         try {
             let audioUrl;
             
             if (provider === 'volcengine') {
-                audioUrl = await this._synthesizeVolcengine(cleanText, voiceId, language, speed, cfg);
-            } else {
+                audioUrl = await this._synthesizeVolcengine(cleanText, voiceId, language, speed, cfg, controller.signal);
+            } else if (provider === 'elevenlabs') {
+                audioUrl = await this._synthesizeElevenLabs(cleanText, voiceId, language, speed, cfg, controller.signal);
+            } else if (provider === 'minimax') {
                 // 默认使用 Minimax TTS 服务
-                const url = `https://${cfg.domain}/v1/t2a_v2?GroupId=${encodeURIComponent(cfg.groupId)}`;
+                const url = `https://${cfg.domain || 'api.minimax.cn'}/v1/t2a_v2${cfg.groupId ? `?GroupId=${encodeURIComponent(cfg.groupId)}` : ''}`;
                 const requestBody = {
                     model: cfg.model,
                     text: cleanText,
@@ -256,7 +311,8 @@ const TTSService = {
                         'Authorization': `Bearer ${cfg.apiKey}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify(requestBody),
+                    signal: controller.signal
                 });
 
                 if (!response.ok) {
@@ -280,10 +336,17 @@ const TTSService = {
                 const audioData = result.data.audio;
                 const blob = this.hexToBlob(audioData, 'audio/mpeg');
                 audioUrl = URL.createObjectURL(blob);
+            } else {
+                throw new Error('不支持的 TTS 提供商');
+            }
+
+            if (controller.signal.aborted) {
+                URL.revokeObjectURL(audioUrl);
+                throw new DOMException('语音合成已取消', 'AbortError');
             }
 
             // 存入缓存
-            this.audioCache.set(cacheKey, audioUrl);
+            if (!uncached && generation === this.configGeneration) this.audioCache.set(cacheKey, audioUrl);
             
             // 限制缓存大小
             if (this.audioCache.size > 100) {
@@ -297,12 +360,77 @@ const TTSService = {
             return audioUrl;
 
         } catch (err) {
-            console.error('[TTS] 合成失败:', err);
+            if (timedOut) throw new Error('语音合成超时，请稍后重试');
+            if (err.name !== 'AbortError') console.error('[TTS] 合成失败:', err);
             throw err;
+        } finally {
+            clearTimeout(timeout);
+            this.requestControllers.delete(controller);
         }
     },
 
-    _synthesizeVolcengine: async function(text, voiceId, language, speed, cfg) {
+    _elevenBaseUrl: function(cfg) {
+        const url = new URL(cfg.elevenUrl || 'https://api.elevenlabs.io');
+        if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+            throw new Error('ElevenLabs 接口地址无效');
+        }
+        return url.href.replace(/\/+$/, '').replace(/\/v[12]$/, '');
+    },
+
+    _elevenError: async function(response) {
+        let detail = '';
+        try {
+            const body = await response.json();
+            detail = typeof body.detail === 'string' ? body.detail : body.detail?.message || body.message || '';
+        } catch (_) {}
+        const message = response.status === 401 ? 'ElevenLabs API Key 无效或已失效'
+            : response.status === 403 ? 'ElevenLabs 权限不足，请检查账号、音色权限和 API Key'
+            : response.status === 429 ? 'ElevenLabs 请求或额度受限，请稍后重试或检查余额'
+            : response.status === 404 ? 'ElevenLabs 音色或接口不存在，请检查 Voice ID 和接口地址'
+            : `ElevenLabs 请求失败 (${response.status})`;
+        return new Error(`${message}${detail ? `：${detail.slice(0, 180)}` : ''}`);
+    },
+
+    _synthesizeElevenLabs: async function(text, voiceId, language, speed, cfg, signal) {
+        const body = { text, model_id: cfg.elevenModel || 'eleven_multilingual_v2', voice_settings: { speed } };
+        if (language && language !== 'auto' && body.model_id !== 'eleven_multilingual_v2') body.language_code = language;
+        const response = await fetch(`${this._elevenBaseUrl(cfg)}/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, {
+            method: 'POST', headers: { 'xi-api-key': cfg.elevenApiKey, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+            body: JSON.stringify(body), signal
+        });
+        if (!response.ok) throw await this._elevenError(response);
+        const data = await response.blob();
+        if (!data.size || /json|text\//i.test(data.type)) throw new Error('ElevenLabs 未返回有效音频');
+        return URL.createObjectURL(new Blob([data], { type: 'audio/mpeg' }));
+    },
+
+    listElevenLabsVoices: async function(cfg, signal) {
+        if (!cfg.elevenApiKey) throw new Error('请先填写 ElevenLabs API Key');
+        const voices = [];
+        let next = '';
+        const seen = new Set();
+        const pages = new Set();
+        do {
+            if (pages.has(next)) break;
+            pages.add(next);
+            const query = new URLSearchParams({ page_size: '100' });
+            if (next) query.set('next_page_token', next);
+            const response = await fetch(`${this._elevenBaseUrl(cfg)}/v2/voices?${query}`, {
+                headers: { 'xi-api-key': cfg.elevenApiKey }, signal
+            });
+            if (!response.ok) throw await this._elevenError(response);
+            const data = await response.json();
+            for (const voice of data.voices || []) {
+                if (voice.voice_id && !seen.has(voice.voice_id)) { seen.add(voice.voice_id); voices.push(voice); }
+            }
+            const token = data.has_more ? data.next_page_token : '';
+            if (token === next) break;
+            next = token || '';
+        } while (next);
+        return voices;
+    },
+
+    _synthesizeVolcengine: async function(text, voiceId, language, speed, cfg, signal) {
         const requestId = (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function')
             ? globalThis.crypto.randomUUID()
             : `ovo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -332,7 +460,7 @@ const TTSService = {
             'X-Api-Resource-Id': cfg.volcResourceId,
             'X-Api-Request-Id': requestId
         };
-        const response = await fetch(cfg.volcUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+        const response = await fetch(cfg.volcUrl, { method: 'POST', headers, body: JSON.stringify(body), signal });
         if (!response.ok) {
             const detail = (await response.text()).slice(0, 240);
             const logId = response.headers.get('x-tt-logid');
@@ -384,34 +512,34 @@ const TTSService = {
         return new Promise((resolve, reject) => {
             try {
                 // 停止当前播放
-                if (this.currentAudio) {
-                    this.currentAudio.pause();
-                    this.currentAudio = null;
-                }
+                if (this.finishPlayback) this.finishPlayback();
                 this.currentPlayKey = playKey || null;
                 this.isPaused = false;
 
                 const audio = new Audio(audioUrl);
                 this.currentAudio = audio;
 
-                audio.onended = () => {
+                let settled = false;
+                const finish = (error) => {
+                    if (settled) return;
+                    settled = true;
+                    audio.pause();
+                    audio.onended = null;
+                    audio.onerror = null;
+                    this.finishPlayback = null;
                     this.currentAudio = null;
                     this.currentPlayKey = null;
                     this.isPaused = false;
                     this._dispatchState();
-                    resolve();
+                    if (![...this.audioCache.values()].includes(audioUrl)) URL.revokeObjectURL(audioUrl);
+                    if (error) reject(error); else resolve();
                 };
-
-                audio.onerror = () => {
-                    this.currentAudio = null;
-                    this.currentPlayKey = null;
-                    this.isPaused = false;
-                    this._dispatchState();
-                    reject(new Error('音频播放失败'));
-                };
+                this.finishPlayback = finish;
+                audio.onended = () => finish();
+                audio.onerror = () => finish(new Error('音频播放失败'));
 
                 this._dispatchState();
-                audio.play().catch(reject);
+                audio.play().catch(finish);
 
             } catch (err) {
                 this.currentPlayKey = null;
@@ -459,6 +587,11 @@ const TTSService = {
 
     // 停止播放（清空队列，离开聊天时调用）
     stop: function() {
+        this.playbackGeneration++;
+        this.queueGeneration++;
+        for (const controller of this.requestControllers) controller.abort();
+        this.pendingSynthesis.clear();
+        if (this.finishPlayback) this.finishPlayback();
         if (this.currentAudio) {
             this.currentAudio.pause();
             this.currentAudio = null;
@@ -472,10 +605,18 @@ const TTSService = {
 
     // 合成并播放。options.forUser === true 时使用用户 TTS 配置；options.playKey 为当前条标识（用于暂停/恢复）
     synthesizeAndPlay: async function(text, voiceId, language = 'auto', options = {}) {
+        const generation = ++this.playbackGeneration;
+        const configGeneration = this.configGeneration;
         try {
             const audioUrl = await this.synthesize(text, voiceId, language, options);
+            if (generation !== this.playbackGeneration || configGeneration !== this.configGeneration) {
+                if (![...this.audioCache.values()].includes(audioUrl)) URL.revokeObjectURL(audioUrl);
+                return false;
+            }
             await this.play(audioUrl, options.playKey);
+            return generation === this.playbackGeneration;
         } catch (err) {
+            if (err.name === 'AbortError') return false;
             console.error('[TTS] 播放失败:', err);
             throw err;
         }
@@ -485,6 +626,7 @@ const TTSService = {
     _processQueue: function() {
         if (this.isPlaying || this.playQueue.length === 0) return;
         const item = this.playQueue.shift();
+        const generation = this.queueGeneration;
         this.isPlaying = true;
         const self = this;
         const opts = item.options || (item.forUser ? { forUser: true } : {});
@@ -493,6 +635,7 @@ const TTSService = {
                 console.error('[TTS] 队列播放失败:', err);
             })
             .finally(() => {
+                if (generation !== self.queueGeneration) return;
                 self.isPlaying = false;
                 self._processQueue();
             });
@@ -505,7 +648,7 @@ const TTSService = {
     synthesizeAndPlayQueued: function(text, voiceId, language = 'auto', options = {}) {
         const forUser = !!options.forUser;
         if (forUser ? !this.isUserConfigured() : !this.isConfigured()) return;
-        const cleanText = this.cleanText(text);
+        const cleanText = this.cleanText(text, forUser ? this.userConfig : this.config);
         if (!cleanText) return;
 
         const item = { text, voiceId, language: language || 'auto', forUser, options };
@@ -514,26 +657,32 @@ const TTSService = {
             return;
         }
         this.isPlaying = true;
+        const generation = this.queueGeneration;
         const self = this;
         this.synthesizeAndPlay(text, voiceId, language, options)
             .catch(err => {
                 console.error('[TTS] 队列首条播放失败:', err);
             })
             .finally(() => {
+                if (generation !== self.queueGeneration) return;
                 self.isPlaying = false;
                 self._processQueue();
             });
     },
 
     // 清理文本（移除特殊标记、旁白、双语翻译）
-    cleanText: function(text) {
+    cleanText: function(text, cfg = this.config) {
         if (!text) return '';
         
         // 移除方括号内容（如 [系统消息]）
-        let cleaned = text.replace(/\[.*?\]/g, '');
+        const expressiveEleven = cfg.provider === 'elevenlabs' && /^eleven_v[34](?:_|$)/.test(cfg.elevenModel || '');
+        const elevenTags = /^(?:whispers?|whispering|laughs?|laughing|chuckles?|sighs?|sighing|gasps?|excited|sad|angry|curious|sarcastic|crying|shouting|nervous|calm|happy|thoughtful|cheerfully)$/i;
+        let cleaned = text.replace(/\[(.*?)\]/g, (whole, tag) => expressiveEleven && elevenTags.test(tag.trim()) ? whole : '');
         
         // 移除圆括号和中文括号内容（旁白）
-        cleaned = cleaned.replace(/[\(（].*?[\)）]/g, '');
+        const expressiveMinimax = (cfg.provider || 'minimax') === 'minimax' && /^speech-2\.8-/.test(cfg.model || '');
+        const minimaxTags = /^(?:laughs|chuckle|coughs|clear-throat|groans|breath|pant|inhale|exhale|gasps|sniffs|sighs|snorts|burps|lip-smacking|humming|hissing|emm|sneezes)$/;
+        cleaned = cleaned.replace(/[\(（](.*?)[\)）]/g, (whole, tag) => expressiveMinimax && minimaxTags.test(tag) ? whole : '');
         
         // 移除双语模式的「中文翻译」，只读原文
         cleaned = cleaned.replace(/「.*?」/g, '');

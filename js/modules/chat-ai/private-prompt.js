@@ -1,4 +1,5 @@
 function generatePrivateSystemPrompt(character, opts) {
+    const includeMomentsActivity = window.Moments?.isChatLinked?.(character.id) !== false;
     opts = opts || {};
     if (window.PromptStudio && typeof window.PromptStudio.compile === 'function') {
         const studioResult = window.PromptStudio.compile(character, opts);
@@ -178,7 +179,7 @@ function generatePrivateSystemPrompt(character, opts) {
             template += '\n' + opts.historyText;
         }
 
-        if (!momentsInTemplate && window.Moments) template += window.Moments.promptForCharacter(character.id);
+        if (!momentsInTemplate && window.Moments) template += window.Moments.promptForCharacter(character.id, !!opts.isBackground);
         return template;
     }
 
@@ -421,7 +422,7 @@ function generatePrivateSystemPrompt(character, opts) {
             nodePrompt += '\n' + opts.historyText;
         }
 
-        if (window.Moments) nodePrompt += window.Moments.promptForCharacter(character.id);
+        if (window.Moments) nodePrompt += window.Moments.promptForCharacter(character.id, !!opts.isBackground);
         return nodePrompt;
     }
 
@@ -526,7 +527,7 @@ function generatePrivateSystemPrompt(character, opts) {
                 }
                 const altChar = altChars.find(function(c) { return c.forumUserId === forumUserId; });
                 if (altChar && altChar.history && altChar.history.length > 0) {
-                    const recentAlt = altChar.history.filter(function(m) { return !m.isContextDisabled; }).slice(-syncLimit);
+                    const recentAlt = altChar.history.filter(function(m) { return !m.isContextDisabled && (includeMomentsActivity || !m.isMomentsActivity); }).slice(-syncLimit);
                     if (recentAlt.length > 0) {
                         altBlock += '[加好友后聊天] 小号「' + (altChar.realName || altName) + '」与用户：\n';
                         recentAlt.forEach(function(m) {
@@ -544,7 +545,7 @@ function generatePrivateSystemPrompt(character, opts) {
     } else if (enableCharAltDm && linkedChar && linkedChar.history && linkedChar.history.length > 0) {
         // 小号：注入主号与用户的最近对话（条数=主号的角色上下文）
         const mainSyncLimit = Math.max(1, (linkedChar.maxMemory != null ? parseInt(linkedChar.maxMemory, 10) : 20) || 20);
-        const mainRecent = linkedChar.history.filter(function(m) { return !m.isContextDisabled; }).slice(-mainSyncLimit);
+        const mainRecent = linkedChar.history.filter(function(m) { return !m.isContextDisabled && (includeMomentsActivity || !m.isMomentsActivity); }).slice(-mainSyncLimit);
         if (mainRecent.length > 0) {
             let mainBlock = '\n<main_shared_memory>\n【主号记忆互通】你与主号记忆互通。主号在聊天里与用户说的最近对话你都知道。以下为主号与用户的最近互动' + mainRecent.length + '条：\n\n';
             mainRecent.forEach(function(m) {
@@ -719,7 +720,7 @@ function generatePrivateSystemPrompt(character, opts) {
         prompt += `当前正在使用：${currentThemeName}\n\n`;
         if (character.themeJustChangedByUser && character.themeJustChangedByUser.trim()) {
             prompt += `用户刚刚将对话主题更换为了：${character.themeJustChangedByUser.trim()}。请根据人设自然地对此做出反应（如开心、好奇、调侃等）。\n\n`;
-            character.themeJustChangedByUser = '';
+            if (!opts.preview) character.themeJustChangedByUser = '';
         }
         prompt += `你可以在合适时机（例如氛围、心情、场景变化时）主动提议或请求更换主题。提及或填写主题名时直接写主题名，不要加「」、书名号等括号。若想更换，请在回复中单独一行使用格式：[更换主题：主题名]（主题名只写名称，不要加括号）。\n`;
         prompt += `</chat_themes>\n\n`;
@@ -919,7 +920,7 @@ function generatePrivateSystemPrompt(character, opts) {
         prompt += '\n' + opts.historyText;
     }
 
-    if (window.Moments) prompt += window.Moments.promptForCharacter(character.id);
+    if (window.Moments) prompt += window.Moments.promptForCharacter(character.id, !!opts.isBackground);
     return prompt;
 }
 

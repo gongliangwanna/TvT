@@ -19,13 +19,14 @@ function imageContext() {
         window: {}, db: {}, console, Blob, FormData, Response, TextDecoder, DataView, Uint8Array,
         FileReader: TestFileReader, atob: value => Buffer.from(value, 'base64').toString('binary'),
         btoa: value => Buffer.from(value, 'binary').toString('base64'), setTimeout, clearTimeout,
-        URL: { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} },
+        URL, AbortController, DOMException,
         showErrorModal: () => {}, getRandomValue: value => value, pad: value => value,
         formatTimeGap: () => '', getLocalTimeInTimezone: () => '', filterHistoryForAI: value => value,
         showToast: () => {}, showAppConfirmDialog: async () => true,
         writeOvoPngMetadata: value => value, readOvoPngMetadata: () => null
     };
     vm.createContext(context);
+    vm.runInContext(fs.readFileSync(path.join(root, 'js/core/novelai-compat.js'), 'utf8'), context);
     vm.runInContext(fs.readFileSync(path.join(root, 'js/core/api-and-image-utils.js'), 'utf8'), context);
     return context;
 }
@@ -42,8 +43,8 @@ function imageContext() {
     const result = await context.window.generateGoogleImage('a cat', { key: 'secret' });
     assert.equal(result.provider, 'google');
     assert.match(result.imageUrl, /^data:image\/png;base64,/);
-    assert.match(request.body.contents[0].parts[0].text, /cinematic rainy night/);
-    assert.match(request.body.contents[0].parts[0].text, /blue neon/);
+    assert.equal(request.body.contents[0].parts[0].text, 'a cat', 'legacy text atmospheres must not silently modify provider prompts');
+    assert.equal(context.db.activeImageAtmosphereId, 'rain', 'legacy atmosphere configuration remains available');
     assert.ok(request.options.headers['x-goog-api-key']);
 }
 
@@ -86,7 +87,7 @@ function imageContext() {
 {
     const storage = new Map();
     const context = {
-        window: {}, console, Blob, Uint8Array, ArrayBuffer, DataView,
+        window: {}, console, Blob, Uint8Array, ArrayBuffer, DataView, AbortController, DOMException,
         document: { readyState: 'loading', addEventListener: () => {}, dispatchEvent: () => {} },
         CustomEvent: class {}, Audio: class {},
         localStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) },

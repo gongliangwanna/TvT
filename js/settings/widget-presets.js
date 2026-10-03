@@ -62,10 +62,21 @@ function saveCurrentWidgetWallpaperAsPreset() {
     showToast('方案已保存到预设库');
 }
 
+function widgetWallpaperImageSharing(preset) {
+    if (Array.isArray(preset.imageSharing?.included)) {
+        return { included: preset.imageSharing.included.filter(group => Object.hasOwn(CUSTOM_WIDGET_IMAGE_GROUPS, group)) };
+    }
+    // Older exports cleared both fields without recording that images were omitted.
+    if (preset.wallpaper === '' && preset.customIcons && !Object.keys(preset.customIcons).length) return { included: [] };
+    return undefined;
+}
+
 function applyWidgetWallpaperPreset(name) {
     const presets = _getWidgetWallpaperPresets();
     const p = presets.find(x => x.name === name);
     if (!p) return showToast('未找到该方案');
+    const imageSharing = Array.isArray(p.imageSharing?.included) ? widgetWallpaperImageSharing(p) : undefined;
+    const sharesImages = group => !imageSharing || imageSharing.included.includes(group);
     if (p.layoutMode === 'free' && !freeHomeValidLayout(p.freeHomeLayout)) return showToast('自由布局方案数据无效');
     db.homeLayoutMode = p.layoutMode === 'free' ? 'free' : 'classic';
     if (db.homeLayoutMode === 'free' && p.freeHomeLayout && Array.isArray(p.freeHomeLayout.pages)) {
@@ -78,19 +89,27 @@ function applyWidgetWallpaperPreset(name) {
     if (p.homeStatusBarSettings && typeof p.homeStatusBarSettings === 'object') db.homeStatusBarSettings = JSON.parse(JSON.stringify(p.homeStatusBarSettings));
     if (db.homeLayoutMode === 'free' && Number.isInteger(p.freeHomePage)) freeHomePage = Math.max(0, Math.min(p.freeHomePage, db.freeHomeLayout.pages.length - 1));
     homeScreen.classList.toggle('free-home-active', db.homeLayoutMode === 'free');
-    db.wallpaper = p.wallpaper || DEFAULT_WALLPAPER_URL;
+    if (sharesImages('wallpaper')) db.wallpaper = p.wallpaper || DEFAULT_WALLPAPER_URL;
     if (typeof applyWallpaper === 'function') applyWallpaper(db.wallpaper);
-    db.homeWidgetSettings = JSON.parse(JSON.stringify({ ...defaultWidgetSettings, ...(p.homeWidgetSettings || {}) }));
+    const widgetSettings = { ...defaultWidgetSettings, ...(p.homeWidgetSettings || {}) };
+    if (!sharesImages('photos')) {
+        for (const key of ['centralCircleImage', 'polaroidImage']) widgetSettings[key] = db.homeWidgetSettings?.[key] ?? defaultWidgetSettings[key];
+    }
+    db.homeWidgetSettings = JSON.parse(JSON.stringify(widgetSettings));
     db.homeSignature = p.homeSignature !== undefined ? p.homeSignature : DEFAULT_HOME_SIGNATURE;
-    db.insWidgetSettings = JSON.parse(JSON.stringify(p.insWidgetSettings || DEFAULT_INS_WIDGET));
-    if (p.customIcons && typeof p.customIcons === 'object') {
+    const insSettings = { ...(p.insWidgetSettings || DEFAULT_INS_WIDGET) };
+    if (!sharesImages('avatars')) {
+        for (const key of ['avatar1', 'avatar2']) insSettings[key] = db.insWidgetSettings?.[key] ?? DEFAULT_INS_WIDGET[key];
+    }
+    db.insWidgetSettings = JSON.parse(JSON.stringify(insSettings));
+    if (sharesImages('icons') && p.customIcons && typeof p.customIcons === 'object') {
         db.customIcons = JSON.parse(JSON.stringify(p.customIcons));
     }
     if (p.customAppNames && typeof p.customAppNames === 'object') {
         db.customAppNames = JSON.parse(JSON.stringify(p.customAppNames));
     }
     // 应用偷看图标
-    if (p.peekCustomIcons && typeof p.peekCustomIcons === 'object' && Object.keys(p.peekCustomIcons).length > 0) {
+    if (sharesImages('icons') && p.peekCustomIcons && typeof p.peekCustomIcons === 'object' && Object.keys(p.peekCustomIcons).length > 0) {
         if (typeof currentChatId !== 'undefined' && db.characters) {
             const char = db.characters.find(c => c.id === currentChatId);
             if (char) {
@@ -216,6 +235,7 @@ function importWidgetWallpaperScheme(file) {
             const presets = _getWidgetWallpaperPresets();
             const existingIdx = presets.findIndex(p => p.name === name);
             const toAdd = { name, homeScreenMode: preset.homeScreenMode, nightModeSettings: preset.nightModeSettings, homeStatusBarSettings: preset.homeStatusBarSettings, freeHomePage: preset.freeHomePage, layoutMode: preset.layoutMode === 'free' ? 'free' : 'classic', freeHomeLayout: preset.freeHomeLayout, wallpaper: preset.wallpaper, homeWidgetSettings: preset.homeWidgetSettings || {}, homeSignature: preset.homeSignature, insWidgetSettings: preset.insWidgetSettings || {}, customIcons: preset.customIcons || {}, customAppNames: preset.customAppNames || {}, peekCustomIcons: preset.peekCustomIcons || {} };
+            toAdd.imageSharing = widgetWallpaperImageSharing(preset);
             if (existingIdx >= 0) presets[existingIdx] = toAdd;
             else presets.push(toAdd);
             _saveWidgetWallpaperPresets(presets);

@@ -20,9 +20,9 @@
         return '请详细描述这张头像画面的内容。包括：人物外貌与发型、服装与配饰、动作与表情、背景与氛围、整体色调等。用完整的中文描述，不要省略，不要只输出一个词或半句话。只输出描述文字，不要其他内容。';
     }
 
-    async function callVisionAPI(imageUrl) {
+    async function callVisionAPI(imageUrl, charId) {
         if (!db || !db.apiSettings) throw new Error('API未配置');
-        const apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('avatarVision', db.apiSettings) : db.apiSettings;
+        const apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('avatarVision', db.apiSettings, (db.characters || []).find(char => char.id === charId)) : db.apiSettings;
         let { url, key, model } = apiConfig;
         if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!url || !key || !model)) throw new Error('请先在 API 应用中完成设置');
         if (url.endsWith('/')) url = url.slice(0, -1);
@@ -352,7 +352,7 @@
 
         let recognizedText = '未命名头像';
         try {
-            recognizedText = await callVisionAPI(avatarUrl);
+            recognizedText = await callVisionAPI(avatarUrl, charId);
         } catch (e) {
             console.warn('Avatar recognition API error:', e);
             if (typeof showToast === 'function') showToast('识别失败，可手动输入描述');
@@ -655,7 +655,7 @@
                 if (!imageUrl) return;
                 recognizeBtn.disabled = true;
                 if (typeof showToast === 'function') showToast('正在识别…');
-                callVisionAPI(imageUrl).then((text) => {
+                callVisionAPI(imageUrl, charId).then((text) => {
                     if (descInput) descInput.value = text || '';
                     if (typeof showToast === 'function') showToast('已填入描述，可修改后填写名称并添加');
                 }).catch((e) => {
@@ -669,7 +669,7 @@
             confirmBtn.onclick = () => {
                 if (useAiCheck && useAiCheck.checked) {
                     confirmBtn.disabled = true;
-                    callVisionAPI(imageUrl).then((recognizedText) => {
+                    callVisionAPI(imageUrl, charId).then((recognizedText) => {
                         if (descInput) descInput.value = recognizedText || '';
                         useAiCheck.checked = false;
                         if (typeof showToast === 'function') showToast('已识别，请填写名称后点击添加');
@@ -1239,7 +1239,7 @@
         if (confirmBtn) confirmBtn.onclick = function () {
             if (useAiCheck && useAiCheck.checked) {
                 confirmBtn.disabled = true;
-                callVisionAPI(imageUrl).then(function (recognizedText) {
+                callVisionAPI(imageUrl, charId).then(function (recognizedText) {
                     if (nameInput) nameInput.value = '';
                     if (descInput) descInput.value = recognizedText || '';
                     useAiCheck.checked = false;
@@ -1544,7 +1544,7 @@
                 }
                 recognizeBtn.disabled = true;
                 if (typeof showToast === 'function') showToast('正在识别…');
-                callVisionAPI(imgToRecognize).then(function (text) {
+                callVisionAPI(imgToRecognize, charId).then(function (text) {
                     if (descInput) descInput.value = text || '';
                     if (typeof showToast === 'function') showToast('已填入描述，可修改后填写名称并添加');
                 }).catch(function (e) {
@@ -1564,7 +1564,7 @@
                     return;
                 }
                 confirmBtn.disabled = true;
-                callVisionAPI(imgToRecognize).then(function (recognizedText) {
+                callVisionAPI(imgToRecognize, charId).then(function (recognizedText) {
                     if (descInput) descInput.value = recognizedText || '';
                     useAiCheck.checked = false;
                     if (typeof showToast === 'function') showToast('已识别，请填写名称后点击添加');

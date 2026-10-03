@@ -1,5 +1,35 @@
 /* --- Tutorial Screen Styles --- */
 
+/* A compact secondary action directly below repository backup. */
+.ovo-file-update {
+    min-width: 0;
+    max-width: 100%;
+    margin-top: 10px;
+}
+.ovo-file-update #ovo-file-update-btn {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 0.89rem;
+    font-weight: 400;
+    padding: 10px 12px;
+    margin: 0;
+    white-space: nowrap;
+}
+.ovo-file-update-status {
+    padding: 6px 2px 10px;
+    color: #888;
+    font-size: 0.74rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.tutorial-modern-layout .ovo-file-update { margin-top: 0; }
+.tutorial-modern-layout .ovo-file-update-status { padding: 6px 16px 10px; }
+.tutorial-rabbit-layout .ovo-file-update-status { padding: 6px 12px 10px; }
+.ovo-file-update #ovo-file-update-btn:disabled { opacity: 0.6; cursor: default; }
+
 /* --- Modern (V2) iOS Style Layout --- */
 .tutorial-modern-layout {
     background-color: #f2f2f7; /* iOS grouped background */

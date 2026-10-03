@@ -943,6 +943,13 @@ body.night-mode-active code {
 .free-home-legacy-preset-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .free-home-folder-app-icon { width: 27px; height: 27px; object-fit: cover; flex: none; border-radius: 7px; }
 .free-home-sheet-help { font-size: 12px; line-height: 1.5; color: #666; }
+.free-home-share-sheet .free-home-sheet-head > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.free-home-share-sheet .free-home-sheet-close { flex-shrink: 0; }
+.free-home-share-sheet .free-home-sheet-help { overflow-wrap: anywhere; }
+.free-home-share-sheet .free-home-sheet-row { font-size: 13px; }
+.free-home-share-sheet .free-home-sheet-row:focus-visible { outline: 2px solid #9b5367; outline-offset: -2px; }
+.free-home-image-placeholder { display: flex; align-items: center; justify-content: center; background: #f4f4f4; color: #888; font-size: 11px; }
+.free-home-photo-placeholder { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; color: #888; font-size: 11px; }
 .free-home-field-label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; margin: 8px 0; }
 .free-home-field { appearance: none; border: 1px solid #ddd; border-radius: 12px; background: #f8f8f8; color: #222; font: inherit; font-size: 14px; padding: 10px; min-height: 42px; box-sizing: border-box; width: 100%; }
 .free-home-upload-btn { display: block; border-radius: 12px; background: #f4f4f4; padding: 10px; text-align: center; font-size: 12px; margin: 8px 0; cursor: pointer; }

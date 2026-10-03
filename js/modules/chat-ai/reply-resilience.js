@@ -105,12 +105,13 @@
         return task || null;
     }
 
-    async function findRecoverable(chatId, chatType, userMessageId, isBackground) {
+    async function findRecoverable(chatId, chatType, userMessageId, isBackground, memberId = '') {
         const store = table();
         if (!store) return null;
         const candidates = await store.where('chatId').equals(chatId).toArray();
         return candidates
             .filter(task => task.chatType === chatType && !!task.isBackground === !!isBackground && PENDING_STATES.has(task.state)
+                && (task.memberId || '') === memberId
                 && (!userMessageId || !task.userMessageId || task.userMessageId === userMessageId))
             .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))[0] || null;
     }
@@ -120,7 +121,7 @@
         const userMessageId = details.userMessageId || getLatestUserMessageId(chat);
         let task = details.recoveryTaskId ? await getTask(details.recoveryTaskId) : null;
         if (!task && details.reuseExisting !== false) {
-            task = await findRecoverable(details.chatId, details.chatType, userMessageId, details.isBackground);
+            task = await findRecoverable(details.chatId, details.chatType, userMessageId, details.isBackground, details.memberId || '');
         }
         const now = Date.now();
         if (task) {
@@ -144,6 +145,7 @@
                 id: createId(),
                 chatId: details.chatId,
                 chatType: details.chatType,
+                memberId: details.memberId || '',
                 userMessageId,
                 state: details.initialState || 'requesting',
                 provider: details.provider || '',
@@ -366,7 +368,7 @@
             }
             const userMessageIndex = (chat.history || []).findIndex(message => message && message.id === task.userMessageId);
             const completedMessages = userMessageIndex >= 0
-                ? chat.history.slice(userMessageIndex + 1).filter(message => message && message.role === 'assistant' && !message.isThinking
+                ? chat.history.slice(userMessageIndex + 1).filter(message => message && message.role === 'assistant' && !message.isThinking && (!task.memberId || message.senderId === task.memberId)
                     && Number(message.timestamp || 0) >= Number(task.createdAt || 0))
                 : [];
             if (completedMessages.length) {
@@ -414,7 +416,9 @@
                     : '检测到未完成回复，正在恢复…';
                 indicator.style.display = 'block';
             }
-            const runRecovery = () => getAiReply(task.chatId, task.chatType, !!task.isBackground, false, false, false, { recoveryTaskId: task.id });
+            const runRecovery = () => task.memberId && window.MemberApiRuntime
+                ? window.MemberApiRuntime.reply(chat, !!task.isBackground, { memberIds: [task.memberId], retry: true, recoveryTaskId: task.id })
+                : getAiReply(task.chatId, task.chatType, !!task.isBackground, false, false, false, { recoveryTaskId: task.id });
             logEvent('recovery-attempt', task);
             if (navigator.locks && typeof navigator.locks.request === 'function') {
                 let acquired = false;

@@ -1088,6 +1088,35 @@ textarea.api-generation-value { min-height: 48px; height: 48px; resize: vertical
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
+/* ElevenLabs follows the existing TTS rows without widening narrow screens. */
+#api-settings-screen .tts-eleven-config .kkt-item-label { flex-shrink: 0; white-space: nowrap; }
+#api-settings-screen .tts-eleven-config .kkt-item-control { min-width: 0; flex: 1; }
+#api-settings-screen .tts-eleven-config input,
+#api-settings-screen .tts-eleven-config select { width: 100%; min-width: 0; }
+#api-settings-screen .tts-eleven-control input,
+#api-settings-screen .tts-eleven-control select { flex: 1; width: 0; overflow: hidden; text-overflow: ellipsis; }
+#api-settings-screen .tts-eleven-control .btn { flex-shrink: 0; margin: 0; padding: 4px 8px; font-size: 12px; }
+.tts-eleven-tip { padding: 10px 15px 0; }
+#api-pane-tts .api-card-header > div { flex: 1; min-width: 0; }
+#api-pane-tts .api-card-header .kkt-switch { flex-shrink: 0; }
+#api-pane-tts .api-section-card > .kkt-item .kkt-item-label { white-space: nowrap; flex-shrink: 0; }
+#api-pane-tts .api-section-card > .kkt-item .kkt-item-control { min-width: 0; }
+#api-pane-tts .api-section-card > .kkt-item select { max-width: 100%; min-width: 0; }
+#api-pane-tts .api-actions-row .btn { min-width: 0; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
+
+/* NovelAI 创作工具：沿用设置区域的紧凑尺寸与按钮。 */
+#novelai-studio [hidden] { display: none !important; }
+#novelai-studio .kkt-item-control { min-width: 0; }
+#novelai-studio select { max-width: 100%; min-width: 0; direction: ltr; text-align: right; }
+.nai-studio-canvas { margin: 8px 0; background: repeating-conic-gradient(#f1f5f9 0% 25%, #fff 0% 50%) 0 / 16px 16px; }
+.nai-studio-canvas canvas { display: block; width: 100%; height: auto; }
+.nai-studio-canvas canvas:empty { min-height: 1px; }
+.nai-studio-request { margin: 0; padding: 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; color: #64748b; }
+.nai-studio-gallery { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 10px 0; }
+.nai-studio-work { min-width: 0; border-top: 1px solid #eef2f6; padding-top: 8px; }
+.nai-studio-work img { display: block; max-width: 100%; max-height: 360px; margin: auto; border-radius: 8px; cursor: pointer; background: repeating-conic-gradient(#f1f5f9 0% 25%, #fff 0% 50%) 0 / 16px 16px; }
+.nai-studio-work .api-field-tip, #nai-studio-status { overflow-wrap: anywhere; }
+
 .api-archive-box summary {
     color: #94a3b8;
     font-size: 12px;
@@ -1170,6 +1199,43 @@ textarea.api-generation-value { min-height: 48px; height: 48px; resize: vertical
 .api-node-card.paused .api-node-state { background: #f1f5f9; color: #64748b; }
 .api-node-card-meta { margin-top: 3px; color: #94a3b8; font-size: 11px; }
 .api-node-card-actions { display: flex; gap: 4px; }
+.role-api-entry { width: 100%; border: 0; background: transparent; text-align: left; font: inherit; cursor: pointer; }
+.role-api-entry .kkt-item-label { flex: 1; min-width: 0; }
+.role-api-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.role-api-toolbar > select { flex: 1; min-width: 0; max-width: 100%; }
+#role-api-modal { z-index: 1100; }
+#role-api-modal .role-api-window { display: flex; flex-direction: column; width: calc(100% - 24px); max-width: 440px; max-height: calc(100% - 28px); padding: 12px; box-sizing: border-box; overflow: hidden; }
+.role-api-modal-header { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+#role-api-modal h3 { flex: 1; min-width: 0; margin: 0; font-size: 14px; font-weight: 600; text-align: left; color: var(--text-color, #334155); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.role-api-body { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 8px 0; overscroll-behavior: contain; }
+.role-api-row { display: flex; align-items: center; gap: 6px; padding: 7px 0; border-bottom: 1px solid #f1f5f9; }
+.role-api-label { flex: 0 0 88px; font-size: 12px; color: #475569; }
+.role-api-row > select, .role-api-row > input { flex: 1; min-width: 0; width: 0; }
+#role-api-modal select, #role-api-modal input:not([type="checkbox"]):not([type="range"]) { box-sizing: border-box; border: 1px solid #e2e8f0; border-radius: 6px; background: #f8fafc; color: #475569; padding: 6px; font: inherit; font-size: 12px; max-width: 100%; }
+#role-api-modal input[type="search"] { width: 100%; }
+#role-api-modal .btn { padding: 5px 8px; min-width: 0; min-height: 28px; font-size: 12px; border-radius: 6px; }
+.role-api-check { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: #475569; }
+.role-api-check > span { min-width: 0; overflow-wrap: anywhere; }
+.role-api-check input { appearance: none; -webkit-appearance: none; width: 16px; height: 16px; flex: 0 0 16px; margin: 0; border: 1px solid #cbd5e1; border-radius: 4px; background: white; }
+.role-api-check input:checked { border-color: var(--primary-color, #2563eb); background: var(--primary-color, #2563eb); box-shadow: inset 0 0 0 3px #fff; }
+.role-api-feature-group { padding: 4px 0; border-bottom: 1px solid #f1f5f9; }
+.role-api-feature { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 4px 0; }
+.role-api-feature-options { padding: 3px 0 6px; }
+.role-api-feature select { min-width: 0; width: 100%; }
+.role-api-targets { display: grid; gap: 7px; padding: 8px 0; max-height: 220px; overflow-y: auto; }
+.role-api-targets .role-api-row .role-api-check { flex: 1; }
+.role-api-hint { margin: 6px 0; font-size: 11px; line-height: 1.6; color: #94a3b8; overflow-wrap: anywhere; }
+.role-api-hint.error { color: #dc2626; }
+.role-api-preview { padding: 6px 0; color: #64748b; font-size: 11px; line-height: 1.6; }
+.role-api-footer { display: flex; justify-content: flex-end; flex-shrink: 0; padding-top: 6px; }
+.member-api-progress { padding: 4px 10px; max-height: 130px; overflow-y: auto; font-size: 11px; color: #64748b; flex-shrink: 0; }
+.member-api-progress[hidden] { display: none; }
+.member-api-progress-row { display: flex; align-items: center; gap: 5px; margin: 3px 0; }
+.member-api-progress-row span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.member-api-progress .btn { padding: 3px 6px; min-width: 0; font-size: 11px; border-radius: 6px; }
+.api-node-card-actions { flex-wrap: wrap; max-width: 112px; justify-content: flex-end; flex-shrink: 0; }
+.role-api-feature select:disabled { opacity: .5; }
+@media (max-width: 360px) { .role-api-label { flex-basis: 76px; } #role-api-modal .role-api-window { padding: 10px; } .role-api-feature { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 4px; } }
 .api-node-card-actions button { min-width: 32px; height: 26px; padding: 0 6px; border: 0; border-radius: 6px; background: #f1f5f9; color: #475569; font-size: 11px; }
 
 /* 节点编辑器全白重构 */
@@ -2800,6 +2866,49 @@ input:checked + .kkt-slider:before {
 .storage-audit-row strong { flex-shrink: 0; font-weight: 600; }
 .storage-audit-clean { width: 100%; flex-shrink: 0; margin-top: 10px; box-sizing: border-box; font-size: 13px; }
 .storage-audit-clean[hidden] { display: none; }
+/* 状态栏手动整理：仅作用于新增弹窗，延续存储分析的紧凑尺寸。 */
+.status-storage-window { font-size: 12px; color: #444; }
+.status-storage-window [hidden] { display: none !important; }
+.status-storage-body { min-height: 0; overflow: auto; overflow-x: hidden; flex: 1; }
+.status-storage-tabs { display: flex; gap: 5px; flex-shrink: 0; margin-bottom: 9px; }
+.status-storage-tabs button { flex: 1; min-width: 0; border: 1px solid #e9eaed; border-radius: 7px; padding: 7px 3px; background: #fafafa; color: #666; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.status-storage-tabs button[aria-selected="true"] { color: var(--primary-color, #ff80ab); border-color: var(--primary-color, #ff80ab); background: #fff; }
+.status-storage-note { margin: 7px 0; font-size: 11px; color: #777; line-height: 1.55; white-space: pre-line; overflow-wrap: anywhere; }
+.status-storage-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 7px 0; }
+.status-storage-button { box-sizing: border-box; max-width: 100%; border: 1px solid #e4e6e8; border-radius: 7px; padding: 7px 9px; background: #f7f8f9; color: #555; font: inherit; font-size: 11px; cursor: pointer; overflow-wrap: anywhere; }
+.status-storage-button:disabled { opacity: .5; cursor: default; }
+.status-storage-primary { width: 100%; margin: 8px 0; color: var(--primary-color, #ff80ab); background: #fff; }
+.status-storage-danger { width: 100%; margin: 8px 0; color: #b94b52; border-color: #edcdd0; background: #fff8f8; }
+.status-storage-window input:not([type="checkbox"]):not([type="file"]), .status-storage-window select { display: block; box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; border: 1px solid #e4e6e8; border-radius: 7px; padding: 7px 8px; margin: 4px 0; background: #fff; color: #444; font: inherit; font-size: 12px; outline-color: var(--primary-color, #ff80ab); }
+.status-storage-window label { min-width: 0; font-size: 11px; line-height: 1.5; }
+.status-storage-range { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 7px; }
+.status-storage-range input { padding-left: 4px !important; padding-right: 2px !important; font-size: 11px !important; }
+.status-storage-check { display: flex; align-items: flex-start; gap: 7px; padding: 7px 1px; cursor: pointer; }
+.status-storage-check span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.status-storage-check input { appearance: none; -webkit-appearance: none; box-sizing: border-box; width: 15px; height: 15px; flex: 0 0 15px; margin: 1px 0 0; border: 1px solid #c5c9cf; border-radius: 4px; background: #fff; cursor: pointer; position: relative; }
+.status-storage-check input:checked, .status-storage-check input:indeterminate { border-color: var(--primary-color, #ff80ab); background: var(--primary-color, #ff80ab); }
+.status-storage-check input:checked::after { content: ''; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.status-storage-check input:indeterminate::after { content: ''; position: absolute; top: 6px; left: 3px; width: 7px; height: 2px; background: #fff; }
+.status-storage-check input:focus-visible, .status-storage-button:focus-visible { outline: 2px solid var(--primary-color, #ff80ab); outline-offset: 2px; }
+.status-storage-list { margin: 6px 0; border-top: 1px solid #f0f0f0; }
+.status-storage-details { padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+.status-storage-details summary { cursor: pointer; font-size: 12px; overflow-wrap: anywhere; }
+.status-storage-group { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.status-storage-group .status-storage-check { flex-shrink: 0; padding: 4px 0; }
+.status-storage-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-storage-group small { font-size: 10px; color: #888; flex-shrink: 0; }
+.status-storage-message-list { padding: 3px 5px; }
+.status-storage-message-list .status-storage-check { border-top: 1px solid #f5f5f5; }
+.status-storage-stats { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 5px; margin: 8px 0; font-size: 11px; color: #666; }
+.status-storage-preview { margin-top: 9px; padding-top: 9px; border-top: 1px solid #e4e6e8; }
+.status-storage-preview > strong { font-size: 12px; font-weight: 600; }
+.status-storage-source { box-sizing: border-box; width: 100%; min-width: 0; height: 100px; margin: 5px 0; border: 1px solid #e4e6e8; border-radius: 7px; padding: 6px; background: #fafafa; color: #666; font: inherit; font-size: 11px; resize: vertical; }
+body.night-mode-active .status-storage-window { color: #ddd; }
+body.night-mode-active .status-storage-note, body.night-mode-active .status-storage-stats { color: #aaa; }
+body.night-mode-active .status-storage-tabs button, body.night-mode-active .status-storage-button, body.night-mode-active .status-storage-window input:not([type="checkbox"]), body.night-mode-active .status-storage-window select, body.night-mode-active .status-storage-source { background: #292929; color: #ddd; border-color: #444; }
+body.night-mode-active .status-storage-check input { background: #292929; border-color: #666; }
+body.night-mode-active .status-storage-list, body.night-mode-active .status-storage-details, body.night-mode-active .status-storage-preview, body.night-mode-active .status-storage-message-list .status-storage-check { border-color: #333; }
+body.night-mode-active .status-storage-check input:checked, body.night-mode-active .status-storage-check input:indeterminate { background: var(--primary-color, #ff80ab); border-color: var(--primary-color, #ff80ab); }
 .storage-chat-item { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 9px 8px; border: 0; border-bottom: 1px solid #f0f0f0; background: transparent; text-align: left; font: inherit; cursor: pointer; }
 .storage-chat-item-top { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: #333; }
 .storage-chat-item-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

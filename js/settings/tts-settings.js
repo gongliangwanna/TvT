@@ -7,10 +7,11 @@ function saveCurrentTTSAsPreset() {
     const enabled = document.getElementById('minimax-tts-enabled')?.checked || false;
     const groupId = document.getElementById('minimax-group-id')?.value || '';
     const apiKey = document.getElementById('minimax-api-key')?.value || '';
-    const domain = document.getElementById('minimax-domain')?.value || 'api.minimaxi.com';
+    const domain = document.getElementById('minimax-domain')?.value || 'api.minimax.cn';
     const model = document.getElementById('minimax-tts-model')?.value || 'speech-2.8-hd';
     const provider = document.getElementById('tts-provider')?.value || 'minimax';
     const volc = typeof TTSSettings !== 'undefined' ? TTSSettings.readVolcengineFields('char') : {};
+    const eleven = typeof TTSSettings !== 'undefined' ? TTSSettings.readElevenFields('char') : {};
     
     if (!db.ttsPresets) db.ttsPresets = [];
     
@@ -22,7 +23,8 @@ function saveCurrentTTSAsPreset() {
         apiKey,
         domain,
         model,
-        ...volc
+        ...volc,
+        ...eleven
     });
     
     saveTTSGlobalSettings();
@@ -38,13 +40,14 @@ function applyTTSPreset(name) {
     document.getElementById('minimax-tts-enabled').checked = preset.enabled || false;
     document.getElementById('minimax-group-id').value = preset.groupId || '';
     document.getElementById('minimax-api-key').value = preset.apiKey || '';
-    document.getElementById('minimax-domain').value = preset.domain || 'api.minimaxi.com';
+    TTSSettings.setSelectValue(document.getElementById('minimax-domain'), preset.domain || 'api.minimax.cn');
     document.getElementById('minimax-tts-model').value = preset.model || 'speech-2.8-hd';
     const provider = preset.provider || 'minimax';
     const providerSelect = document.getElementById('tts-provider');
     if (providerSelect) providerSelect.value = provider;
     if (typeof TTSSettings !== 'undefined') {
         TTSSettings.loadVolcengineFields('char', preset);
+        TTSSettings.loadElevenFields('char', preset);
         TTSSettings.toggleProviderConfig('char', provider);
     }
     
@@ -147,7 +150,7 @@ function importTTSPresets() {
 function exportTTSPresets() {
     const presets = db.ttsPresets || [];
     if (!presets.length) return showToast('没有可导出的 TTS 预设');
-    const safePresets = presets.map(({ apiKey, volcAccessToken, ...preset }) => ({ ...preset, apiKey: '', volcAccessToken: '' }));
+    const safePresets = presets.map(({ apiKey, volcAccessToken, elevenApiKey, ...preset }) => ({ ...preset, apiKey: '', volcAccessToken: '', elevenApiKey: '' }));
     const blob = new Blob([JSON.stringify(safePresets, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

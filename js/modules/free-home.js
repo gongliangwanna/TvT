@@ -274,18 +274,23 @@ function freeHomeClassicWidget(item) {
     if (item.widget === 'photo') {
         const photo = freeHomeElement('div', 'heart-photo-widget');
         photo.style.setProperty('--free-home-photo-image', `url(${JSON.stringify(settings.image)})`);
+        if (!settings.image) photo.append(freeHomeElement('span', 'free-home-photo-placeholder', '选择照片'));
         return photo;
     }
     if (item.widget === 'ins') {
         const shell = freeHomeElement('div', 'app-grid-widget');
         const widget = freeHomeElement('div', 'ins-widget');
         const first = freeHomeElement('div', 'ins-widget-row user');
-        const avatar1 = freeHomeElement('img', 'ins-widget-avatar'); avatar1.src = settings.avatar1; avatar1.alt = '';
+        const avatar1 = freeHomeElement(settings.avatar1 ? 'img' : 'span', 'ins-widget-avatar');
+        if (settings.avatar1) { avatar1.src = settings.avatar1; avatar1.alt = ''; }
+        else { avatar1.classList.add('free-home-image-placeholder'); avatar1.textContent = '头像'; }
         first.append(avatar1, freeHomeElement('div', 'ins-widget-bubble', settings.bubble1));
         const divider = freeHomeElement('div', 'ins-widget-divider');
         divider.append(freeHomeElement('span', '', '୨୧'));
         const second = freeHomeElement('div', 'ins-widget-row character');
-        const avatar2 = freeHomeElement('img', 'ins-widget-avatar'); avatar2.src = settings.avatar2; avatar2.alt = '';
+        const avatar2 = freeHomeElement(settings.avatar2 ? 'img' : 'span', 'ins-widget-avatar');
+        if (settings.avatar2) { avatar2.src = settings.avatar2; avatar2.alt = ''; }
+        else { avatar2.classList.add('free-home-image-placeholder'); avatar2.textContent = '头像'; }
         second.append(freeHomeElement('div', 'ins-widget-bubble', settings.bubble2), avatar2);
         widget.append(first, divider, second); shell.append(widget);
         return shell;
@@ -294,6 +299,7 @@ function freeHomeClassicWidget(item) {
     const widget = freeHomeElement('div', 'home-widget-container');
     const circle = freeHomeElement('div', 'central-circle');
     circle.style.backgroundImage = `url(${JSON.stringify(settings.image)})`;
+    if (!settings.image) { circle.classList.add('free-home-image-placeholder'); circle.textContent = '选择图片'; }
     widget.append(circle);
     for (const [part, klass] of [['topLeft', 'oval-top-left'], ['topRight', 'oval-top-right'], ['bottomLeft', 'oval-bottom-left'], ['bottomRight', 'oval-bottom-right']]) {
         const oval = freeHomeElement('div', `satellite-oval ${klass}`);
@@ -968,7 +974,7 @@ function freeHomeExportSelection(kind) {
             const button = freeHomeSheetButton(sheet, preset.name, () => { if (selected.has(index)) selected.delete(index); else selected.add(index); update(); });
             button.setAttribute('aria-pressed', 'false'); buttons.push(button);
         });
-        const submit = freeHomeSheetButton(sheet, '导出已选 0 项', () => customWidgetDownload({ type: desktop ? 'free-home-desktop-bundle' : 'free-home-widget-bundle', presets: presets.filter((_, index) => selected.has(index)) }, desktop ? '桌面预设合集' : '小组件预设合集'), '不含图片');
+        const submit = freeHomeSheetButton(sheet, '导出已选 0 项', () => customWidgetDownload({ type: desktop ? 'free-home-desktop-bundle' : 'free-home-widget-bundle', presets: presets.filter((_, index) => selected.has(index)) }, desktop ? '桌面预设合集' : '小组件预设合集'), '图片默认不分享');
         update();
         freeHomeSheetButton(sheet, '返回', desktop ? freeHomeOpenDesktopPresets : freeHomeOpenWidgetPicker);
     });
@@ -983,7 +989,9 @@ async function freeHomeImportBundle(data, kind) {
         if (desktop) {
             if (!['free', 'classic'].includes(preset.layoutMode) || (preset.layoutMode === 'free' && !freeHomeValidLayout(preset.freeHomeLayout))) throw new Error('桌面布局无效');
         } else if (!FREE_WIDGETS[preset.widget] || !['square', 'wide', undefined].includes(preset.size) || !preset.settings || typeof preset.settings !== 'object' || Array.isArray(preset.settings) || (preset.widget === 'custom' && !customWidgetValid(preset.settings))) throw new Error('小组件格式无效');
-        return JSON.parse(JSON.stringify(preset));
+        const record = JSON.parse(JSON.stringify(preset));
+        if (desktop) record.imageSharing = widgetWallpaperImageSharing(preset);
+        return record;
     });
     const key = desktop ? 'widgetWallpaperPresets' : 'freeHomeWidgetPresets';
     const previous = db[key];
@@ -1023,7 +1031,7 @@ function freeHomeResetLayout() {
 
 function freeHomeOpenDesktopPresets() {
     freeHomeOpenSheet('桌面预设', sheet => {
-        sheet.append(freeHomeElement('p', 'free-home-sheet-help', '保存全部页面、图标位置、文件夹、Dock 和小组件代码与配置。导出不包含图片；单个小组件请在其预设管理中导出。'));
+        sheet.append(freeHomeElement('p', 'free-home-sheet-help', '保存全部页面、图标位置、文件夹、Dock 和小组件代码与配置。图片默认不分享，导出时可确认选择；单个小组件请在其预设管理中导出。'));
         freeHomeSheetButton(sheet, '保存当前桌面', () => {
             const scheme = _captureCurrentWidgetWallpaperScheme();
             freeHomeAskName('保存桌面预设（同名覆盖）', '我的桌面', name => {
@@ -1035,7 +1043,7 @@ function freeHomeOpenDesktopPresets() {
                 freeHomeOpenDesktopPresets(); showToast('桌面预设已保存');
             });
         });
-        freeHomeSheetButton(sheet, '导出当前完整桌面', () => customWidgetDownload({ type: 'widget-wallpaper-scheme', version: 2, preset: { name: '自由主屏', ..._captureCurrentWidgetWallpaperScheme() } }, '自由主屏'), '不含图片');
+        freeHomeSheetButton(sheet, '导出当前完整桌面', () => customWidgetDownload({ type: 'widget-wallpaper-scheme', version: 2, preset: { name: '自由主屏', ..._captureCurrentWidgetWallpaperScheme() } }, '自由主屏'), '图片默认不分享');
         const label = freeHomeElement('label', 'free-home-upload-btn', '导入桌面预设');
         const input = freeHomeElement('input', 'free-home-hidden-file');
         input.type = 'file'; input.accept = '.json,application/json';
@@ -1047,7 +1055,7 @@ function freeHomeOpenDesktopPresets() {
         presets.forEach(preset => freeHomeSheetButton(sheet, preset.name, () => {
             freeHomeOpenSheet(preset.name, detail => {
                 freeHomeSheetButton(detail, '应用这个桌面', () => { applyWidgetWallpaperPreset(preset.name); freeHomeCloseSheet(); });
-                freeHomeSheetButton(detail, '导出这个桌面', () => customWidgetDownload({ type: 'widget-wallpaper-scheme', version: preset.layoutMode === 'free' ? 2 : 1, preset }, preset.name), '不含图片');
+                freeHomeSheetButton(detail, '导出这个桌面', () => customWidgetDownload({ type: 'widget-wallpaper-scheme', version: preset.layoutMode === 'free' ? 2 : 1, preset }, preset.name), '图片默认不分享');
                 freeHomeSheetButton(detail, '返回桌面预设', freeHomeOpenDesktopPresets);
             });
         }, preset.layoutMode === 'free' ? `${preset.freeHomeLayout?.pages?.length || 0} 页` : '经典布局'));
@@ -1059,7 +1067,7 @@ function freeHomeOpenPages() {
     freeHomeOpenSheet('管理页面', sheet => {
         freeHomeSheetButton(sheet, '重置为默认自由布局', freeHomeResetLayout);
         freeHomeSheetButton(sheet, '保存整个主屏为方案', () => saveCurrentWidgetWallpaperAsPreset());
-        freeHomeSheetButton(sheet, '导出当前主屏（不含图片）', () => customWidgetDownload({ type: 'widget-wallpaper-scheme', version: 2, preset: { name: '自由主屏', ..._captureCurrentWidgetWallpaperScheme() } }, '自由主屏'));
+        freeHomeSheetButton(sheet, '导出当前主屏', () => customWidgetDownload({ type: 'widget-wallpaper-scheme', version: 2, preset: { name: '自由主屏', ..._captureCurrentWidgetWallpaperScheme() } }, '自由主屏'), '图片默认不分享');
         const importLabel = freeHomeElement('label', 'free-home-upload-btn', '导入屏幕方案');
         const input = freeHomeElement('input', 'free-home-hidden-file'); input.type = 'file'; input.accept = '.json,application/json';
         input.onchange = () => importWidgetWallpaperScheme(input.files?.[0]); importLabel.append(input); sheet.append(importLabel);

@@ -159,7 +159,7 @@ async function generateCharTheater(charId) {
         if (char.charTheaterUseCustomApi && char.charTheaterApiUrl && char.charTheaterApiKey && char.charTheaterApiModel) {
             charApiOverride = { url: char.charTheaterApiUrl, key: char.charTheaterApiKey, model: char.charTheaterApiModel };
         }
-        const response = await callChatCompletion(apiPayload, charApiOverride);
+        const response = await callChatCompletion(apiPayload, charApiOverride, char);
         if (!response || !response.choices || !response.choices[0]) {
             _hideTheaterTyping();
             return;

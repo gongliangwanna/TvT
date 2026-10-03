@@ -2,6 +2,7 @@
 (function () {
     'use strict';
     const el = id => document.getElementById(id);
+    const controls = window.MomentsControls;
     const state = { compose: null, currentPostId: null, profileActorId: null, profilePersonaId: '', resultPostId: '', picker: null, editor: null, commentEdit: null, regeneratingComments: new Set(), deletingComments: new Set(), batch: null, recorder: null, recordStream: null, recordFinishing: false, mediaBusy: false, running: false, confirming: false, initialized: false, deleteArmed: '', friendActorId: '', selectingNotifications: false, selectedNotificationIds: new Set(), notificationDeleteArmed: false, selectedPostIds: new Set(), manageQuery: '', manageAuthor: '', deletingPosts: false, stickerTarget: '', stickerCategory: 'all', stickerQuery: '' };
     const mediaModes = new Set(['off', 'manual', 'auto', 'ai']);
     const promptDefaults = {
@@ -45,7 +46,7 @@
         if (!m.characterPersonaIds || typeof m.characterPersonaIds !== 'object') m.characterPersonaIds = {};
         if (!m.settings || typeof m.settings !== 'object') m.settings = {};
         if (!['mutual', 'all'].includes(m.settings.interactionVisibility)) m.settings.interactionVisibility = 'mutual';
-        if (!['now', 'later'].includes(m.settings.viewMode)) m.settings.viewMode = 'now';
+        m.settings.viewMode = 'now';
         if (!['remark', 'real'].includes(m.settings.characterNameSource)) m.settings.characterNameSource = 'remark';
         for (const key of ['characterNicknameAwareness', 'contactNicknameAwareness', 'characterSelfRename', 'contactSelfRename']) m.settings[key] = m.settings[key] === true;
         if (!Number.isFinite(m.lastCatchupAt)) m.lastCatchupAt = 0;
@@ -56,11 +57,21 @@
     function findCharacter(actorId) { return (db.characters || []).find(c => c.momentsActorId === actorId || (String(actorId || '').startsWith('char:') && c.id === actorId.slice(5))) || null; }
     function characterSettings(character) {
         if (!character.momentsSettings || typeof character.momentsSettings !== 'object') character.momentsSettings = {};
-        const s = character.momentsSettings;
-        for (const key of ['postEnabled', 'storyEnabled', 'browseEnabled', 'interactEnabled', 'contactsEnabled', 'showActivityNarration']) s[key] = s[key] === true;
-        for (const key of ['nicknameAwareness', 'selfRename']) if (!['inherit', 'on', 'off'].includes(s[key])) s[key] = 'inherit';
-        s.imageMode = mediaModes.has(s.imageMode) ? s.imageMode : 'off';
-        s.voiceMode = mediaModes.has(s.voiceMode) ? s.voiceMode : 'off';
+        const s={...character.momentsSettings};
+        if (controls) {
+            const p=controls.preferences(charActor(character.id));
+            for(const key of ['postEnabled','storyEnabled','browseEnabled','watchEnabled','likeEnabled','commentEnabled','replyEnabled','contactsEnabled','chatLinked'])s[key]=p[key];
+            s.interactEnabled=p.likeEnabled||p.commentEnabled||p.replyEnabled;
+        } else {
+            for(const key of ['postEnabled','storyEnabled','browseEnabled','interactEnabled','contactsEnabled'])s[key]=s[key]===true;
+            for(const key of ['likeEnabled','commentEnabled','replyEnabled'])if(typeof s[key]!=='boolean')s[key]=s.interactEnabled;
+            if(typeof s.watchEnabled!=='boolean')s.watchEnabled=true;
+            s.chatLinked=(s.preferences?.chatLinked ?? ensure().controls?.preferences?.chatLinked) !== false;
+        }
+        s.showActivityNarration=s.showActivityNarration===true;
+        s.backgroundPostEnabled=s.backgroundPostEnabled!==false;
+        for(const key of ['nicknameAwareness','selfRename'])if(!['inherit','on','off'].includes(s[key]))s[key]='inherit';
+        s.imageMode=mediaModes.has(s.imageMode)?s.imageMode:'off';s.voiceMode=mediaModes.has(s.voiceMode)?s.voiceMode:'off';
         return s;
     }
     function contactsFor(charId) {
@@ -517,25 +528,28 @@
         el('moments-story-viewer').hidden = false;
     }
 
+    const roleBehaviorInputs = { 'setting-moments-post-enabled':'postEnabled', 'setting-moments-story-enabled':'storyEnabled', 'setting-moments-browse-enabled':'browseEnabled', 'setting-moments-watch-enabled':'watchEnabled', 'setting-moments-like-enabled':'likeEnabled', 'setting-moments-comment-enabled':'commentEnabled', 'setting-moments-reply-enabled':'replyEnabled', 'setting-moments-contacts-enabled':'contactsEnabled', 'setting-moments-chat-linked':'chatLinked' };
     function loadCharacterSettings(character) {
-        const s = characterSettings(character);
-        const fields = { 'setting-moments-post-enabled': s.postEnabled, 'setting-moments-story-enabled': s.storyEnabled, 'setting-moments-browse-enabled': s.browseEnabled, 'setting-moments-interact-enabled': s.interactEnabled, 'setting-moments-contacts-enabled': s.contactsEnabled, 'setting-moments-show-activity-narration': s.showActivityNarration };
-        Object.entries(fields).forEach(([key, value]) => { if (el(key)) el(key).checked = value; });
-        if (el('setting-moments-nickname-awareness')) el('setting-moments-nickname-awareness').value = s.nicknameAwareness;
-        if (el('setting-moments-self-rename')) el('setting-moments-self-rename').value = s.selfRename;
-        if (el('setting-moments-image-mode')) el('setting-moments-image-mode').value = s.imageMode;
-        if (el('setting-moments-voice-mode')) el('setting-moments-voice-mode').value = s.voiceMode;
+        const s=characterSettings(character), actorId=charActor(character.id), local=controls?.localPreferences(actorId)||character.momentsSettings.preferences||{};
+        for(const [id,key] of Object.entries(roleBehaviorInputs))if(el(id))el(id).value=Object.hasOwn(local,key)?local[key]?'on':'off':'inherit';
+        if(el('setting-moments-show-activity-narration'))el('setting-moments-show-activity-narration').checked=s.showActivityNarration;
+        if(el('setting-moments-background-post-enabled'))el('setting-moments-background-post-enabled').checked=s.backgroundPostEnabled;
+        for(const [id,key] of [['setting-moments-nickname-awareness','nicknameAwareness'],['setting-moments-self-rename','selfRename'],['setting-moments-image-mode','imageMode'],['setting-moments-voice-mode','voiceMode']])if(el(id))el(id).value=s[key];
+        const identity=el('setting-moments-user-persona');if(identity){identity.innerHTML='<option value="">按已有身份绑定</option>'+(db.myPersonaPresets||[]).map(p=>`<option value="${esc(p.id)}">${esc(p.name||'未命名身份')}</option>`).join('');identity.value=ensure().characterPersonaIds[character.id]||'';}
+        controls?.renderActorSettings(actorId);
     }
     function saveCharacterSettings(character) {
-        const s = characterSettings(character);
-        const priorNarration = s.showActivityNarration;
-        for (const [id, key] of [['setting-moments-post-enabled', 'postEnabled'], ['setting-moments-story-enabled', 'storyEnabled'], ['setting-moments-browse-enabled', 'browseEnabled'], ['setting-moments-interact-enabled', 'interactEnabled'], ['setting-moments-contacts-enabled', 'contactsEnabled'], ['setting-moments-show-activity-narration', 'showActivityNarration']]) {
-            if (el(id)) s[key] = el(id).checked;
-        }
-        for (const [id, key] of [['setting-moments-nickname-awareness', 'nicknameAwareness'], ['setting-moments-self-rename', 'selfRename']]) if (el(id)) s[key] = el(id).value;
-        if (el('setting-moments-image-mode')) s.imageMode = el('setting-moments-image-mode').value;
-        if (el('setting-moments-voice-mode')) s.voiceMode = el('setting-moments-voice-mode').value;
-        if (priorNarration !== s.showActivityNarration && typeof currentChatId !== 'undefined' && currentChatId === character.id && typeof renderMessages === 'function') renderMessages();
+        characterSettings(character);
+        const s=character.momentsSettings, priorNarration=s.showActivityNarration, actorId=charActor(character.id);
+        const local=controls?.readActorSettings(actorId)||s.preferences||{};
+        for(const [id,key] of Object.entries(roleBehaviorInputs))if(el(id)){const v=el(id).value;if(v==='inherit')delete local[key];else if(v==='on'||v==='off')local[key]=v==='on';}
+        s.preferences=local;
+        const identity=el('setting-moments-user-persona');if(identity){if(identity.value)ensure().characterPersonaIds[character.id]=identity.value;else delete ensure().characterPersonaIds[character.id];void persist();}
+        if(el('setting-moments-show-activity-narration'))s.showActivityNarration=el('setting-moments-show-activity-narration').checked;
+        if(el('setting-moments-background-post-enabled'))s.backgroundPostEnabled=el('setting-moments-background-post-enabled').checked;
+        for(const [id,key] of [['setting-moments-nickname-awareness','nicknameAwareness'],['setting-moments-self-rename','selfRename'],['setting-moments-image-mode','imageMode'],['setting-moments-voice-mode','voiceMode']])if(el(id))s[key]=el(id).value;
+        characterSettings(character);
+        if(priorNarration!==s.showActivityNarration&&typeof currentChatId!=='undefined'&&currentChatId===character.id&&typeof renderMessages==='function')renderMessages();
     }
     function openContacts() {
         const character = (db.characters || []).find(c => c.id === currentChatId);
@@ -549,7 +563,7 @@
         el('moments-contacts-list').innerHTML = contacts.length ? contacts.map(contact => {
             const p = person(contact.actorId);
             const nicknameOptions = contact.kind === 'npc' ? `<div class="moments-contact-nickname-options">${[['nicknameAwareness', '感知网名'], ['selfRename', '自主改名']].map(([key, label]) => `<label>${label}<select data-contact-nickname="${key}"><option value="inherit" ${(contact[key] || 'inherit') === 'inherit' ? 'selected' : ''}>跟随动态设置</option><option value="on" ${contact[key] === 'on' ? 'selected' : ''}>允许</option><option value="off" ${contact[key] === 'off' ? 'selected' : ''}>禁止</option></select></label>`).join('')}</div>` : '';
-            return `<div class="moments-list-row" data-contact-id="${esc(contact.id)}">${avatar(contact.actorId)}<div class="moments-list-row-main"><strong>${esc(p?.name || '已删除角色')}</strong><small>${esc(contact.relationship || (contact.kind === 'linked' ? '已有角色' : '人脉'))}</small><div class="moments-contact-flags"><label><input type="checkbox" data-contact-flag="enabled" ${contact.enabled !== false ? 'checked' : ''}>启用</label><label><input type="checkbox" data-contact-flag="mayInteract" ${contact.mayInteract === true ? 'checked' : ''}>互动</label><label><input type="checkbox" data-contact-flag="mayPost" ${contact.mayPost === true ? 'checked' : ''}>发动态</label><label><input type="checkbox" data-contact-flag="mayStory" ${contact.mayStory === true ? 'checked' : ''}>发 Story</label></div>${nicknameOptions}</div><button type="button" data-action="edit-contact" data-contact-id="${esc(contact.id)}">编辑</button><button type="button" data-action="delete-contact" data-contact-id="${esc(contact.id)}">删除</button></div>`;
+            return `<div class="moments-list-row" data-contact-id="${esc(contact.id)}">${avatar(contact.actorId)}<div class="moments-list-row-main"><strong>${esc(p?.name || '已删除角色')}</strong><small>${esc(contact.relationship || (contact.kind === 'linked' ? '已有角色' : '人脉'))}</small><div class="moments-contact-flags"><label><input type="checkbox" data-contact-flag="enabled" ${contact.enabled !== false ? 'checked' : ''}>启用</label>${contact.kind==='linked'?`<label><input type="checkbox" data-contact-flag="mayInteract" ${contact.mayInteract === true ? 'checked' : ''}>互动</label><label><input type="checkbox" data-contact-flag="mayPost" ${contact.mayPost === true ? 'checked' : ''}>发动态</label><label><input type="checkbox" data-contact-flag="mayStory" ${contact.mayStory === true ? 'checked' : ''}>发 Story</label>`:''}</div>${nicknameOptions}<div class="moments-inline-actions"><button type="button" data-action="actor-controls" data-actor-id="${esc(contact.actorId)}">动态设置</button></div></div><button type="button" data-action="edit-contact" data-contact-id="${esc(contact.id)}">编辑</button><button type="button" data-action="delete-contact" data-contact-id="${esc(contact.id)}">删除</button></div>`;
         }).join('') : '<div class="moments-empty">还没有人脉。可以手动添加、关联现有角色，或让 AI 生成。</div>';
     }
     function renderGroups() {
@@ -558,16 +572,10 @@
     }
     function openSettings() {
         el('moments-interaction-visibility').value = ensure().settings.interactionVisibility;
-        el('moments-default-view-mode').value = ensure().settings.viewMode;
         el('moments-character-name-source').value = ensure().settings.characterNameSource;
         for (const key of ['characterNicknameAwareness', 'contactNicknameAwareness', 'characterSelfRename', 'contactSelfRename']) el('moments-' + key.replace(/[A-Z]/g, letter => '-' + letter.toLowerCase())).checked = ensure().settings[key];
         renderGroups();
-        renderIdentityBindings();
         switchScreen('moments-settings-screen');
-    }
-    function renderIdentityBindings() {
-        const presets = db.myPersonaPresets || [];
-        el('moments-identity-bindings').innerHTML = (db.characters || []).map(char => `<label class="moments-field moments-identity-binding">${esc(person(charActor(char.id))?.name || '角色')}<select data-char-persona-id="${esc(char.id)}"><option value="">按已有绑定或当前展示档案</option>${presets.map(p => `<option value="${esc(p.id)}" ${ensure().characterPersonaIds[char.id] === p.id ? 'selected' : ''}>${esc(p.name || '未命名身份')}</option>`).join('')}</select></label>`).join('') || '<p class="moments-hint">还没有聊天角色。</p>';
     }
     function managedPosts() {
         const query = state.manageQuery.trim().toLocaleLowerCase();
@@ -693,6 +701,7 @@
             if (item?.batchExtras) fields += `<details class="moments-batch-extra"><summary>生成的扩展设定</summary>${Object.entries(item.batchExtras).map(([key, value]) => `<label class="moments-field">${esc(batchExtraFields[key] || key)}<textarea name="batchExtra_${esc(key)}" maxlength="1000">${esc(value)}</textarea></label>`).join('')}</details>`;
             if (item?.kind === 'npc') fields += worldBindingEditorFields(item.worldBookBinding);
         }
+        if (item?.actorId) fields += `<div class="moments-inline-actions"><button type="button" data-action="actor-controls" data-actor-id="${esc(item.actorId)}">动态设置</button></div>`;
         el('moments-editor-fields').innerHTML = fields;
         el('moments-editor-dialog').hidden = false;
     }
@@ -766,7 +775,7 @@
         const oldLabel = button.textContent;
         button.disabled = true; button.textContent = '生成中…';
         try {
-            const result = await askAI(`请为“${String(name).slice(0, 40)}”写一句公开显示在熟人动态个人主页的个性签名。人物设定：${String(persona || '未提供').slice(0, 1000)}。只写本人会主动公开的一句话，不要复述人设、关系、私聊或秘密。自然、有个人表达习惯，8到40个汉字左右。${bilingualContent.prompt(findCharacter(state.editor.actorId), 'moments', '角色本人主页的公开签名')}只返回 JSON：{"signature":"签名"}。`);
+            const result = await askAI(`请为“${String(name).slice(0, 40)}”写一句公开显示在熟人动态个人主页的个性签名。人物设定：${String(persona || '未提供').slice(0, 1000)}。只写本人会主动公开的一句话，不要复述人设、关系、私聊或秘密。自然、有个人表达习惯，8到40个汉字左右。${bilingualContent.prompt(findCharacter(state.editor.actorId), 'moments', '角色本人主页的公开签名')}只返回 JSON：{"signature":"签名"}。`, state.editor.actorId);
             const field = form.elements.signature;
             if (field) field.value = String(result.signature || '').trim().slice(0, 80);
             if (!field?.value) throw new Error('没有生成有效签名');
@@ -836,7 +845,7 @@
                     if (mode === 'snapshot' && contact.worldBookBinding) contact.worldBookBinding = batchWorldBinding(contact.ownerCharId, { ...contact.worldBookBinding, categoryPaths: categories, excludedItemIds: [] });
                 }
             }
-            else m.contacts.push({ id: id('contact'), actorId: id('npc'), kind: 'npc', ownerCharId: currentChatId, ...values, enabled: true, mayInteract: false, mayPost: false, mayStory: false });
+            else m.contacts.push({ id: id('contact'), actorId: id('npc'), kind: 'npc', ownerCharId: currentChatId, ...values, enabled: true, preferences: {}, mayInteract: false, mayPost: false, mayStory: false });
             renderContacts();
         }
         await persist();
@@ -847,7 +856,6 @@
         if (state.recorder?.state === 'recording') { state.recordFinishing = true; state.recorder.stop(); }
         ensureUserPreset();
         state.compose = { kind, text: '', media: [], audienceIds: ['user'], reminderIds: [], mentions: [], viewMode: 'default', personaId: activePreset()?.id || '' };
-        el('moments-compose-view-mode').value = 'default';
         el('moments-compose-text').value = '';
         el('moments-compose-persona').innerHTML = (db.myPersonaPresets || []).map(p => `<option value="${esc(p.id)}">${esc(p.name || '未命名身份')}</option>`).join('');
         el('moments-compose-persona').value = state.compose.personaId;
@@ -1104,14 +1112,18 @@
         list.unshift({ id: id('notice'), toId, fromId, ...(fromId === 'user' ? { fromPersonaId: post?.authorId === 'user' ? profilePersonaForPost(post) : post?.userInteractionPersonaId || knownPersonaId(toId) } : {}), postId, ...(commentId ? { commentId } : {}), text, createdAt: Date.now(), read: false });
         if (list.length > 300) list.length = 300;
     }
-    function addComment(post, authorId, text, replyTo = '', mentions = [], sticker = null) {
+    function addComment(post, authorId, text, replyTo = '', mentions = [], sticker = null, task = null) {
         if (!visibleTo(post, authorId) || !person(authorId) || (!String(text || '').trim() && !sticker) || (replyTo && !post.comments?.some(item => item.id === replyTo && !item.deletedAt))) return null;
+        if (controls && !controls.commentAllowed(post, authorId, replyTo, task)) return null;
         const cleanText = String(text).trim().slice(0, 1000);
         const validMentions = mentions.filter(actorId => actorId !== authorId && visibleTo(post, actorId) && person(actorId) && mentionLabel(cleanText, actorId, authorId));
         const comment = { id: id('comment'), authorId, ...(authorId === 'user' ? { authorPersonaId: post.userInteractionPersonaId || profilePersonaForPost(post), authorSnapshot: { name: userIdentity(post.userInteractionPersonaId || profilePersonaForPost(post)).name, avatar: userIdentity(post.userInteractionPersonaId || profilePersonaForPost(post)).avatar } } : {}), text: cleanText, replyTo, mentions: validMentions, mentionLabels: Object.fromEntries(validMentions.map(actorId => [actorId, mentionLabel(cleanText, actorId, authorId)])), createdAt: Date.now() };
         if (sticker) comment.sticker = sticker;
+        if (controls && authorId !== 'user') Object.assign(comment, controls.commentMetadata(post,replyTo,task));
+        else if (task) { comment.generationTaskId = task.id; comment.generationRound = task.round || 0; comment.discussionGeneration = task.discussionGeneration || 0; comment.discussionId = task.rootId || ''; }
         if (!Array.isArray(post.comments)) post.comments = [];
         post.comments.push(comment);
+        if (task) task.pendingComments = (task.pendingComments || 0) + 1;
         notice(post.authorId, authorId, post.id, '评论了你的动态', comment.id);
         if (replyTo) notice(post.comments.find(c => c.id === replyTo)?.authorId, authorId, post.id, '回复了你的评论', comment.id);
         comment.mentions.forEach(actorId => notice(actorId, authorId, post.id, '在评论中提到了你', comment.id));
@@ -1121,7 +1133,7 @@
     async function toggleLike(postId, actorId = 'user') {
         const post = findPost(postId);
         if (!post || !visibleTo(post, actorId)) return;
-        if (actorId === 'user' && post.authorId !== 'user' && !profilePersonaForPost(post)) { toast('请先在动态设置中指定这个角色认识的身份'); return; }
+        if (actorId === 'user' && post.authorId !== 'user' && !profilePersonaForPost(post)) { toast('请先在该角色的聊天设置中指定这个角色认识的身份'); return; }
         if (actorId === 'user') { post.userInteractionPersonaId = profilePersonaForPost(post); post.userLikePersonaId = post.userInteractionPersonaId; }
         if (!Array.isArray(post.likes)) post.likes = [];
         const index = post.likes.indexOf(actorId);
@@ -1139,7 +1151,7 @@
         const input = el('moments-comment-input');
         if (!post || (!input.value.trim() && !sticker)) return;
         if (input.dataset.replyTo && !post.comments?.some(item => item.id === input.dataset.replyTo && !item.deletedAt)) { clearReplyTarget(); toast('原评论已变化，请重新选择回复对象'); return; }
-        if (post.authorId !== 'user' && !profilePersonaForPost(post)) { toast('请先在动态设置中指定这个角色认识的身份'); return; }
+        if (post.authorId !== 'user' && !profilePersonaForPost(post)) { toast('请先在该角色的聊天设置中指定这个角色认识的身份'); return; }
         const mentions = Array.from(new Set((input.dataset.mentions || '').split(',').filter(actorId => actorId && visibleTo(post, actorId) && input.value.includes('@' + person(actorId)?.name))));
         const previousNotifications = ensure().notifications.slice();
         post.userInteractionPersonaId = profilePersonaForPost(post);
@@ -1152,7 +1164,10 @@
         renderDetail(post.id);
         renderFeed();
         toast('评论成功');
-        if (comment) generateReplies(post.id, comment.id).catch(error => console.error('动态回复生成失败', error));
+        if (comment) {
+            if (controls) await controls.commentEvents(post, [comment]);
+            else generateReplies(post.id, comment.id).catch(error => console.error('动态回复生成失败', error));
+        }
     }
     async function publish() {
         if (!state.compose) return;
@@ -1171,7 +1186,7 @@
             const groups = new Map();
             for (const actorId of recipients) {
                 const personaId = existing && selectedPersonaId === 'legacy' ? 'legacy' : knownPersonaId(actorId, selectedPersonaId);
-                if (!personaId) { toast(`${person(actorId)?.name || '角色'}绑定了多个人设，请先在动态设置中指定其认识的身份`); return; }
+                if (!personaId) { toast(`${person(actorId)?.name || '角色'}绑定了多个人设，请先在该角色的聊天设置中指定其认识的身份`); return; }
                 if (!groups.has(personaId)) groups.set(personaId, []);
                 groups.get(personaId).push(actorId);
             }
@@ -1185,7 +1200,7 @@
             const prior = existing ? structuredClone(existing) : null;
             const priorNotifications = m.notifications.slice();
             const priorEventsLength = m.activityEvents.length;
-            const viewMode = el('moments-compose-view-mode').value;
+            const viewMode = 'now';
             const created = [];
             const events = [];
             for (const [personaId, actorIds] of groups) {
@@ -1193,7 +1208,7 @@
                 const reminderIds = draft.reminderIds.filter(actorId => audienceIds.includes(actorId));
                 const mentions = draft.mentions.filter(actorId => audienceIds.includes(actorId) && mentionLabel(text, actorId, 'user', prior?.mentionLabels?.[actorId]));
                 const post = existing || { id: id('moment'), authorId: 'user', likes: [], comments: [], createdAt: Date.now() };
-                Object.assign(post, { kind: draft.kind, text: text.slice(0, 5000), media: draft.media.map(item => ({ ...item })), audienceIds, reminderIds, mentions, mentionLabels: Object.fromEntries(mentions.map(actorId => [actorId, mentionLabel(text, actorId, 'user', prior?.mentionLabels?.[actorId])])), viewerPersonaIds: Object.fromEntries(actorIds.map(actorId => [actorId, personaId])), authorPersonaId: personaId, authorSnapshot: prior?.authorSnapshot || { name: userIdentity(personaId).name, avatar: userIdentity(personaId).avatar }, viewMode: viewMode === 'default' ? m.settings.viewMode : viewMode });
+                Object.assign(post, { kind: draft.kind, text: text.slice(0, 5000), media: draft.media.map(item => ({ ...item })), audienceIds, reminderIds, mentions, mentionLabels: Object.fromEntries(mentions.map(actorId => [actorId, mentionLabel(text, actorId, 'user', prior?.mentionLabels?.[actorId])])), viewerPersonaIds: Object.fromEntries(actorIds.map(actorId => [actorId, personaId])), authorPersonaId: personaId, authorSnapshot: prior?.authorSnapshot || { name: userIdentity(personaId).name, avatar: userIdentity(personaId).avatar }, viewMode: 'now', revision: (prior?.revision || 0) + (existing ? 1 : 0) });
                 if (!post.seenBy || typeof post.seenBy !== 'object') post.seenBy = {};
                 if (!Array.isArray(post.viewResults)) post.viewResults = [];
                 if (post.kind === 'story') post.expiresAt = prior?.kind === 'story' ? prior.expiresAt : Date.now() + 24 * 3600000;
@@ -1219,22 +1234,32 @@
             renderFeed();
             switchScreen('moments-screen');
             toast(existing ? '修改成功' : created.length > 1 ? `已按 ${created.length} 个身份分别发布` : '发布成功');
-            for (const post of created) if (!existing && post.viewMode === 'now' && post.reminderIds.length) {
-                Promise.allSettled(post.reminderIds.map(actorId => viewPostForActor(post.id, actorId, true))).then(() => renderPostAfterChange(post.id));
+            for(const post of created){
+                const addedReminders=existing?(post.reminderIds||[]).filter(a=>!prior.reminderIds?.includes(a)):[];
+                const viewers=existing?(post.audienceIds||[]).filter(a=>!post.seenBy?.[a]||addedReminders.includes(a)):post.audienceIds;
+                if(controls)await controls.postEvent(post,{actorIds:viewers,reminderIds:addedReminders});
+                else Promise.allSettled((viewers||[]).filter(a=>a!=='user'&&person(a)&&actorMayWatch(a)).map(a=>viewPostForActor(post.id,a,true))).then(()=>renderPostAfterChange(post.id));
             }
         } finally { button.disabled = false; }
     }
-    function apiConfig() {
+    function apiConfig(actorId) {
         const background = db.backgroundApiSettings;
         const fallback = typeof isApiConfigReady === 'function' && isApiConfigReady(background) ? background : db.apiSettings;
-        return typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('moments', fallback) : fallback;
+        const owner = actorId ? findCharacter(actorId) || (db.characters || []).find(char => char.id === ensure().contacts.find(contact => contact.actorId === actorId)?.ownerCharId) : null;
+        return typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('moments', fallback, owner) : fallback;
     }
-    async function askAI(prompt) {
-        const config = apiConfig();
+    async function askAI(prompt, actorId, task = null) {
+        const config = apiConfig(actorId);
         if (!(typeof isApiConfigReady === 'function' ? isApiConfigReady(config) : config?.url && config?.model && config?.key)) throw new Error('请先配置动态可用的 API');
         let url = String(config.url).replace(/\/+$/, '');
+        if(actorId){const post=task?.postId?findPost(task.postId):null;const user=userIdentity(interactionPersonaId(actorId,post));prompt=(interactionContextFor(actorId,post)+'\n'+prompt+'\n'+(controls?.discussionPrompt(actorId,task)||'')).replace(/\{\{user\}\}/gi,user.baseName||user.name).replace(/\{\{char\}\}/gi,person(actorId)?.character?.realName||person(actorId)?.name||'角色');}
         const body = { model: config.model, messages: [{ role: 'user', content: prompt }], temperature: config.temperature ?? 0.85 };
-        const response = await fetchAiResponse(config, body, { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (config.key || '') }, url + '/v1/chat/completions');
+        const requestOptions = controls?.requestOptions(actorId, task);
+        let response, requestError;
+        try { response = await fetchAiResponse(config, body, { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (config.key || '') }, url + '/v1/chat/completions', false, requestOptions); }
+        catch (error) { requestError = error; throw error; }
+        finally { requestOptions?.release(requestError); }
+        if (controls && !controls.valid(task)) throw new Error('动态任务已取消或评论已变化，返回内容未写入');
         const value = String(response || '');
         const start = value.indexOf('{');
         const end = value.lastIndexOf('}');
@@ -1246,6 +1271,15 @@
         parsed.__rawResponse = value;
         return parsed;
     }
+    async function askForActors(prompt,actorIds,resultKey,task=null) {
+        const result={[resultKey]:[]};
+        // Each request uses the actor's own API binding and private context.
+        for(const actorId of actorIds){
+            const response=await askAI(prompt+'\n本次仅扮演 ID '+actorId+'；只返回此人的动作或回复。',actorId,task?{...task,actorIds:[actorId]}:null);
+            result[resultKey].push(...(Array.isArray(response[resultKey])?response[resultKey]:[]).filter(item=>item.actorId===actorId));
+        }
+        return result;
+    }
     function recentContextFor(actorId) {
         const own = findCharacter(actorId);
         const contact = ensure().contacts.find(c => c.actorId === actorId && c.kind === 'npc');
@@ -1254,9 +1288,42 @@
         const posts = ensure().posts.filter(post => visibleTo(post, actorId) && (post.authorId === actorId || post.seenBy?.[actorId])).sort((a, b) => b.createdAt - a.createdAt).slice(0, 6).map(post => `${aiName(post.authorId, actorId, profilePersonaForPost(post))}：${postSummary(post)}`).join('\n');
         const ownBooks = (owner?.worldBookIds || []).map(bookId => (db.worldBooks || []).find(book => book.id === bookId)).filter(book => book && !book.disabled);
         const relevantBooks = contact ? boundWorldBooks(contact) : [];
-        const books = [...new Map([...relevantBooks, ...ownBooks].map(book => [book.id, book])).values()];
+        const books = [...new Map((contact?relevantBooks:ownBooks).map(book => [book.id,book])).values()];
         const world = books.slice(0, contact?.worldBookBinding ? 8 : 2).map(book => String(book.content || '').slice(0, contact?.worldBookBinding ? 500 : 350)).join('\n');
         return { history, posts, world };
+    }
+    function interactionPersonaId(actorId, post = null) {
+        return post?.authorId==='user'?profilePersonaForPost(post):post?.authorId===actorId?post.userRecipientPersonaId||knownPersonaId(actorId):post?.viewerPersonaIds?.[actorId]||knownPersonaId(actorId);
+    }
+    function interactionContextFor(actorId, post = null) {
+        const actor=person(actorId), character=findCharacter(actorId), contact=actor?.contact;
+        const personaId=interactionPersonaId(actorId,post);
+        const user=userIdentity(personaId), binding=(db.myPersonaPresets||[]).find(p=>p.id===personaId)?.bindings?.[character?.id];
+        const matches=!!character&&knownPersonaId(actorId)===personaId;
+        const userPersona=binding?(binding.override?binding.extraPersona||'':[user.persona,binding.extraPersona].filter(Boolean).join('\n')):matches?character.myPersona||user.persona:user.persona;
+        const replace=text=>String(text||'').replace(/\{\{user\}\}/gi,user.baseName||user.name).replace(/\{\{char\}\}/gi,actor?.character?.realName||actor?.baseName||actor?.name||'角色');
+        const parts=['私聊、共同记忆和人设里的未公开信息仅用于理解关系与心情；发表评论时不要向其他可见对象泄露这些内容。',`你的身份：${aiName(actorId,actorId)}。你的人设：${replace(actor?.persona)||'未提供'}。`, `本次用户身份：${user.baseName||user.name}；动态显示名：${user.name}。用户人设：${replace(userPersona)||'未提供'}。`];
+        if(character&&matches){
+            const history=(character.history||[]).filter(m=>!m.isContextDisabled&&(!m.userPersonaId||m.userPersonaId===personaId)).slice(-12).map(m=>`${m.role==='user'?user.baseName||user.name:actor.name}：${String(m.content||'')}`).join('\n');
+            if(history)parts.push('你们已有的私聊与关系经历（延续这些背景，不要仅因动态名字不同就重新判断为陌生人）：\n'+replace(history));
+            let memory='';
+            if(character.memoryMode==='table'&&typeof getMemoryTableContextBlock==='function')memory=getMemoryTableContextBlock(character);
+            else if(character.memoryMode==='vector'&&typeof getVectorMemoryContextBlock==='function')memory=getVectorMemoryContextBlock(character);
+            else memory=(character.memoryJournals||[]).filter(j=>j.isFavorited&&(!j.userPersonaId||j.userPersonaId===personaId)).map(j=>`${j.title||''}：${j.content||''}`).join('\n');
+            if(memory)parts.push('你们的共同记忆：\n'+replace(memory));
+        }
+        if(contact){parts.push(`你与${aiName(charActor(contact.ownerCharId),actorId)}的关系：${contact.relationship||'未提供'}。你与用户的关系以自己的人设和亲历记录为准，所属角色的私聊不会传给你。`);}
+        const books=character?(db.worldBooks||[]).filter(b=>!b.disabled&&(character.worldBookIds||[]).includes(b.id)):boundWorldBooks(contact);
+        if(books.length)parts.push('适用的世界背景：\n'+books.map(b=>replace(b.content)).join('\n'));
+        const activity=activityContext(actorId);if(activity)parts.push('你亲历的动态操作：\n'+replace(activity));
+        if(post){
+            parts.push(`这条动态由${aiName(post.authorId,actorId,profilePersonaForPost(post))}发布。`);
+            if(post.reminderIds?.includes(actorId))parts.push('用户专门提醒你看这条动态；你知道自己收到了这次提醒。');
+            else parts.push('这次观看没有用户专门提醒你的信息。');
+            const media=(post.media||[]).map(m=>m.description||m.prompt||m.transcript||m.name||(m.type==='image'?'[图片，未提供识别结果]':m.type==='audio'?'[音频，未提供转写]':'')).filter(Boolean);
+            if(media.length)parts.push('动态媒体信息：'+media.join('；'));
+        }
+        return parts.join('\n');
     }
     function audienceForActor(actorId) {
         const character = findCharacter(actorId);
@@ -1274,14 +1341,21 @@
         const character = findCharacter(actorId) || (db.characters || []).find(c => c.id === ensure().contacts.find(contact => contact.actorId === actorId)?.ownerCharId);
         return character ? characterSettings(character) : { imageMode: 'off', voiceMode: 'off' };
     }
-    async function generatePost(actorId, kind = 'post', manual = false, feedback = null) {
+    async function generatePost(actorId, kind = 'post', manual = false, feedback = null, task = null) {
         const actor = person(actorId);
         if (!actor || actorId === 'user') return false;
+        task ||= controls?.context(manual ? 'manual' : 'chat', [actorId]) || { source: manual ? 'manual' : 'chat' };
+        task.publicationKind = kind;
+        if (!publicationEnabled(actorId, kind, task.source)) { if (manual) toast('请先允许角色发布' + (kind === 'story' ? ' Story' : '动态')); return false; }
+        if (controls) {
+            if (!controls.publicationAllowed(actorId, kind, task)) { if (manual) toast('当前设置暂停了调用或已达到发布限制'); return false; }
+            if (!controls.settings(actorId).requests.postContent) { if (manual) toast('未允许额外生成动态正文'); return false; }
+        }
         const ownCharacter = findCharacter(actorId);
         if (ownCharacter && !characterSettings(ownCharacter)[kind === 'story' ? 'storyEnabled' : 'postEnabled']) { if (manual) toast('请先开启角色自主发布开关'); return false; }
         const contact = ensure().contacts.find(c => c.actorId === actorId && c.kind === 'npc');
         const owner = contact && (db.characters || []).find(c => c.id === contact.ownerCharId);
-        if (contact && !ownCharacter && (!contact.enabled || !owner || !characterSettings(owner).contactsEnabled || !contact[kind === 'story' ? 'mayStory' : 'mayPost']) && !manual) return false;
+        if (contact && !ownCharacter && (!contact.enabled || !owner || !characterSettings(owner).contactsEnabled || !(controls?controls.preferences(actorId)[kind==='story'?'storyEnabled':'postEnabled']:contact[kind==='story'?'mayStory':'mayPost'])) && !manual) return false;
         const context = recentContextFor(actorId);
         const audience = audienceForActor(actorId).filter((value, index, list) => list.indexOf(value) === index && person(value));
         const socialUserName = knownPersonaId(actorId) ? aiName('user', actorId, knownPersonaId(actorId)) : ownCharacter?.myName || owner?.myName || '用户';
@@ -1289,8 +1363,11 @@
         let prompt = `你是熟人动态模拟器。请只以“${aiName(actorId, actorId)}”的身份写一条${kind === 'story' ? '24小时限时 Story' : '日常动态'}。角色人设：${actor.persona || '未提供'}。你当前的个人签名：${actor.signature || '未设置'}。${contact ? `与${aiName(charActor(contact.ownerCharId), actorId)}的关系：${contact.relationship || '朋友'}。` : ''}${extraContext ? `\n此人自己的补充设定（未公开内容不得泄露）：\n${extraContext}\n` : ''}\n世界设定：${context.world || '无'}\n${context.history ? `该角色近期私聊（仅帮助理解心情，绝不能把聊天秘密、用户隐私或未公开内容转述给其他人）：\n${context.history}\n` : ''}你能看到的近期动态：\n${context.posts || '暂无'}\n你亲历的近期动态操作：\n${activityContext(actorId) || '暂无'}\n${promptRule('postGeneration')}若提及别人，只能提及已被允许查看本帖的人：${audience.map(id => `${id}=${id === 'user' ? socialUserName : aiName(id, actorId)}`).join('，')}。可选用的表情包：${stickerChoices(actorId) || '无'}。请返回严格 JSON 对象，不要 Markdown：{"text":"1到180字自然动态","imagePrompt":"适合配图时填写画面描述，否则留空","voiceText":"适合配语音时填写口语化短句，否则留空","stickerId":"适合配表情包时填写可用表情ID，否则留空","mentions":["被艾特者的ID"]}。`;
         prompt += bilingualContent.prompt(ownCharacter, 'moments', '动态正文及角色录制的语音文字');
         let result;
-        try { result = await askAI(prompt); }
-        catch (error) { console.error('动态生成失败', error); if (feedback) feedback.error = error.message || '动态生成失败'; if (manual) toast(error.message || '动态生成失败'); return false; }
+        if (controls?.settings(actorId).publish.habit) prompt += '\n用户设置的发布习惯：' + controls.settings(actorId).publish.habit;
+        try { result = await askAI(prompt, actorId, task); }
+        catch (error) { console.error('动态生成失败', error); if (feedback) feedback.error = error.message || '动态生成失败'; if (manual) toast(error.message || '动态生成失败'); if (task?.status === 'running') throw error; return false; }
+        if (controls && !controls.publicationAllowed(actorId, kind, task)) return false;
+        if (!publicationEnabled(actorId, kind, task.source)) return false;
         const text = String(result.text || '').trim().slice(0, 500);
         if (!text) { if (feedback) feedback.error = 'API 没有生成动态内容'; if (manual) toast('API 没有生成动态内容'); return false; }
         const settings = mediaSettingsFor(actorId);
@@ -1307,24 +1384,26 @@
         ensure().posts.push(post);
         const event = recordActivity(kind, actorId, post);
         post.mentions.forEach(id => notice(id, actorId, post.id, kind === 'story' ? '在 Story 中提到了你' : '在动态中提到了你'));
-        await persist();
+        if (!await persist()) { const m = ensure(); m.posts = m.posts.filter(p => p !== post); m.activityEvents = m.activityEvents.filter(e => e !== event); m.notifications = m.notifications.filter(n => n.postId !== post.id); if (manual) toast('动态保存失败'); return false; }
+        if (controls) { controls.published(post); await persist(); await controls.postEvent(post); }
         await deliverActivity(event);
         renderFeed();
         for (let index = 0; index < media.length; index++) {
             if (media[index].type === 'sticker') continue;
             const mode = media[index].type === 'image' ? settings.imageMode : settings.voiceMode;
-            if (mode === 'auto' || mode === 'ai') await generateMedia(post.id, index, false);
+            if ((mode === 'auto' || mode === 'ai') && (!controls || controls.valid(task) && controls.settings(actorId).requests[media[index].type === 'image' ? 'image' : 'voice'])) await generateMedia(post.id, index, false, task);
         }
         if (manual) toast('已生成动态');
         return true;
     }
-    async function generateMedia(postId, index, feedback = true) {
+    async function generateMedia(postId, index, feedback = true, task = null) {
         const post = findPost(postId);
         const item = post?.media?.[index];
         if (!item || item.status === 'working' || item.status === 'done') return;
         item.status = 'working';
         renderFeed();
         try {
+            if (controls && task) await controls.request(post.authorId, task);
             if (item.type === 'image') {
                 const result = await generateImageDispatch(item.prompt || post.text);
                 if (!result?.imageUrl) throw new Error('生图接口没有返回图片');
@@ -1340,6 +1419,7 @@
                 item.data = await fileToDataUrl(blob);
                 item.mime = blob.type || 'audio/mpeg';
             }
+            if (controls && !controls.valid(task)) { item.status = 'pending'; return; }
             item.status = 'done';
             await persist();
             if (feedback) toast('媒体生成成功');
@@ -1356,9 +1436,7 @@
         const ids = new Set();
         for (const actorId of post.audienceIds || []) {
             if (actorId === 'user' || actorId === post.authorId || !person(actorId)) continue;
-            const char = findCharacter(actorId);
-            if (char && characterSettings(char).interactEnabled) ids.add(actorId);
-            if ((db.characters || []).some(owner => characterSettings(owner).contactsEnabled && activeContactsFor(owner.id).some(contact => contact.actorId === actorId && contact.mayInteract))) ids.add(actorId);
+            if (actorMayInteract(actorId) && visibleTo(post, actorId)) ids.add(actorId);
         }
         return [...ids];
     }
@@ -1371,7 +1449,7 @@
         let prompt = `你正在模拟一条熟人动态下自然发生的互动。原作者：${aiName(post.authorId, '', profilePersonaForPost(post))}；内容：${postSummary(post)}。可参与者：\n${actorDescriptions}\n请结合各自人设及关系决定谁会点赞、谁会评论，也可以有人完全不互动。评论应短而有区别，不要每人都夸赞，不要重复。只允许从给出的 ID 中选择。各人的可用表情包：${candidates.map(actorId => `${actorId}：${stickerChoices(actorId) || '无'}`).join('；')}。只返回 JSON：{"actions":[{"actorId":"ID","like":true,"comment":"评论，可空","stickerId":"可用表情ID，可空","mentions":["可见者ID"]}]}。最多 ${Math.min(candidates.length, 4)} 人行动。`;
         prompt += candidates.map(actorId => bilingualContent.prompt(findCharacter(actorId), 'moments', `ID ${actorId}（${person(actorId)?.name}）自己写的评论`)).join('');
         try {
-            const result = await askAI(prompt);
+            const result = await askForActors(prompt, candidates, 'actions');
             if (findPost(postId) !== post) return;
             const eventStart = ensure().activityEvents.length;
             const allowed = new Set(candidates);
@@ -1389,7 +1467,7 @@
             if (state.currentPostId === post.id && el('moments-detail-screen').classList.contains('active')) renderDetail(post.id);
         } catch (error) { console.error('动态互动 API 失败', error); }
     }
-    async function generateReplies(postId, commentId) {
+    async function generateReplies(postId, commentId, task = null) {
         const post = findPost(postId);
         const comment = post?.comments?.find(item => item.id === commentId);
         if (!post || !comment || comment.deletedAt) return;
@@ -1398,26 +1476,42 @@
         const originalText = comment.text;
         const candidateIds = candidatesForPost(post);
         const author = findCharacter(post.authorId);
-        if (author && characterSettings(author).interactEnabled) candidateIds.unshift(post.authorId);
-        const candidates = [...new Set(candidateIds)].filter(actorId => actorId !== comment.authorId && (post.authorId === actorId || post.seenBy?.[actorId]) && canSeeInteraction(post, actorId, comment.authorId, comment.authorPersonaId)).slice(0, 8);
+        if (author && characterSettings(author).interactEnabled || controls && actorMayInteract(post.authorId)) candidateIds.unshift(post.authorId);
+        let candidates = [...new Set(candidateIds)].filter(actorId => actorId !== comment.authorId && (post.authorId === actorId || post.seenBy?.[actorId]) && canSeeInteraction(post, actorId, comment.authorId, comment.authorPersonaId));
+        if (controls) { task ||= controls.context(comment.authorId === 'user' ? 'userComment' : 'aiComment', candidates, post, comment); candidates = controls.candidates(post, comment, candidates.filter(a => task.actorIds.includes(a)), task.source, task); task.actorIds = candidates; }
+        else candidates = candidates.slice(0, 8);
         if (!candidates.length) return;
-        let prompt = `以下是一条熟人动态及新评论。动态作者：${postAuthorName(post)}；动态：${postSummary(post)}；${commentAuthorName(post, comment)}评论：“${commentSummary(comment)}”。可回复的人：\n${candidates.map(actorId => `${actorId}：${person(actorId)?.name}，${String(person(actorId)?.persona || '').slice(0, 180)}；表情包：${stickerChoices(actorId) || '无'}`).join('\n')}\n请自然决定是否有人会接话，可以无人回复。不要机械附和，回复要与对话相关且各有说话习惯。只返回 JSON：{"replies":[{"actorId":"给定ID","text":"简短回复，可空","stickerId":"可用表情ID，可空"}]}。最多 2 人。`;
+        let prompt = `以下是一条熟人动态及新评论。动态作者：${postAuthorName(post)}；动态：${postSummary(post)}；${commentAuthorName(post, comment)}评论：“${commentSummary(comment)}”。可回复的人：\n${candidates.map(actorId => `${actorId}：${person(actorId)?.name}，参与者；表情包：${stickerChoices(actorId) || '无'}`).join('\n')}\n请自然决定是否有人会接话，可以无人回复。不要机械附和，回复要与对话相关且各有说话习惯。只返回 JSON：{"replies":[{"actorId":"给定ID","text":"简短回复，可空","stickerId":"可用表情ID，可空"}]}。最多 2 人。`;
         prompt += candidates.map(actorId => bilingualContent.prompt(findCharacter(actorId), 'moments', `ID ${actorId}（${person(actorId)?.name}）自己写的回复`)).join('');
         try {
-            const result = await askAI(prompt);
+            if (controls) {
+                const limits = candidates.map(a => controls.settings(a, post, controls.thread(post, comment)).discussion.perActor);
+                prompt = prompt.replace('最多 2 人。', `参与人数不超过 ${candidates.length} 人。各人每轮最多条数：${candidates.map((a,i) => a + '=' + (limits[i] || '不限')).join('；')}。可以无人回复，不要求凑数。现有可见评论：${(post.comments || []).filter(c => !c.deletedAt && candidates.every(a => canSeeInteraction(post, a, c.authorId, c.authorPersonaId))).slice(-12).map(c => commentAuthorName(post,c) + '：' + commentSummary(c)).join('；')}`);
+            }
+            const result = await askForActors(prompt, candidates, 'replies', task);
             if (findPost(postId) !== post || !post.comments?.includes(comment) || comment.deletedAt || (comment.revision || 0) !== revision || (comment.replyGeneration || 0) !== replyGeneration || comment.text !== originalText) return;
             const eventStart = ensure().activityEvents.length;
-            const used = new Set();
-            for (const reply of (Array.isArray(result.replies) ? result.replies : []).slice(0, 2)) {
+            const used = new Map(), added = [];
+            for (const reply of (Array.isArray(result.replies) ? result.replies : []).slice(0, controls ? undefined : 2)) {
                 const sticker = reply.stickerId ? stickerSnapshot(String(reply.stickerId), reply.actorId) : null;
-                if (!candidates.includes(reply.actorId) || used.has(reply.actorId) || (!String(reply.text || '').trim() && !sticker)) continue;
-                used.add(reply.actorId);
-                addComment(post, reply.actorId, String(reply.text || '').slice(0, 300), comment.id, [], sticker);
+                const limit = controls ? controls.settings(reply.actorId, post, controls.thread(post, comment)).discussion.perActor : 1;
+                if (!candidates.includes(reply.actorId) || (limit && (used.get(reply.actorId) || 0) >= limit) || (!String(reply.text || '').trim() && !sticker)) continue;
+                used.set(reply.actorId, (used.get(reply.actorId) || 0) + 1);
+                const created = addComment(post, reply.actorId, String(reply.text || '').slice(0, 300), comment.id, [], sticker, task);
+                if (created) added.push(created);
             }
-            await persist();
+            if (!await persist()) {
+                const ids = new Set(added.map(c => c.id)), m = ensure();
+                post.comments = post.comments.filter(c => !ids.has(c.id));
+                m.notifications = m.notifications.filter(n => !ids.has(n.commentId));
+                m.activityEvents = m.activityEvents.filter(e => !ids.has(e.commentId));
+                if (task) task.pendingComments = 0;
+                throw new Error('回复保存失败，未启动后续接话');
+            }
+            if (controls) await controls.commentEvents(post, added, task);
             for (const event of ensure().activityEvents.slice(eventStart)) await deliverActivity(event);
             renderPostAfterChange(post.id);
-        } catch (error) { console.error('动态回复 API 失败', error); }
+        } catch (error) { if (controls && !controls.valid(task)) return; console.error('动态回复 API 失败', error); if (task?.status === 'running') throw error; }
     }
     function replyBranch(post, directReplies) {
         const ids = new Set(directReplies.map(item => item.id));
@@ -1443,7 +1537,7 @@
         try {
             let prompt = `以下是一条熟人动态及用户修改后的评论。动态作者：${postAuthorName(post)}；动态：${postSummary(post)}；${commentAuthorName(post, comment)}评论：“${commentSummary(comment)}”。需要重新回复的原回复（按顺序逐条替换）：\n${oldReplies.map(reply => `${reply.id}：${reply.authorId} ${person(reply.authorId)?.name}，${String(person(reply.authorId)?.persona || '').slice(0, 180)}；表情包：${stickerChoices(reply.authorId) || '无'}`).join('\n')}\n请让每条原回复的作者按修改后的评论重新回复。不要沿用修改前的内容；同一角色有多条原回复时，也要分别给出相同数量的新回复。只返回 JSON：{"replies":[{"replyId":"原回复ID","actorId":"给定角色ID","text":"简短回复，可空","stickerId":"可用表情ID，可空"}]}。每个原回复ID恰好对应一条。`;
         prompt += actorIds.map(actorId => bilingualContent.prompt(findCharacter(actorId), 'moments', `ID ${actorId}（${person(actorId)?.name}）自己写的回复`)).join('');
-            const result = await askAI(prompt);
+            const result = await askForActors(prompt, actorIds, 'replies', controls?.context('regenerate', actorIds, post, comment));
             const currentReplyIds = (post.comments || []).filter(item => item.replyTo === commentId && item.authorId !== 'user' && !item.deletedAt).map(item => item.id);
             if (findPost(postId) !== post || !post.comments?.includes(comment) || comment.deletedAt || (comment.revision || 0) !== revision || comment.text !== originalText || currentReplyIds.length !== oldReplyIds.length || currentReplyIds.some((replyId, index) => replyId !== oldReplyIds[index])) { toast('评论或回复已变化，本次生成未替换原回复'); return; }
             const replacements = [];
@@ -1466,7 +1560,7 @@
             post.archivedCommentReplies = [...(previousArchive || []), { parentCommentId: commentId, previousText: previousBasis ?? originalText, comments: archived, archivedAt: Date.now() }];
             comment.replyBasisText = originalText;
             comment.replyGeneration = (comment.replyGeneration || 0) + 1;
-            for (const replacement of replacements) addComment(post, replacement.actorId, replacement.text, commentId, [], replacement.sticker);
+            for (const replacement of replacements) addComment(post, replacement.actorId, replacement.text, commentId, [], replacement.sticker, controls?.context('regenerate', actorIds, post, comment));
             let saved = false;
             try { saved = await persist(); } catch (error) { console.error('动态重新回复保存失败', error); }
             if (!saved) {
@@ -1715,7 +1809,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
                     while (pool.slots.length && !batch.cancelled && state.batch === batch) {
                         const requestedSlots = pool.slots.slice(0, 4);
                         batchProgress(batch, `正在生成第 ${index + 1} 组的人脉…`, `本次请求 ${requestedSlots.length} 人，等待 AI 返回`);
-                        const result = await askAI(batchPrompt(pool.requestGroup, requestedSlots.length, batch));
+                        const result = await askAI(batchPrompt(pool.requestGroup, requestedSlots.length, batch), charActor(pool.requestGroup.ownerCharId));
                         if (batch.cancelled || state.batch !== batch) break;
                         const before = batch.candidates.length;
                         const returned = Array.isArray(result.contacts) ? result.contacts : [];
@@ -1829,7 +1923,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         renderBatchCandidates();
         try {
             const requestGroup = previous.slotIndex >= 0 ? batchPerson(group, previous.slotIndex) : group;
-            const result = await askAI(batchPrompt(requestGroup, 1, batch) + `\n不要使用刚才的姓名“${previous.name}”，请给出另一个不同候选人。`);
+            const result = await askAI(batchPrompt(requestGroup, 1, batch) + `\n不要使用刚才的姓名“${previous.name}”，请给出另一个不同候选人。`, charActor(requestGroup.ownerCharId));
             if (state.batch !== batch || batch.cancelled) return;
             const candidate = normalizeBatchCandidate(result.contacts?.[0], requestGroup, previous.groupIndex, batch, previous.slotIndex);
             if (!candidate) throw new Error('没有返回符合条件的新人脉');
@@ -1859,7 +1953,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         }
         const m = ensure();
         const previous = m.contacts;
-        const added = selected.map(c => ({ id: id('contact'), actorId: id('npc'), kind: 'npc', ownerCharId: c.ownerCharId, name: c.name.trim(), relationship: c.relationship.trim(), gender: c.gender.trim(), persona: c.persona.trim(), signature: c.signature.trim(), avatar: c.avatar, cover: c.cover, ...(Object.keys(c.extras).length ? { batchExtras: { ...c.extras } } : {}), ...(c.worldBookBinding ? { worldBookBinding: c.worldBookBinding } : {}), enabled: true, mayInteract: false, mayPost: false, mayStory: false }));
+        const added = selected.map(c => ({ id: id('contact'), actorId: id('npc'), kind: 'npc', ownerCharId: c.ownerCharId, name: c.name.trim(), relationship: c.relationship.trim(), gender: c.gender.trim(), persona: c.persona.trim(), signature: c.signature.trim(), avatar: c.avatar, cover: c.cover, ...(Object.keys(c.extras).length ? { batchExtras: { ...c.extras } } : {}), ...(c.worldBookBinding ? { worldBookBinding: c.worldBookBinding } : {}), enabled: true, preferences: {}, mayInteract: false, mayPost: false, mayStory: false }));
         batch.busy = true;
         el('moments-batch-save').disabled = true;
         m.contacts = [...previous, ...added];
@@ -1884,7 +1978,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         button.textContent = '生成中…';
         try {
             const existing = contactsFor(owner.id).map(c => person(c.actorId)?.name).filter(Boolean).join('、');
-            const result = await askAI(`请为角色“${owner.realName || owner.remarkName}”设计一位可信、能长期参与动态互动的人脉。角色人设：${owner.persona || '无'}。已有人脉：${existing || '无'}。避免与已有姓名重复，关系要具体，人物有独立生活和表达习惯。签名是此人愿意公开在主页的一句话，不要暴露私聊或秘密。只返回 JSON：{"name":"姓名或昵称","relationship":"与角色关系","persona":"80到180字的人设，包括日常生活、说话风格、对角色的态度","signature":"8到40字的个人签名"}。`);
+            const result = await askAI(`请为角色“${owner.realName || owner.remarkName}”设计一位可信、能长期参与动态互动的人脉。角色人设：${owner.persona || '无'}。已有人脉：${existing || '无'}。避免与已有姓名重复，关系要具体，人物有独立生活和表达习惯。签名是此人愿意公开在主页的一句话，不要暴露私聊或秘密。只返回 JSON：{"name":"姓名或昵称","relationship":"与角色关系","persona":"80到180字的人设，包括日常生活、说话风格、对角色的态度","signature":"8到40字的个人签名"}。`, charActor(owner.id));
             openEditor('npc', { name: String(result.name || '').slice(0, 40), relationship: String(result.relationship || '').slice(0, 40), persona: String(result.persona || '').slice(0, 1000), signature: String(result.signature || '').slice(0, 80) });
             state.editor.itemId = null;
             toast('已生成，请检查后保存');
@@ -1899,13 +1993,13 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         el('moments-friend-description').textContent = '对方会按自己的人设决定同意、拒绝或暂时忽略。';
         el('moments-friend-dialog').hidden = false;
     }
-    async function resolveFriendRequest(request) {
+    async function resolveFriendRequest(request, task = null) {
         const contact = ensure().contacts.find(c => c.actorId === request.actorId && c.kind === 'npc');
         if (!contact || request.status !== 'pending') return;
         try {
             const owner = person(charActor(contact.ownerCharId));
             const applicant = userIdentity(request.userPersonaId || knownPersonaId(contact.actorId));
-            const result = await askAI(`你是${aiName(contact.actorId, contact.actorId)}。人设：${contact.persona}。你当前主页签名：${contact.signature || '未设置'}。你与${aiName(charActor(contact.ownerCharId), contact.actorId)}的关系：${contact.relationship || '熟人'}。${aiName('user', contact.actorId, applicant.personaId)}申请与你成为好友并开启私聊。${promptRule('friendDecision')}只返回 JSON：{"decision":"accept/reject/ignore","tellOwner":false,"reason":"简短内心原因"}。`);
+            const result = await askAI(`你是${aiName(contact.actorId, contact.actorId)}。人设：${contact.persona}。你当前主页签名：${contact.signature || '未设置'}。你与${aiName(charActor(contact.ownerCharId), contact.actorId)}的关系：${contact.relationship || '熟人'}。${aiName('user', contact.actorId, applicant.personaId)}申请与你成为好友并开启私聊。${promptRule('friendDecision')}只返回 JSON：{"decision":"accept/reject/ignore","tellOwner":false,"reason":"简短内心原因"}。`, contact.actorId, task);
             request.raw = result.__rawResponse || '';
             request.checkedAt = Date.now();
             request.tellOwner = result.tellOwner === true;
@@ -1924,7 +2018,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
             if (request.tellOwner && result.decision !== 'ignore') request.ownerMessage = `${contact.name}${result.decision === 'accept' ? '同意' : '拒绝'}了用户的好友申请`;
             await persist();
             if (state.profileActorId === request.actorId && el('moments-profile-screen').classList.contains('active')) renderProfile(request.actorId);
-        } catch (error) { request.error = String(error.message || error); await persist(); console.error('人脉好友判断失败', error); }
+        } catch (error) { request.error = String(error.message || error); await persist(); console.error('人脉好友判断失败', error); if (task?.status === 'running') throw error; }
     }
     async function sendFriendRequest() {
         const actorId = state.friendActorId;
@@ -1938,28 +2032,51 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         toast('好友申请已发送');
         resolveFriendRequest(request);
     }
+    function actorMayWatch(actorId) {
+        const character=findCharacter(actorId);
+        if(character)return characterSettings(character).watchEnabled;
+        const contact=ensure().contacts.find(c=>c.actorId===actorId&&c.kind==='npc'), owner=contact&&(db.characters||[]).find(c=>c.id===contact.ownerCharId);
+        return !!(contact&&contact.enabled!==false&&owner&&characterSettings(owner).contactsEnabled&&(!controls||controls.preferences(actorId).watchEnabled));
+    }
+    function viewStatus(postId,actorId,status,summary,task=null) {
+        const post=findPost(postId);if(!post)return null;
+        post.viewResults||=[];
+        let log=task&&post.viewResults.find(l=>l.taskId===task.id);
+        if(!log){log={actorId,createdAt:Date.now(),raw:'',taskId:task?.id||'',reminded:post.reminderIds?.includes(actorId)===true};post.viewResults.push(log);}
+        Object.assign(log,{status,summary});
+        renderPostAfterChange(postId);
+        if(state.resultPostId===postId&&!el('moments-result-dialog').hidden)showResult(postId);
+        return log;
+    }
     function actorMayInteract(actorId) {
         const character = findCharacter(actorId);
         if (character) return characterSettings(character).interactEnabled;
         const contact = ensure().contacts.find(c => c.actorId === actorId && c.kind === 'npc');
         const owner = contact && (db.characters || []).find(c => c.id === contact.ownerCharId);
-        return !!(contact?.enabled !== false && contact?.mayInteract && owner && characterSettings(owner).contactsEnabled);
+        return !!(contact&&contact.enabled!==false&&owner&&characterSettings(owner).contactsEnabled&&(controls?controls.settings(actorId).actions.interact:contact.mayInteract));
     }
-    async function applyActorAction(actorId, action) {
+    async function applyActorAction(actorId, action, task = null) {
         const post = findPost(String(action.postId || ''));
         if (!post || !visibleTo(post, actorId) || (post.kind === 'story' && post.expiresAt <= Date.now())) return { ok: false, reason: '无权查看或动态已失效' };
+        if (controls && (!controls.valid(task) || post.controlsPaused)) return { ok: false, reason: '动态任务已暂停或内容已变化' };
+        if (controls && action.type !== 'view' && !controls.settings(actorId, post).actions.interact) return { ok: false, reason: '当前设置未允许点赞评论动作' };
         if (action.type === 'view') {
             post.seenBy ||= {};
             const firstView = !post.seenBy[actorId];
+            const previousSeen=post.seenBy[actorId];
             post.seenBy[actorId] = Date.now();
             const event = firstView ? recordActivity('view', actorId, post, '', []) : null;
-            await persist();
+            if(!await persist()){if(previousSeen)post.seenBy[actorId]=previousSeen;else delete post.seenBy[actorId];if(event)ensure().activityEvents.splice(ensure().activityEvents.indexOf(event),1);return {ok:false,reason:'观看记录保存失败'};}
             await deliverActivity(event);
             return { ok: true, post };
         }
-        if (!actorMayInteract(actorId)) return { ok: false, reason: '点赞评论开关已关闭' };
+        if (!actorMayInteract(actorId)) return { ok: false, reason: '此对象关闭了点赞和评论' };
+        const permissions=controls?.settings(actorId,post).actions||characterSettings(findCharacter(actorId)||{momentsSettings:{interactEnabled:true}});
+        if(action.type==='like'&&permissions.like===false)return {ok:false,reason:'此对象设置为不点赞'};
+        if(action.type==='comment'&&(action.replyTo?permissions.reply===false:permissions.comment===false))return {ok:false,reason:action.replyTo?'此对象设置为不回复评论':'此对象设置为不发表评论'};
         if (!post.seenBy?.[actorId] && post.authorId !== actorId) return { ok: false, reason: '尚未观看这条动态' };
         const eventStart = ensure().activityEvents.length;
+        const before={likes:[...(post.likes||[])],comments:[...(post.comments||[])],notifications:ensure().notifications.slice(),pending:task?.pendingComments||0};
         if (action.type === 'like') {
             post.likes ||= [];
             if (!post.likes.includes(actorId)) { post.likes.push(actorId); notice(post.authorId, actorId, post.id, '赞了你的动态'); recordActivity('like', actorId, post, '', [post.authorId]); }
@@ -1968,10 +2085,12 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
             if (replyTo && !post.comments?.some(c => c.id === replyTo && !c.deletedAt && canSeeInteraction(post, actorId, c.authorId, c.authorPersonaId))) return { ok: false, reason: '要回复的评论不可见' };
             const sticker = action.stickerId ? stickerSnapshot(action.stickerId, actorId) : null;
             if (action.stickerId && !sticker) return { ok: false, reason: '表情包不可用' };
-            if (!addComment(post, actorId, String(action.text || '').slice(0, 300), replyTo, [], sticker)) return { ok: false, reason: '评论内容为空' };
+            const blocked=controls?.commentBlockReason(post,actorId,replyTo,task);if(blocked)return {ok:false,reason:blocked};
+            if (!addComment(post, actorId, String(action.text || '').slice(0, 300), replyTo, [], sticker, task)) return { ok: false, reason: '评论为空或回复对象已失效' };
         } else return { ok: false, reason: '未知操作' };
-        await persist();
+        if(!await persist()){post.likes=before.likes;post.comments=before.comments;ensure().notifications=before.notifications;ensure().activityEvents.splice(eventStart);if(task)task.pendingComments=before.pending;return {ok:false,reason:'互动保存失败，未写入评论或点赞'};}
         for (const event of ensure().activityEvents.slice(eventStart)) await deliverActivity(event);
+        if (controls && action.type === 'comment') await controls.commentEvents(post, post.comments.filter(c => ensure().activityEvents.slice(eventStart).some(e => e.commentId === c.id)), task);
         renderPostAfterChange(post.id);
         return { ok: true, post };
     }
@@ -1995,83 +2114,84 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         if (state.currentPostId === postId && el('moments-detail-screen').classList.contains('active')) switchScreen('moments-screen');
         return { ok: true };
     }
-    async function viewPostForActor(postId, actorId, immediate = false, feedback = null) {
-        const post = findPost(postId);
-        if (!post || !visibleTo(post, actorId) || !person(actorId)) return;
-        const log = { actorId, createdAt: Date.now(), status: 'running', summary: '正在观看…', raw: '' };
-        post.viewResults ||= [];
-        post.viewResults.push(log);
-        if (post.viewResults.length > 40) post.viewResults.splice(0, post.viewResults.length - 40);
-        await persist();
-        renderPostAfterChange(postId);
-        let interacted = false;
-        try {
-            const actor = person(actorId);
-            const contact = ensure().contacts.find(c => c.actorId === actorId && c.kind === 'npc');
-            const owner = contact && person(charActor(contact.ownerCharId));
-            const canInteract = actorMayInteract(actorId);
-        const comments = (post.comments || []).filter(c => !c.deletedAt && canSeeInteraction(post, actorId, c.authorId, c.authorPersonaId)).slice(-8);
-            const result = await askAI(`你是${aiName(actorId, actorId)}，人设：${actor.persona || '未提供'}。你当前主页签名：${actor.signature || '未设置'}。${owner ? `你与${aiName(charActor(contact.ownerCharId), actorId)}的关系：${contact.relationship || '熟人'}。` : ''}你刚看了${aiName(post.authorId, actorId, profilePersonaForPost(post))}的${post.kind === 'story' ? 'Story' : '动态'}：${postContextText(post, 700)}。现有评论：${comments.map(c => `${c.id} ${aiName(c.authorId, actorId, c.authorPersonaId || profilePersonaForPost(post))}：${commentSummary(c)}`).join('；') || '无'}。${promptRule('viewDecision')}${canInteract ? `你可点赞和评论。可用表情包：${stickerChoices(actorId) || '无'}。` : '你的点赞评论能力未开启，只能观看。'}${bilingualContent.prompt(findCharacter(actorId), 'moments', '角色自己的评论文字')}只返回 JSON：{"like":false,"comment":"可留空","replyTo":"要回复的评论ID，可留空","stickerId":"可用表情ID，可留空","thought":"简短说明本次决定"}。`);
-            log.raw = result.__rawResponse || '';
-            const viewed = await applyActorAction(actorId, { type: 'view', postId });
-            if (!viewed.ok) throw new Error(viewed.reason);
-            const actions = [];
-            if (canInteract && result.like === true) { const applied = await applyActorAction(actorId, { type: 'like', postId }); if (applied.ok) actions.push('点赞'); }
-            if (canInteract && (String(result.comment || '').trim() || result.stickerId)) { const applied = await applyActorAction(actorId, { type: 'comment', postId, text: result.comment, replyTo: result.replyTo, stickerId: result.stickerId }); if (applied.ok) actions.push(result.replyTo ? '回复' : '评论'); }
-            log.status = 'done';
-            interacted = actions.length > 0;
-            log.summary = `${actor.name}已观看${actions.length ? '，并' + actions.join('、') : '，没有互动'}${result.thought ? '；' + String(result.thought).slice(0, 120) : ''}`;
-        } catch (error) {
-            log.status = 'error'; log.summary = `${person(actorId)?.name || '角色'}观看失败：${error.message || error}`; log.raw = String(error.rawResponse || error.stack || error);
-            if (feedback) feedback.error = error.message || '浏览动态失败';
-            if (typeof showErrorModal === 'function') showErrorModal(log.summary, log.raw);
+    async function viewPostForActor(postId,actorId,immediate=false,feedback=null,task=null) {
+        const post=findPost(postId);if(!post||!visibleTo(post,actorId)||!person(actorId))return;
+        if(controls)task||=controls.context(immediate?'view':'chatPrep',[actorId],post);
+        if(controls&&!controls.allowed(actorId,task.source,post)){viewStatus(postId,actorId,'blocked','未观看：此对象的观看设置已关闭',task);await persist();return;}
+        const log=viewStatus(postId,actorId,'running',`${person(actorId).name}正在观看…`,task);
+        try{
+            if(!await persist())throw new Error('观看记录保存失败，未发送请求');
+            const comments=(post.comments||[]).filter(c=>!c.deletedAt&&canSeeInteraction(post,actorId,c.authorId,c.authorPersonaId)).slice(-12);
+            const allowed=controls?.settings(actorId,post).actions||{like:actorMayInteract(actorId),comment:actorMayInteract(actorId),reply:actorMayInteract(actorId)};
+            const result=await askAI(`你现在已经打开这条${post.kind==='story'?'Story':'动态'}：${postContextText(post,5000)}。现有可见评论：${comments.map(c=>`${c.id} ${aiName(c.authorId,actorId,c.authorPersonaId||profilePersonaForPost(post))}：${commentSummary(c)}`).join('；')||'无'}。${promptRule('viewDecision')}允许动作：${allowed.like?'点赞、':''}${allowed.comment?'发表评论、':''}${allowed.reply?'回复评论':''}；未允许的动作留空。表情包：${stickerChoices(actorId)||'无'}。${bilingualContent.prompt(findCharacter(actorId),'moments','角色自己的评论文字')}只返回 JSON：{"like":false,"comment":"可留空","replyTo":"可见评论ID，可留空","stickerId":"可用表情ID，可留空","thought":"简短说明本次决定"}。`,actorId,task);
+            log.raw=result.__rawResponse||'';
+            if(findPost(postId)!==post)throw new Error('动态已删除');
+            const viewed=await applyActorAction(actorId,{type:'view',postId},task);if(!viewed.ok)throw new Error(viewed.reason);
+            const actions=[], blocked=[];
+            if(result.like===true){const applied=await applyActorAction(actorId,{type:'like',postId},task);if(applied.ok)actions.push('点赞');else blocked.push(applied.reason);}
+            if(String(result.comment||'').trim()||result.stickerId){const applied=await applyActorAction(actorId,{type:'comment',postId,text:result.comment,replyTo:result.replyTo,stickerId:result.stickerId},task);if(applied.ok)actions.push(result.replyTo?'回复评论':'评论');else blocked.push(applied.reason);}
+            log.status=blocked.length?'blocked':'done';
+            log.summary=`${person(actorId).name}已观看${actions.length?'，并'+actions.join('、'):blocked.length?'，互动未执行':'，选择不回应'}${blocked.length?'：'+[...new Set(blocked)].join('；'):''}`;
+            log.decision=String(result.thought||'');
+            if(!await persist())throw new Error('观看结果保存失败');
+            if(feedback)feedback.action=actions.length?'浏览并互动':'浏览动态';
+        }catch(error){
+            const cancelled=controls&&!controls.valid(task);
+            log.status=cancelled?'cancelled':'error';log.summary=`${person(actorId)?.name||'角色'}${cancelled?'观看已取消：动态或设置发生变化':'观看失败：'+(error.message||error)}`;
+            log.raw=String(error.rawResponse||log.raw||error.message||error);
+            if(feedback)feedback.error=error.message||'观看失败';
+            await persist();renderPostAfterChange(postId);if(state.resultPostId===postId&&!el('moments-result-dialog').hidden)showResult(postId);
+            if(task?.status==='running'&&!cancelled)throw error;
+            return;
         }
-        await persist(); renderPostAfterChange(postId);
-        if (state.resultPostId === postId && !el('moments-result-dialog').hidden) showResult(postId);
-        if (feedback && log.status === 'done') feedback.action = interacted ? '浏览并互动' : '浏览动态';
+        renderPostAfterChange(postId);if(state.resultPostId===postId&&!el('moments-result-dialog').hidden)showResult(postId);
     }
     function showResult(postId) {
-        const post = findPost(postId);
-        if (!post || post.authorId !== 'user') return;
-        state.resultPostId = postId;
-        const logs = post.viewResults || [];
-        el('moments-result-content').innerHTML = `<p class="moments-hint">${post.viewMode === 'later' ? '过段时间观看' : '马上观看'} · ${post.reminderIds?.length || 0} 位提醒对象</p>${logs.length ? logs.map(log => `<p>${esc(log.summary || log.status)}</p><pre class="moments-result-log">${esc(log.raw || (log.status === 'running' ? '等待 API 返回…' : '没有原始返回内容'))}</pre>`).join('') : '<p class="moments-hint">还没有观看结果。未提醒的人不会被强制立即观看。</p>'}`;
-        el('moments-result-dialog').hidden = false;
+        const post=findPost(postId);if(!post||post.authorId!=='user')return;
+        state.resultPostId=postId;
+        const logs=post.viewResults||[], subjects=(post.audienceIds||[]).filter(a=>a!=='user'&&person(a));
+        const results=logs.length?logs.map(log=>`<div class="moments-view-result"><p>${esc(log.summary||log.status)}</p>${log.reminded?'<small class="moments-hint">已收到你的观看提醒</small>':''}${log.decision?`<p class="moments-hint">${esc(log.decision)}</p>`:''}${log.raw?`<details><summary>查看返回详情</summary><pre class="moments-result-log">${esc(log.raw)}</pre></details>`:''}</div>`).join(''):'<p class="moments-hint">'+(subjects.length?'观看正在安排中。':'这条动态仅自己可见。')+'</p>';
+        el('moments-result-content').innerHTML=`<p class="moments-hint">${subjects.length} 位可见对象 · ${post.reminderIds?.length||0} 位收到提醒</p>${results}`;
+        el('moments-result-dialog').hidden=false;
     }
-    async function autonomousActivity(actorId, force = false, feedback = null) {
+    async function autonomousActivity(actorId, force = false, feedback = null, task = null) {
         const actor = person(actorId);
         if (!actor) return false;
         const character = findCharacter(actorId);
         const contact = ensure().contacts.find(c => c.actorId === actorId && c.kind === 'npc');
         const owner = contact && (db.characters || []).find(c => c.id === contact.ownerCharId);
-        const settings = character ? characterSettings(character) : owner && characterSettings(owner).contactsEnabled && contact.enabled !== false ? { postEnabled: contact.mayPost, storyEnabled: contact.mayStory, browseEnabled: contact.mayInteract, interactEnabled: contact.mayInteract } : null;
+        const settings = character ? characterSettings(character) : owner && characterSettings(owner).contactsEnabled && contact.enabled !== false ? controls?{...controls.preferences(actorId),interactEnabled:controls.settings(actorId).actions.interact}:{postEnabled:contact.mayPost,storyEnabled:contact.mayStory,browseEnabled:contact.mayInteract,interactEnabled:contact.mayInteract} : null;
         if (!settings || (!settings.postEnabled && !settings.storyEnabled && !settings.browseEnabled && !settings.interactEnabled && !nicknameSetting(actorId, 'selfRename'))) return false;
-        const holder = character ? settings : contact;
-        if (!force && Date.now() - (holder.lastActivityAt || 0) < 60 * 60 * 1000) return false;
+        if (controls) { task ||= controls.context(force ? 'manual' : 'timer', [actorId]); if (!controls.allowed(actorId, task.source)) return false; }
+        const holder = character ? character.momentsSettings : contact;
+        if (!controls && !force && Date.now() - (holder.lastActivityAt || 0) < 60 * 60 * 1000) return false;
         holder.lastActivityAt = Date.now();
         if (character) await saveCharacter(character.id); else await persist();
         const currentPosts = ensure().posts.filter(post => visibleTo(post, actorId) && (post.kind !== 'story' || post.expiresAt > Date.now())).sort((a, b) => b.createdAt - a.createdAt);
         const browseable = settings.browseEnabled ? currentPosts.filter(post => post.authorId !== actorId && !post.seenBy?.[actorId]).slice(0, 8) : [];
-        const interactable = settings.interactEnabled ? currentPosts.filter(post => post.authorId === actorId || post.seenBy?.[actorId]).slice(0, 8) : [];
+        const interactable = settings.interactEnabled ? currentPosts.filter(post => (post.authorId === actorId || post.seenBy?.[actorId]) && (!controls || controls.commentAllowed(post, actorId))).slice(0, 8) : [];
         const ownPosts = currentPosts.filter(post => post.authorId === actorId).slice(0, 8);
         const mayRename = nicknameSetting(actorId, 'selfRename') && Date.now() - (holder.lastNicknameAt || 0) >= 24 * 60 * 60 * 1000;
-        const choices = ['none', ...(settings.postEnabled ? ['post'] : []), ...(settings.storyEnabled ? ['story'] : []), ...(mayRename ? ['rename'] : []), ...(ownPosts.length ? ['delete'] : []), ...(browseable.length ? ['browse'] : []), ...(interactable.length ? ['interact'] : [])];
+        const configured = controls?.settings(actorId);
+        const choices = ['none', ...(settings.postEnabled && (!controls || configured.actions.post && configured.requests.postContent && controls.publicationAllowed(actorId, 'post', task)) ? ['post'] : []), ...(settings.storyEnabled && (!controls || configured.actions.story && configured.requests.postContent && controls.publicationAllowed(actorId, 'story', task)) ? ['story'] : []), ...(mayRename && (!controls || configured.actions.rename) ? ['rename'] : []), ...(ownPosts.length && (!controls || configured.actions.delete) ? ['delete'] : []), ...(browseable.length && (!controls || configured.actions.browse) ? ['browse'] : []), ...(interactable.length && (!controls || configured.actions.interact) ? ['interact'] : [])];
+        if (choices.length === 1) return false;
         try {
-            const result = await askAI(`你是${aiName(actorId, actorId)}。人设：${actor.persona || '未提供'}。你当前主页签名：${actor.signature || '未设置'}。${contact ? `你与${aiName(charActor(contact.ownerCharId), actorId)}的关系：${contact.relationship || '熟人'}。` : ''}近期私聊和生活：${recentContextFor(actorId).history || '暂无'}。你亲历的动态操作：${activityContext(actorId) || '暂无'}。${promptRule('autonomy')}可选择：${choices.join('、')}。自己可删除的动态：${ownPosts.map(p => `${p.id} ${postSummary(p)}`).join('；') || '无'}。尚未看过、可选择浏览：${browseable.map(p => `${p.id} ${aiName(p.authorId, actorId, profilePersonaForPost(p))}，${p.kind === 'story' ? 'Story' : '动态'}，${readableTime(p.createdAt)}`).join('；') || '无'}。自己发布或已经看过、可选择互动：${interactable.map(p => `${p.id} ${aiName(p.authorId, actorId, profilePersonaForPost(p))}：${postSummary(p).slice(0, 80)}`).join('；') || '无'}。你尚不知道未浏览帖子的正文。改名应偶尔自然发生，不要每次检查都改；只能改自己的动态网名。只返回 JSON：{"action":"选择项","postId":"浏览、互动或删除时填写对应ID","nickname":"改名时填写新网名，其他操作留空","reason":"简短原因"}。`);
+            const result = await askAI(`你是${aiName(actorId, actorId)}。人设：${actor.persona || '未提供'}。你当前主页签名：${actor.signature || '未设置'}。${contact ? `你与${aiName(charActor(contact.ownerCharId), actorId)}的关系：${contact.relationship || '熟人'}。` : ''}近期私聊和生活：${recentContextFor(actorId).history || '暂无'}。你亲历的动态操作：${activityContext(actorId) || '暂无'}。${promptRule('autonomy')}可选择：${choices.join('、')}。自己可删除的动态：${ownPosts.map(p => `${p.id} ${postSummary(p)}`).join('；') || '无'}。尚未看过、可选择浏览：${browseable.map(p => `${p.id} ${aiName(p.authorId, actorId, profilePersonaForPost(p))}，${p.kind === 'story' ? 'Story' : '动态'}，${readableTime(p.createdAt)}`).join('；') || '无'}。自己发布或已经看过、可选择互动：${interactable.map(p => `${p.id} ${aiName(p.authorId, actorId, profilePersonaForPost(p))}：${postSummary(p).slice(0, 80)}`).join('；') || '无'}。你尚不知道未浏览帖子的正文。改名应偶尔自然发生，不要每次检查都改；只能改自己的动态网名。只返回 JSON：{"action":"选择项","postId":"浏览、互动或删除时填写对应ID","nickname":"改名时填写新网名，其他操作留空","reason":"简短原因"}。` + (configured?.publish.habit ? `\n用户设置的发布习惯：${configured.publish.habit}` : ''), actorId, task);
+            if (!choices.includes(result.action)) { if (feedback) feedback.error = '返回动作不在用户允许范围内'; return true; }
             if (result.action === 'rename' && mayRename) {
                 const changed = await changeNickname(actorId, '', result.nickname, true);
                 if (feedback) { if (changed.ok) feedback.action = changed.unchanged ? '' : '修改动态网名'; else feedback.error = changed.reason; }
             } else if (result.action === 'post' && settings.postEnabled) {
-                if (await generatePost(actorId, 'post', false, feedback) && feedback) feedback.action = '发布动态';
+                if (await generatePost(actorId, 'post', false, feedback, task) && feedback) feedback.action = '发布动态';
             } else if (result.action === 'story' && settings.storyEnabled) {
-                if (await generatePost(actorId, 'story', false, feedback) && feedback) feedback.action = '发布 Story';
+                if (await generatePost(actorId, 'story', false, feedback, task) && feedback) feedback.action = '发布 Story';
             } else if (result.action === 'delete' && ownPosts.some(post => post.id === result.postId)) {
                 const applied = await deleteActorPost(actorId, result.postId);
                 if (feedback) { if (applied.ok) feedback.action = '删除自己的动态'; else feedback.error = applied.reason; }
-            } else if (result.action === 'browse' && browseable.some(p => p.id === result.postId)) await viewPostForActor(result.postId, actorId, false, feedback);
-            else if (result.action === 'interact' && interactable.some(p => p.id === result.postId)) await viewPostForActor(result.postId, actorId, false, feedback);
+            } else if (result.action === 'browse' && browseable.some(p => p.id === result.postId)) await viewPostForActor(result.postId, actorId, false, feedback, task);
+            else if (result.action === 'interact' && interactable.some(p => p.id === result.postId)) await viewPostForActor(result.postId, actorId, false, feedback, task);
             else if (result.action !== 'none' && feedback) feedback.error = 'API 返回了无法执行的自主动态操作';
-        } catch (error) { if (feedback) feedback.error = error.message || '检查失败'; console.error('自主动态检查失败', error); }
+        } catch (error) { if (feedback) feedback.error = error.message || '检查失败'; console.error('自主动态检查失败', error); if (task?.status === 'running') throw error; }
         return true;
     }
     async function catchUp(force = false) {
@@ -2101,12 +2221,38 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         } finally { state.running = false; }
         return summary;
     }
-    function promptForCharacter(charId) {
+    function isChatLinked(charId) {
+        const character = findCharacter(charActor(charId));
+        return !character || characterSettings(character).chatLinked !== false;
+    }
+    function publicationEnabled(actorId, kind, source = 'chat') {
+        if (controls) return controls.publicationEnabled(actorId, kind, source);
+        const character = findCharacter(actorId);
+        const contact = ensure().contacts.find(c => c.actorId === actorId && c.kind === 'npc');
+        const owner = character || (db.characters || []).find(c => c.id === contact?.ownerCharId);
+        const enabled = character ? characterSettings(character)[kind === 'story' ? 'storyEnabled' : 'postEnabled'] : contact?.[kind === 'story' ? 'mayStory' : 'mayPost'] === true;
+        return enabled && (source !== 'background' || !!owner?.autoReply?.enabled && owner.momentsSettings?.backgroundPostEnabled !== false);
+    }
+    async function chatEvent(character, isBackground = false, requestId = '') {
+        if (!controls || !character || !characterSettings(character).contactsEnabled || isBackground && !character.autoReply?.enabled) return;
+        const source = isBackground ? 'background' : 'chat', ownerActorId = charActor(character.id);
+        const eventId = requestId || id('moments_chat');
+        for (const contact of activeContactsFor(character.id).filter(c => c.kind === 'npc')) {
+            if (!controls.allowed(contact.actorId, source)) continue;
+            const task = { ...controls.context(source, [contact.actorId]), ownerActorId, type: 'activity', dueAt: Date.now(), key: 'chat-activity:' + eventId + ':' + contact.actorId };
+            await controls.enqueue(task);
+        }
+        await controls.tick();
+    }
+    function promptForCharacter(charId, isBackground = false) {
         const actorId = charActor(charId);
         const m = ensure();
         const character = findCharacter(actorId);
         const settings = character && characterSettings(character);
-        if (!settings) return '';
+        if (!settings || settings.chatLinked === false) return '';
+        const source = isBackground ? 'background' : 'chat';
+        settings.postEnabled = publicationEnabled(actorId, 'post', source);
+        settings.storyEnabled = publicationEnabled(actorId, 'story', source);
         const activity = activityContext(actorId);
         const ownSignature = character.momentsProfile?.signature || '';
         const knownUserId = knownPersonaId(actorId);
@@ -2124,13 +2270,19 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
             return `- [ID:${post.id}] ${reminder ? `[${reminder.text}] ` : ''}${aiName(post.authorId, actorId, profilePersonaForPost(post))}：${postContextText(post, 180)}${comments ? `；评论：${comments}` : ''}`;
         });
         const capabilities = profileContext ? [profileContext] : [];
+        if (controls) {
+            const c = controls.settings(actorId);
+            c.actions.post = settings.postEnabled; c.actions.story = settings.storyEnabled;
+            capabilities.push(controls.discussionPrompt(actorId));
+            capabilities.push(`用户设置的动态规则：当前允许动作：${Object.keys(c.actions).filter(k => c.actions[k]).join('、') || '无'}。${c.requests.postContent ? '' : '禁止额外生成动态正文，不要输出发帖指令。'}${c.publish.habit ? '发布习惯：' + c.publish.habit : ''}是否行动由你判断，可以完全不行动，不要求凑发布数量。不要对同一评论重复接话；重复参与仅在用户允许时执行。`);
+        }
         if (settings.postEnabled) capabilities.push(promptRule('post'));
         if (posts.some(post => post.authorId === actorId)) capabilities.push('你可自主删除自己发布的动态：[MOMENT:delete:动态ID]。只能删除自己的帖子，完成后你会记得此事。');
         if (settings.storyEnabled) capabilities.push(promptRule('story'));
         if (nicknameSetting(actorId, 'selfRename')) capabilities.push('你可以自然地决定修改自己的动态网名，指令：[MOMENT:rename:新网名]。只能修改自己的网名，不能频繁改名；执行成功后新网名会成为当前主页名字。');
         if (settings.browseEnabled) capabilities.push(promptRule('browse'));
         else if (settings.interactEnabled) capabilities.push(promptRule('explicitView'));
-        if (settings.interactEnabled) { capabilities.push(promptRule('interact')); const stickers = stickerChoices(actorId); if (stickers) capabilities.push('你可在动态评论和回复中使用的表情包：' + stickers + '。指令：[MOMENT:sticker:动态ID:表情ID]、[MOMENT:reply-sticker:动态ID:评论ID:表情ID]。'); }
+        if (settings.interactEnabled) { if(controls){const a=controls.settings(actorId).actions;capabilities.push(`你当前动态权限：点赞${a.like?'允许':'禁止'}；发表评论${a.comment?'允许':'禁止'}；回复评论${a.reply?'允许':'禁止'}。禁止的动作不要输出指令。`);} capabilities.push(promptRule('interact')); const stickers = stickerChoices(actorId); if (stickers) capabilities.push('你可在动态评论和回复中使用的表情包：' + stickers + '。指令：[MOMENT:sticker:动态ID:表情ID]、[MOMENT:reply-sticker:动态ID:评论ID:表情ID]。'); }
         if (settings.contactsEnabled) {
             const contacts = activeContactsFor(character.id).map(c => `${aiName(c.actorId, actorId)}（${c.relationship || '熟人'}）`);
             if (contacts.length) capabilities.push(promptRule('contacts', { 人脉列表: contacts.join('、') }));
@@ -2150,30 +2302,36 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         if (!character) return;
         const settings = characterSettings(character);
         const actorId = charActor(character.id);
-        if (settings.browseEnabled) await autonomousActivity(actorId);
+        if (controls && !controls.allowed(actorId, 'chatPrep')) return;
+        if (settings.browseEnabled) await autonomousActivity(actorId, false, null, controls?.context('chatPrep', [actorId]));
         if (isBackground || !settings.interactEnabled && !settings.browseEnabled) return;
         if (!/(动态|朋友圈|Story|story|点赞|点个赞|评论)/i.test(String(userText))) return;
         const available = ensure().posts.filter(post => visibleTo(post, actorId) && !post.seenBy?.[actorId] && (post.kind !== 'story' || post.expiresAt > Date.now())).sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
         if (!available.length) return;
         try {
-            const result = await askAI(`你是${aiName(actorId, actorId)}，人设：${character.persona || '未提供'}。用户刚说：“${String(userText).slice(0, 350)}”。你尚未看过的帖子：${available.map(post => `${post.id} ${aiName(post.authorId, actorId, profilePersonaForPost(post))}，${post.kind === 'story' ? 'Story' : '动态'}，${readableTime(post.createdAt)}`).join('；')}。这里没有正文。${promptRule('chatViewDecision')}只返回 JSON：{"postId":"要查看的给定ID，不看则留空"}。`);
+            const result = await askAI(`你是${aiName(actorId, actorId)}，人设：${character.persona || '未提供'}。用户刚说：“${String(userText).slice(0, 350)}”。你尚未看过的帖子：${available.map(post => `${post.id} ${aiName(post.authorId, actorId, profilePersonaForPost(post))}，${post.kind === 'story' ? 'Story' : '动态'}，${readableTime(post.createdAt)}`).join('；')}。这里没有正文。${promptRule('chatViewDecision')}只返回 JSON：{"postId":"要查看的给定ID，不看则留空"}。`, charActor(character.id), controls?.context('chatPrep', [actorId]));
             if (available.some(post => post.id === result.postId)) await viewPostForActor(result.postId, actorId);
         } catch (error) { console.error('私聊动态观看判断失败', error); }
     }
-    async function consumeAiCommands(content, character) {
+    async function consumeAiCommands(content, character, isBackground = false) {
         const pattern = /\[MOMENT:(post|story|view|like|comment|reply|delete|sticker|reply-sticker|rename)(?::([^\]\n]*))?\]/g;
-        const commands = [...String(content || '').matchAll(pattern)].slice(0, 5);
+        const commands = [...String(content || '').matchAll(pattern)].slice(0, controls ? undefined : 5);
         const cleaned = String(content || '').replace(pattern, '').replace(/\n{3,}/g, '\n\n').trim();
         if (!commands.length || !character) return { cleaned, errors: [] };
         const actorId = charActor(character.id);
+        if (controls && !controls.chatAllowed(actorId, isBackground)) return { cleaned, errors: ['当前设置未允许此类聊天中的动态操作'] };
+        const task = controls?.context(isBackground ? 'background' : 'chat', [actorId]) || { source: isBackground ? 'background' : 'chat' };
         const settings = characterSettings(character);
         const errors = [];
         for (const command of commands) {
             const type = command[1];
+            const actionName = type === 'view' ? 'browse' : ['like', 'comment', 'reply', 'sticker', 'reply-sticker'].includes(type) ? 'interact' : type;
+            if (controls && !controls.settings(actorId).actions[actionName]) { errors.push('当前设置未允许此动作：' + type); continue; }
             const parts = String(command[2] || '').split(':');
             try {
                 if (type === 'post' || type === 'story') {
-                    if (!settings[type === 'post' ? 'postEnabled' : 'storyEnabled'] || !await generatePost(actorId, type)) errors.push(`${type} 发布失败`);
+                    if (!publicationEnabled(actorId, type, task.source)) { errors.push('当前设置不允许发布' + (type === 'story' ? ' Story' : '动态')); continue; }
+                    if (!settings[type === 'post' ? 'postEnabled' : 'storyEnabled'] || !await generatePost(actorId, type, false, null, task)) errors.push(`${type} 发布失败`);
                 } else if (type === 'rename') {
                     const result = await changeNickname(actorId, '', String(command[2] || ''), true);
                     if (!result.ok) errors.push(result.reason);
@@ -2188,7 +2346,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
                     const isReply = type === 'reply' || type === 'reply-sticker';
                     const isSticker = type === 'sticker' || type === 'reply-sticker';
                     const action = { type: isReply || isSticker ? 'comment' : type, postId: parts[0], replyTo: isReply ? parts[1] : '', text: isSticker ? '' : parts.slice(isReply ? 2 : 1).join(':'), stickerId: isSticker ? parts[isReply ? 2 : 1] : '' };
-                    const result = await applyActorAction(actorId, action);
+                    const result = await applyActorAction(actorId, action, task);
                     if (!result.ok) errors.push(result.reason);
                 }
             } catch (error) { errors.push(String(error.message || error)); }
@@ -2222,7 +2380,6 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         state.compose.audienceIds = [...(post.audienceIds || ['user'])];
         state.compose.reminderIds = [...(post.reminderIds || [])];
         state.compose.mentions = [...(post.mentions || [])];
-        el('moments-compose-view-mode').value = post.viewMode || 'default';
         el('moments-compose-title').textContent = '编辑动态';
         el('moments-compose-text').value = post.text || '';
         renderComposeMedia();
@@ -2270,6 +2427,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         if (state.currentPostId === postId && el('moments-detail-screen').classList.contains('active')) renderDetail(postId);
     }
     async function handleAction(action, target) {
+        if(controls&&action==='actor-controls'){closeEditor();const char=findCharacter(target.dataset.actorId);if(char){currentChatId=char.id;currentChatType='private';if(typeof loadSettingsToSidebar==='function')loadSettingsToSidebar();else loadCharacterSettings(char);switchScreen('chat-settings-screen');}else controls.open(target.dataset.actorId,'moments-contacts-screen');return;}
         const postId = target.dataset.postId;
         if (action === 'notification') {
             if (state.selectingNotifications) toggleNotificationSelection(target.dataset.noticeId);
@@ -2348,6 +2506,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         bind('moments-notifications-select-all', 'click', toggleAllNotifications);
         bind('moments-notifications-delete', 'click', deleteSelectedNotifications);
         bind('moments-settings-btn', 'click', openSettings);
+        bind('moments-controls-btn', 'click', () => controls?.open());
         bind('moments-character-name-source', 'change', async event => {
             ensure().settings.characterNameSource = event.target.value === 'real' ? 'real' : 'remark';
             await persist(); renderFeed();
@@ -2364,7 +2523,6 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         bind('moments-manage-clear-all', 'click', () => deleteManagedPosts(true));
         bind('moments-publish-btn', 'click', publish);
         bind('moments-compose-persona', 'change', event => { if (!state.compose) return; state.compose.personaId = event.target.value; renderComposeAuthor(); });
-        el('moments-identity-bindings')?.addEventListener('change', async event => { const charId = event.target.dataset.charPersonaId; if (!charId) return; if (event.target.value) ensure().characterPersonaIds[charId] = event.target.value; else delete ensure().characterPersonaIds[charId]; await persist(); });
         el('moments-profile-content')?.addEventListener('change', event => { if (event.target.id === 'moments-profile-persona-select') renderProfile('user', event.target.value); });
         bind('moments-compose-sticker-btn', 'click', () => openStickerPicker('compose'));
         bind('moments-comment-sticker-btn', 'click', () => openStickerPicker('comment'));
@@ -2397,7 +2555,6 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         bind('moments-editor-form', 'submit', saveEditor);
         bind('moments-story-close', 'click', () => { el('moments-story-viewer').hidden = true; });
         bind('moments-interaction-visibility', 'change', async event => { ensure().settings.interactionVisibility = event.target.value; await persist(); renderFeed(); });
-        bind('moments-default-view-mode', 'change', async event => { ensure().settings.viewMode = event.target.value; await persist(); });
         bind('moments-friend-send', 'click', sendFriendRequest);
         bind('moments-add-group-btn', 'click', () => openEditor('group'));
         bind('moments-add-person-btn', 'click', () => openEditor('npc'));
@@ -2489,6 +2646,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         bind('setting-moments-contacts-btn', 'click', () => { const char = (db.characters || []).find(c => c.id === currentChatId); if (char) { saveCharacterSettings(char); saveCharacter(char.id); } openContacts(); });
         bind('setting-moments-generate-btn', 'click', async () => { const charId = currentChatId; if (!charId || state.running) return; const char = (db.characters || []).find(c => c.id === charId); if (char) { saveCharacterSettings(char); await saveCharacter(char.id); state.running = true; try { await generatePost(charActor(charId), 'post', true); } finally { state.running = false; } } });
         bind('moments-generate-now-btn', 'click', async () => {
+            if (controls) { controls.open(); return; }
             if (state.confirming) return;
             if (state.running) { toast('自主动态正在检查中，请稍候'); return; }
             const button = el('moments-generate-now-btn');
@@ -2537,6 +2695,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
             if (flag && contact) {
                 const key = shown.reverseOfId && flag !== 'enabled' ? 'reverse' + flag[0].toUpperCase() + flag.slice(1) : flag;
                 contact[key] = event.target.checked;
+                if(contact.kind==='npc'&&controls){const p=controls.localPreferences(contact.actorId);if(flag==='mayPost')p.postEnabled=event.target.checked;if(flag==='mayStory')p.storyEnabled=event.target.checked;if(flag==='mayInteract')for(const k of ['likeEnabled','commentEnabled','replyEnabled'])p[k]=event.target.checked;}
                 await persist();
             }
             if (nicknameKey && contact?.kind === 'npc' && ['nicknameAwareness', 'selfRename'].includes(nicknameKey)) {
@@ -2589,9 +2748,19 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
             finally { if (editor) editor.imageBusy = false; if (submit) submit.disabled = false; }
         });
         renderFeed();
-        setTimeout(() => catchUp().catch(error => console.error('自主动态检查失败', error)), 1200);
-        setInterval(() => catchUp().catch(error => console.error('自主动态检查失败', error)), 15 * 60 * 1000);
+        if (controls) controls.init({
+            ensure, persist, character: findCharacter, characterSettings, person, post: findPost, visibleTo, detail: renderDetail,
+            actors: () => [...new Set([...(db.characters || []).map(c => charActor(c.id)), ...ensure().contacts.filter(c => c.kind === 'npc').map(c => c.actorId)])],
+            replyCandidates: post => [...new Set([...(actorMayInteract(post.authorId) && post.authorId !== 'user' ? [post.authorId] : []), ...candidatesForPost(post)])].filter(a => (post.authorId === a || post.seenBy?.[a]) && visibleTo(post, a)),
+            eventCandidates: post => (post.audienceIds||[]).filter(a=>a!=='user'&&a!==post.authorId&&person(a)),
+            viewStatus,
+            friend: (requestId, task) => { const request = ensure().friendRequests.find(r => r.id === requestId && r.status === 'pending'); return request ? resolveFriendRequest(request, task) : Promise.resolve(); },
+            replies: (postId, commentId, task) => generateReplies(postId, commentId, task),
+            view: (postId, actorId, task) => viewPostForActor(postId, actorId, true, null, task),
+            generate: (actorId, kind, task) => generatePost(actorId, kind, true, null, task),
+            activity: (actorId, task) => autonomousActivity(actorId, true, null, task),
+        });
     }
     function open() { if (!state.initialized) init(); renderFeed(); switchScreen('moments-screen'); }
-    window.Moments = { init, open, loadCharacterSettings, saveCharacterSettings, promptForCharacter, prepareForChat, consumeAiCommands, generatePost, promptDefaults, visibleTo, canSeeInteraction };
+    window.Moments = { init, open, loadCharacterSettings, saveCharacterSettings, isChatLinked, promptForCharacter, prepareForChat, consumeAiCommands, generatePost, chatEvent, promptDefaults, visibleTo, canSeeInteraction };
 })();

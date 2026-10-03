@@ -1073,6 +1073,7 @@ function renderTutorialContent() {
             // 仅清除本项目的 localStorage 键（不影响其他网站）
             const projectLocalStorageKeys = [
                 'lastSeenVersion',
+                'lastSeenUpdateLogRevision',
                 'gh_config',
                 'storage_persist_prompted',
                 'imgbb_api_key',
@@ -1252,6 +1253,21 @@ function renderTutorialContent() {
         </div>
     `;
 
+    // 文件更新入口紧接仓库备份，三套外观复用现有次要操作样式。
+    const fileUpdateSection = document.createElement('div');
+    fileUpdateSection.className = 'ovo-file-update';
+    const fileUpdateButton = createActionItem('button', '拉取最新文件', 'btn btn-neutral');
+    fileUpdateButton.id = 'ovo-file-update-btn';
+    fileUpdateButton.type = 'button';
+    fileUpdateButton.setAttribute('aria-describedby', 'ovo-file-update-status');
+    fileUpdateButton.addEventListener('click', () => window.OVOFileUpdate.run());
+    const fileUpdateStatus = document.createElement('div');
+    fileUpdateStatus.id = 'ovo-file-update-status';
+    fileUpdateStatus.className = 'ovo-file-update-status';
+    fileUpdateStatus.setAttribute('role', 'status');
+    fileUpdateStatus.setAttribute('aria-live', 'polite');
+    fileUpdateSection.append(fileUpdateButton, fileUpdateStatus);
+
     // 全局消息弹窗开关
     const bgToastSection = document.createElement('div');
     if (isRabbit) {
@@ -1384,16 +1400,19 @@ function renderTutorialContent() {
 
     if (isModern) {
         modernGroups.github.appendChild(githubSection);
+        modernGroups.github.appendChild(fileUpdateSection);
         modernGroups.github.appendChild(bgToastSection);
         modernGroups.github.appendChild(hapticSection);
         modernGroups.github.appendChild(feedbackSection);
     } else {
         tutorialContentArea.appendChild(githubSection);
+        tutorialContentArea.appendChild(fileUpdateSection);
         tutorialContentArea.appendChild(bgToastSection);
         tutorialContentArea.appendChild(hapticSection);
         tutorialContentArea.appendChild(feedbackSection);
     }
     window.UWUFeedback?.refreshIndicators();
+    window.OVOFileUpdate.renderState();
 
     const existingOverlay = document.getElementById('gh-help-overlay');
     if (existingOverlay) existingOverlay.remove();

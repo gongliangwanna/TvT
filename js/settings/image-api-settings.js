@@ -449,6 +449,37 @@ function setupNovelAiSettings() {
     const closeModalBtn = document.getElementById('novelai-close-modal');
     const presetListContainer = document.getElementById('novelai-presets-list');
 
+    const generationModeEl = document.getElementById('novelai-generation-mode');
+    const qualityPresetEl = document.getElementById('novelai-quality-preset');
+    const transparentEl = document.getElementById('novelai-transparent-background');
+    const readNovelAiPanel = () => ({
+        ...db.novelAiSettings,
+        enabled: enabledEl?.checked || false, token: tokenEl?.value.trim() || '',
+        customUrlEnabled: !!customUrlEnabledEl?.checked, customUrl: customUrlEl?.value.trim() || '',
+        model: modelEl?.value || 'nai-diffusion-4-curated-preview', resolution: resolutionEl?.value || '832x1216',
+        sampler: samplerEl?.value || 'k_euler', noiseSchedule: noiseScheduleEl?.value || 'karras',
+        qualityToggle: qualityToggleEl?.checked !== false, qualityPresetId: qualityPresetEl?.value || 'standard',
+        ucPreset: Number(ucPresetEl?.value || 0), ucPresetId: ['heavy', 'light', 'humanFocus', 'none', 'furryFocus'][Number(ucPresetEl?.value || 0)],
+        generationMode: generationModeEl?.value || 'auto', transparentBackground: !!transparentEl?.checked,
+        smea: !!smeaEl?.checked, smeaDyn: !!smeaDynEl?.checked, autoSmea: !!autoSmeaEl?.checked,
+        cfgRescale: Number(cfgRescaleEl?.value || 0), seed: seedEl?.value === '' ? '' : Number(seedEl?.value || 0),
+        imageFormat: imageFormatEl?.value || 'png', steps: Number(stepsSlider?.value || 28), scale: Number(scaleSlider?.value || 5),
+        systemPrompt: systemPromptEl?.value.trim() || '', artistTags: artistTagsEl?.value.trim() || '', negativePrompt: negativePromptEl?.value || '',
+        ...readCompatibleOptions()
+    });
+    window.readNovelAiPanelSettings = readNovelAiPanel;
+    const loadAdditionalSettings = s => {
+        if (generationModeEl) generationModeEl.value = s.generationMode || 'auto';
+        if (qualityPresetEl) qualityPresetEl.value = s.qualityPresetId || 'standard';
+        if (transparentEl) transparentEl.checked = !!s.transparentBackground;
+        if (ucPresetEl && s.ucPresetId) { const index = ['heavy', 'light', 'humanFocus', 'none', 'furryFocus'].indexOf(s.ucPresetId.replace('human_focus', 'humanFocus')); if (index >= 0) ucPresetEl.value = String(index); }
+    };
+    const refreshCapabilities = () => {
+        const v5 = /nai-diffusion-5/.test(modelEl?.value || '');
+        const tip = document.getElementById('novelai-capability-tip');
+        if (tip) tip.textContent = v5 ? 'V5：Guidance 0–10，使用 Karras；SMEA 设置保留但不发送。透明背景仅 V5 可用。' : '保留当前采样设置；透明背景仅 V5 可用，Light 质量预设仅 V5。';
+    };
+    modelEl?.addEventListener('change', refreshCapabilities);
     const readCompatibleOptions = () => {
         let extraHeaders = null;
         const raw = extraHeadersEl?.value.trim();
@@ -518,6 +549,9 @@ function setupNovelAiSettings() {
         }
     }
 
+    loadAdditionalSettings(db.novelAiSettings || {});
+    refreshCapabilities();
+
     // 滑块实时反馈
     if (stepsSlider && stepsValue) {
         stepsSlider.addEventListener('input', (e) => {
@@ -552,37 +586,7 @@ function setupNovelAiSettings() {
             let compatible;
             try { compatible = readCompatibleOptions(); }
             catch (error) { showToast(error.message); return; }
-            db.novelAiSettings = {
-                enabled: enabledEl ? enabledEl.checked : false,
-                token: tokenEl ? tokenEl.value.trim() : '',
-                customUrlEnabled: customUrlEnabledEl ? customUrlEnabledEl.checked : false,
-                customUrl: customUrlEl ? customUrlEl.value.trim() : '',
-                model: modelEl ? modelEl.value : 'nai-diffusion-4-curated-preview',
-                resolution: resolutionEl ? resolutionEl.value : '832x1216',
-                sampler: samplerEl ? samplerEl.value : 'k_euler',
-                noiseSchedule: noiseScheduleEl?.value || 'karras',
-                qualityToggle: qualityToggleEl?.checked !== false,
-                ucPreset: Number.parseInt(ucPresetEl?.value || '0', 10),
-                smea: !!smeaEl?.checked,
-                smeaDyn: !!smeaDynEl?.checked,
-                autoSmea: !!autoSmeaEl?.checked,
-                cfgRescale: Number.parseFloat(cfgRescaleEl?.value || '0') || 0,
-                seed: seedEl?.value === '' ? '' : Math.max(0, Number.parseInt(seedEl.value, 10) || 0),
-                imageFormat: imageFormatEl?.value || 'png',
-                characterPrompts: db.novelAiSettings?.characterPrompts || [],
-                characterUseCoords: !!db.novelAiSettings?.characterUseCoords,
-                characterUseOrder: db.novelAiSettings?.characterUseOrder !== false,
-                steps: stepsSlider ? parseInt(stepsSlider.value) : 28,
-                scale: scaleSlider ? parseFloat(scaleSlider.value) : 5,
-                systemPrompt: systemPromptEl ? systemPromptEl.value.trim() : '',
-                artistTags: artistTagsEl ? artistTagsEl.value.trim() : '',
-                negativePrompt: negativePromptEl ? negativePromptEl.value : '',
-                authMode: db.novelAiSettings?.authMode || 'bearer',
-                endpointMode: db.novelAiSettings?.endpointMode || 'auto',
-                generatePath: db.novelAiSettings?.generatePath || '/ai/generate-image',
-                streamPath: db.novelAiSettings?.streamPath || '/ai/generate-image-stream',
-                ...compatible
-            };
+            db.novelAiSettings = readNovelAiPanel();
             if (db.novelAiSettings.enabled) setActiveImageProvider('novelai');
             await saveImageApiGlobalSettings();
             showToast('NovelAI 生图设置已保存！');
@@ -600,33 +604,12 @@ function setupNovelAiSettings() {
 
             testBtn.disabled = true;
             testBtn.querySelector('.btn-text').textContent = '⏳ 生成中...';
+            const testController = new AbortController();
+            const testTimeout = Number(db.imageGenTimeout) > 0 ? setTimeout(() => testController.abort(), Number(db.imageGenTimeout) * 1000) : null;
 
             try {
                 const compatible = readCompatibleOptions();
-                const result = await generateNovelAiImage('1girl, upper body, beautiful', {
-                    token: token,
-                    customUrlEnabled: customUrlEnabledEl ? customUrlEnabledEl.checked : false,
-                    customUrl: customUrlEl ? customUrlEl.value.trim() : '',
-                    model: modelEl ? modelEl.value : 'nai-diffusion-4-curated-preview',
-                    resolution: resolutionEl ? resolutionEl.value : '832x1216',
-                    sampler: samplerEl ? samplerEl.value : 'k_euler',
-                    noiseSchedule: noiseScheduleEl?.value || 'karras',
-                    qualityToggle: qualityToggleEl?.checked !== false,
-                    ucPreset: Number.parseInt(ucPresetEl?.value || '0', 10),
-                    smea: !!smeaEl?.checked,
-                    smeaDyn: !!smeaDynEl?.checked,
-                    autoSmea: !!autoSmeaEl?.checked,
-                    cfgRescale: Number.parseFloat(cfgRescaleEl?.value || '0') || 0,
-                    seed: seedEl?.value === '' ? '' : Math.max(0, Number.parseInt(seedEl.value, 10) || 0),
-                    imageFormat: imageFormatEl?.value || 'png',
-                    steps: stepsSlider ? parseInt(stepsSlider.value) : 28,
-                    scale: scaleSlider ? parseFloat(scaleSlider.value) : 5,
-                    systemPrompt: systemPromptEl ? systemPromptEl.value.trim() : '',
-                    artistTags: artistTagsEl ? artistTagsEl.value.trim() : '',
-                    negativePrompt: negativePromptEl ? negativePromptEl.value : '',
-                    ...compatible
-                });
-
+                const result = await generateNovelAiImage('1girl, upper body, beautiful', readNovelAiPanel(), testController.signal);
                 if (result && result.imageUrl) {
                     const preview = document.getElementById('novelai-test-preview');
                     const img = document.getElementById('novelai-test-image');
@@ -646,11 +629,14 @@ function setupNovelAiSettings() {
                 console.error('[NovelAI] 测试生图失败:', err);
                 showToast('❌ 生图失败: ' + (err.message || '未知错误'));
             } finally {
+                clearTimeout(testTimeout);
                 testBtn.disabled = false;
                 testBtn.querySelector('.btn-text').textContent = '🎨 测试生图';
             }
         });
     }
+
+    window.NovelAiStudio?.setup();
 
     // === NovelAI 预设管理逻辑 ===
 
@@ -734,6 +720,8 @@ function setupNovelAiSettings() {
                 document.dispatchEvent(new CustomEvent('novelai-character-settings-changed'));
             }
             
+            loadAdditionalSettings(p.data);
+            refreshCapabilities();
             showToast(`已加载 NovelAI 预设：${selectedName}`);
         });
     }
@@ -743,31 +731,10 @@ function setupNovelAiSettings() {
             let compatible;
             try { compatible = readCompatibleOptions(); }
             catch (error) { showToast(error.message); return; }
-            const data = {
-                customUrlEnabled: customUrlEnabledEl ? customUrlEnabledEl.checked : false,
-                customUrl: customUrlEl ? customUrlEl.value.trim() : '',
-                model: modelEl ? modelEl.value : 'nai-diffusion-4-curated-preview',
-                resolution: resolutionEl ? resolutionEl.value : '832x1216',
-                sampler: samplerEl ? samplerEl.value : 'k_euler',
-                noiseSchedule: noiseScheduleEl?.value || 'karras',
-                qualityToggle: qualityToggleEl?.checked !== false,
-                ucPreset: Number.parseInt(ucPresetEl?.value || '0', 10),
-                smea: !!smeaEl?.checked,
-                smeaDyn: !!smeaDynEl?.checked,
-                autoSmea: !!autoSmeaEl?.checked,
-                cfgRescale: Number.parseFloat(cfgRescaleEl?.value || '0') || 0,
-                seed: seedEl?.value === '' ? '' : Math.max(0, Number.parseInt(seedEl.value, 10) || 0),
-                imageFormat: imageFormatEl?.value || 'png',
-                characterPrompts: JSON.parse(JSON.stringify(db.novelAiSettings?.characterPrompts || [])),
-                characterUseCoords: !!db.novelAiSettings?.characterUseCoords,
-                characterUseOrder: db.novelAiSettings?.characterUseOrder !== false,
-                steps: stepsSlider ? parseInt(stepsSlider.value) : 28,
-                scale: scaleSlider ? parseFloat(scaleSlider.value) : 5,
-                systemPrompt: systemPromptEl ? systemPromptEl.value.trim() : '',
-                artistTags: artistTagsEl ? artistTagsEl.value.trim() : '',
-                negativePrompt: negativePromptEl ? negativePromptEl.value : '',
-                ...compatible
-            };
+            const data = readNovelAiPanel();
+            delete data.token;
+            delete data.enabled;
+            data.characterPrompts = JSON.parse(JSON.stringify(db.novelAiSettings?.characterPrompts || []));
             
             const name = prompt('请输入预设名称（将覆盖同名预设）：');
             if (!name || !name.trim()) return;

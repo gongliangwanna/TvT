@@ -463,7 +463,7 @@ async function generateJournal(start, end, includeFavorited = false, silent = fa
         } else {
             apiConfig = db.apiSettings;
         }
-        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('journal', apiConfig) : apiConfig;
+        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('journal', apiConfig, chat) : apiConfig;
         
         if (journalAuthored) summaryPrompt += BilingualContent.prompt(chat, 'journal', '角色第一人称日记的标题和正文');
         const rawContent = await requestJournalSummary(apiConfig, summaryPrompt);

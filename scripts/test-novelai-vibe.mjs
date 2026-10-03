@@ -72,9 +72,10 @@ const requestSandbox = {
         sentBodies.push(JSON.parse(init.body));
         return new Response(JSON.stringify({ image: png }), { status: 200, headers: { 'content-type': 'application/json' } });
     },
-    crypto: webcrypto, console, Blob, Response, TextDecoder, Uint8Array, DataView, atob, btoa,
+    crypto: webcrypto, console, Blob, Response, TextDecoder, Uint8Array, DataView, atob, btoa, URL, DOMException,
 };
 vm.createContext(requestSandbox);
+vm.runInContext(fs.readFileSync(path.join(root, 'js/core/novelai-compat.js'), 'utf8'), requestSandbox);
 vm.runInContext(requestBuilderSource, requestSandbox, { filename: 'novelai-request-builder.js' });
 await requestSandbox.generateNovelAiImage('1girl', {
     authMode: 'none', model: 'nai-diffusion-4-5-full', resolution: '832x1216', sampler: 'k_dpmpp_2m',

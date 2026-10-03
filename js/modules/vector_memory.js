@@ -130,11 +130,11 @@
         return db.vectorMemoryTemplates.find(item => item.id === state.boundTemplateId) || db.vectorMemoryTemplates[0] || null;
     }
 
-    function getSummaryApiConfig() {
+    function getSummaryApiConfig(chat) {
         let apiConfig = (db.summaryApiSettings && db.summaryApiSettings.url && db.summaryApiSettings.key && db.summaryApiSettings.model)
             ? db.summaryApiSettings
             : db.apiSettings;
-        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('memorySummary', apiConfig) : apiConfig;
+        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('memorySummary', apiConfig, chat) : apiConfig;
         if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model)) {
             throw new Error('请先配置总结 API');
         }
@@ -152,8 +152,8 @@
         return apiConfig;
     }
 
-    async function requestVectorSummary(prompt, temperature) {
-        const apiConfig = getSummaryApiConfig();
+    async function requestVectorSummary(prompt, temperature, chat) {
+        const apiConfig = getSummaryApiConfig(chat);
         let { url, key, model } = apiConfig;
         url = (url || '').replace(/\/$/, '');
         const provider = apiConfig.provider || 'newapi';
@@ -778,7 +778,7 @@
             rangeLabel: `${start}-${end}`,
             history: historyText
         });
-        const rawContent = await requestVectorSummary(prompt, Number(template?.summaryTemperature) || 0.35);
+        const rawContent = await requestVectorSummary(prompt, Number(template?.summaryTemperature) || 0.35, chat);
         const parsed = parseVectorSummaryXml(rawContent);
         const maxLength = Math.max(200, parseInt(template?.maxEntryLength, 10) || VECTOR_MEMORY_DEFAULT_MAX_ENTRY_LENGTH);
         const parsedMemories = parsed?.memories?.length ? parsed.memories : (parsed?.content ? [parsed] : []);
@@ -968,7 +968,7 @@
             text
         ].join('\n');
         try {
-            const rawContent = await requestVectorSummary(prompt, 0.45);
+            const rawContent = await requestVectorSummary(prompt, 0.45, chat);
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(`<root>${rawContent || ''}</root>`, 'text/xml');
             if (xmlDoc.querySelector('parsererror')) {

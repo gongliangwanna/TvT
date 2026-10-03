@@ -61,7 +61,7 @@ function setTheaterPromptPresets(list) {
  * 之前这里调用了未定义的 callChatCompletion，导致 “callChatCompletion is not defined”。
  * 这里复用 utils.js 的 fetchAiResponse() 发请求，然后包装成 {choices:[{message:{content}}]}。
  */
-async function callChatCompletion(apiPayload, overrideSettings) {
+async function callChatCompletion(apiPayload, overrideSettings, ownerContext) {
     // 如果提供了独立API覆盖设置，则优先使用
     let settings;
     if (overrideSettings && overrideSettings.url && overrideSettings.key && overrideSettings.model) {
@@ -76,7 +76,7 @@ async function callChatCompletion(apiPayload, overrideSettings) {
         settings = (typeof db !== 'undefined' && db && db.apiSettings) ? db.apiSettings : null;
         if (!settings) throw new Error('未找到 API 设置(db.apiSettings)');
     }
-    if (typeof getApiConfigForFeature === 'function') settings = getApiConfigForFeature('theater', settings);
+    if (typeof getApiConfigForFeature === 'function') settings = getApiConfigForFeature('theater', settings, ownerContext);
 
     let { url, key, model, provider } = settings;
     if (!model) model = apiPayload?.model;

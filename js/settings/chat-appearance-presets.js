@@ -78,7 +78,8 @@ async function applyChatAppearancePresetToCharacters(preset, ids) {
     const values = Object.fromEntries(chatAppearanceFields.map(([key]) => [key, preset.values[key]]));
     const updated = targets.map(char => ({ ...char, ...values }));
     try {
-        await dexieDB.transaction('rw', dexieDB.characters, () => dexieDB.characters.bulkPut(updated));
+        if (typeof window !== 'undefined' && window.StatusStorage) await window.StatusStorage.persistChats(dexieDB.characters, updated);
+        else await dexieDB.transaction('rw', dexieDB.characters, () => dexieDB.characters.bulkPut(updated));
     } catch (error) {
         console.error('应用美化预设失败:', error);
         showToast('应用失败，角色设置未更新', 6000);

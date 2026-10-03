@@ -151,7 +151,7 @@
             : null;
         const limit = Math.max(1, Number((linkedChar || character).maxMemory) || 20);
         if (linkedChar) {
-            const history = (linkedChar.history || []).filter(message => !message.isContextDisabled).slice(-limit);
+            const history = (linkedChar.history || []).filter(message => !message.isContextDisabled && (!message.isMomentsActivity || window.Moments?.isChatLinked?.(character.id) !== false)).slice(-limit);
             if (!history.length) return '';
             const lines = history.map(message => `${message.role === 'user' ? '用户' : `主号(${linkedChar.realName || ''})`}：${(message.content || '').trim().slice(0, 200)}`).join('\n');
             return `<main_shared_memory>\n你与主号记忆互通。主号与用户最近的互动：\n${lines}\n</main_shared_memory>`;
@@ -164,7 +164,7 @@
                 (message.fromUserId === 'user' && message.toUserId === alt.forumUserId)
                 || (message.fromUserId === alt.forumUserId && message.toUserId === 'user')
             ).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)).slice(-limit);
-            const chatMessages = (alt.history || []).filter(message => !message.isContextDisabled).slice(-limit);
+            const chatMessages = (alt.history || []).filter(message => !message.isContextDisabled && (!message.isMomentsActivity || window.Moments?.isChatLinked?.(character.id) !== false)).slice(-limit);
             const lines = [];
             forumMessages.forEach(message => lines.push(`- ${message.fromUserId === 'user' ? '用户论坛账号' : '角色小号'}：${(message.content || '').trim().slice(0, 200)}`));
             chatMessages.forEach(message => lines.push(`- ${message.role === 'user' ? '用户' : '小号'}：${(message.content || '').trim().slice(0, 200)}`));
@@ -316,7 +316,7 @@
             '回复条数规则': replyRule,
             '自主收藏规则': autoFavorite,
             '用户收藏内容': buildUserFavorites(character),
-            '动态能力与已看内容': window.Moments?.promptForCharacter(character.id) || ''
+            '动态能力与已看内容': window.Moments?.promptForCharacter(character.id, !!opts.isBackground) || ''
         };
     }
 

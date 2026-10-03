@@ -26,7 +26,7 @@ function getActiveWorldBooksContents(character) {
         ? db.characters.find(c => c.id === character.linkedCharId) : null;
     const effectiveChar = linkedChar || character;
 
-    let associatedIds = effectiveChar.worldBookIds || [];
+    let associatedIds = Array.isArray(effectiveChar.worldBookIds) ? effectiveChar.worldBookIds : [];
     
     // 检查线下节点
     let isOfflineNode = false;
@@ -41,15 +41,15 @@ function getActiveWorldBooksContents(character) {
         }
     }
     if (isOfflineNode) {
-        associatedIds = (effectiveChar.offlineWorldBookIds && effectiveChar.offlineWorldBookIds.length > 0) ? effectiveChar.offlineWorldBookIds : (effectiveChar.worldBookIds || []);
+        associatedIds = (effectiveChar.offlineWorldBookSelectionExplicit || (effectiveChar.offlineWorldBookIds && effectiveChar.offlineWorldBookIds.length > 0)) ? (Array.isArray(effectiveChar.offlineWorldBookIds) ? effectiveChar.offlineWorldBookIds : []) : (Array.isArray(effectiveChar.worldBookIds) ? effectiveChar.worldBookIds : []);
     }
 
-    const globalBooks = typeof db !== 'undefined' ? db.worldBooks.filter(wb => wb.isGlobal && !wb.disabled) : [];
+    const globalBooks = typeof db !== 'undefined' ? (db.worldBooks || []).filter(wb => wb.isGlobal && !wb.disabled) : [];
     const globalIds = globalBooks.map(wb => wb.id);
     const allBookIds = [...new Set([...associatedIds, ...globalIds])];
 
     // 获取最近聊天记录用于关键词匹配
-    const recentMsgs = (character.history || []).filter(m => m.role === 'user' || m.role === 'assistant' || m.role === 'char').slice(-15);
+    const recentMsgs = (character.history || []).filter(m => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'char')).slice(-15);
     const recentText = recentMsgs.map(m => {
         if (m.parts && m.parts.length > 0) return m.parts.map(p => p.text || '').join(' ');
         return m.content || '';
@@ -68,6 +68,7 @@ function getActiveWorldBooksContents(character) {
     const sortByWeight = (a, b) => (a.weight !== undefined ? a.weight : 100) - (b.weight !== undefined ? b.weight : 100);
 
     return {
+        entries: activeWorldBooks.map(wb => ({ id: wb.id, name: wb.name || '世界书条目', content: wb.content, position: wb.position, origin: wb.isGlobal ? '全局' : linkedChar ? '主角色继承' : isOfflineNode ? '线下绑定' : '角色绑定', reason: wb.alwaysOn !== false ? '常驻' : '关键词触发' })),
         before: activeWorldBooks.filter(wb => wb.position === 'before').sort(sortByWeight).map(wb => wb.content).join('\n'),
         middle: activeWorldBooks.filter(wb => wb.position === 'middle').sort(sortByWeight).map(wb => wb.content).join('\n'),
         after: activeWorldBooks.filter(wb => wb.position === 'after').sort(sortByWeight).map(wb => wb.content).join('\n')

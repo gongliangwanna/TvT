@@ -135,7 +135,7 @@ async function readCallStreamResponse(response, provider) {
 
 async function getCallReply(chat, callType, callContext, onStreamUpdate, options = {}) {
     const callFeature = typeof VideoCallModule !== 'undefined' && VideoCallModule.state.realCameraActive && VideoCallModule.state.lastCapturedFrame ? 'callVision' : 'call';
-    const apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature(callFeature, db.apiSettings) : db.apiSettings;
+    let apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature(callFeature, db.apiSettings, chat) : db.apiSettings;
     let {url, key, model, provider, streamEnabled} = apiConfig;
     if (streamEnabled === undefined) streamEnabled = !!db.apiSettings?.streamEnabled;
     
@@ -143,7 +143,7 @@ async function getCallReply(chat, callType, callContext, onStreamUpdate, options
     // streamEnabled = false; 
 
     if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!url || !key || !model)) {
-        showToast('请先在“api”应用中完成设置！');
+        showToast(apiConfig._bindingError || '请先在“api”应用中完成设置！');
         return;
     }
     if (url.endsWith('/')) url = url.slice(0, -1);
@@ -447,7 +447,23 @@ async function getCallReply(chat, callType, callContext, onStreamUpdate, options
             body: JSON.stringify(targetBody),
             signal: options.signal
         });
-        let response = await sendPrepared(endpoint, headers, requestBody);
+        let response;
+        const triedRoleFallbacks = new Set();
+        try { response = await sendPrepared(endpoint, headers, requestBody); }
+        catch (error) {
+            if (!apiConfig._roleBinding || options.signal?.aborted) throw error;
+            let lastError = error;
+            for (const fallbackConfig of getApiFallbackConfigsForFeature(callFeature, apiConfig._nodeId || '', apiConfig)) {
+                triedRoleFallbacks.add(fallbackConfig._nodeId || 'system');
+                try {
+                    const fallbackStream = fallbackConfig.streamEnabled ?? streamEnabled;
+                    const next = prepareAiProviderRequest(fallbackConfig, unpreparedRequestBody, getApiConfigHeaders(fallbackConfig), getApiConfigEndpoint(fallbackConfig, fallbackStream), fallbackStream);
+                    response = await sendPrepared(next.endpoint, next.headers, next.body);
+                    if (response.ok) { streamEnabled = fallbackStream; provider = next.provider; apiConfig = { ...fallbackConfig, _roleBinding: { ...fallbackConfig._roleBinding, usedFallback: true } }; break; }
+                } catch (nextError) { lastError = nextError; if (options.signal?.aborted) throw nextError; }
+            }
+            if (!response) throw lastError;
+        }
 
         if (!response.ok) {
             let failureMode = activeCotRuntime?.prefillFailure;
@@ -462,11 +478,15 @@ async function getCallReply(chat, callType, callContext, onStreamUpdate, options
                 provider = retryPrepared.provider;
             }
             if (!response.ok) {
-                const fallbacks = typeof getApiFallbackConfigsForFeature === 'function' ? getApiFallbackConfigsForFeature(callFeature, apiConfig._nodeId || '') : [];
+                const fallbacks = typeof getApiFallbackConfigsForFeature === 'function' ? getApiFallbackConfigsForFeature(callFeature, apiConfig._nodeId || '', apiConfig) : [];
                 for (const fallbackConfig of fallbacks) {
-                    const fallbackPrepared = prepareAiProviderRequest(fallbackConfig, unpreparedRequestBody, getApiConfigHeaders(fallbackConfig), getApiConfigEndpoint(fallbackConfig, streamEnabled), streamEnabled);
-                    response = await sendPrepared(fallbackPrepared.endpoint, fallbackPrepared.headers, fallbackPrepared.body);
-                    if (response.ok) { provider = fallbackPrepared.provider; break; }
+                    if (triedRoleFallbacks.has(fallbackConfig._nodeId || 'system')) continue;
+                    try {
+                        const fallbackStream = apiConfig._roleBinding ? fallbackConfig.streamEnabled ?? streamEnabled : streamEnabled;
+                        const fallbackPrepared = prepareAiProviderRequest(fallbackConfig, unpreparedRequestBody, getApiConfigHeaders(fallbackConfig), getApiConfigEndpoint(fallbackConfig, fallbackStream), fallbackStream);
+                        response = await sendPrepared(fallbackPrepared.endpoint, fallbackPrepared.headers, fallbackPrepared.body);
+                        if (response.ok) { streamEnabled = fallbackStream; provider = fallbackPrepared.provider; apiConfig = { ...fallbackConfig, _roleBinding: fallbackConfig._roleBinding ? { ...fallbackConfig._roleBinding, usedFallback: true } : undefined }; break; }
+                    } catch (nextError) { if (!apiConfig._roleBinding || options.signal?.aborted) throw nextError; }
                 }
             }
             if (!response.ok) throw new Error(`API Error: ${response.status} ${await response.text()}`);
@@ -568,7 +588,7 @@ async function generateCallSummary(chat, callContext) {
     } else {
         apiConfig = db.apiSettings;
     }
-    apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('summary', apiConfig) : apiConfig;
+    apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('summary', apiConfig, chat) : apiConfig;
     
     let {url, key, model, provider} = apiConfig;
     if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!url || !key || !model)) return null;

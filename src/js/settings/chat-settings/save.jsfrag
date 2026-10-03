@@ -6,26 +6,13 @@ async function saveSettingsFromSidebar() {
         const retentionText = retentionInput.value.trim();
         const retentionLimit = retentionUnlimited ? 0 : Number(retentionText);
         if (!retentionUnlimited && (!/^\d+$/.test(retentionText) || !Number.isSafeInteger(retentionLimit) || retentionLimit < 1)) {
-            showToast('请输入大于 0 的整数作为本地保留条数');
+            showToast('请输入大于 0 的整数作为历史数量提醒阈值');
             retentionInput.focus();
             return;
         }
-        const previousRetention = e.statusPanel?.historyRetentionLimit;
-        const previousLimit = Number.isSafeInteger(previousRetention) && previousRetention >= 0 ? previousRetention : 20;
-        const statusHistory = Array.isArray(e.statusPanel?.history) ? e.statusPanel.history : [];
-        const shouldTrimRetention = retentionLimit !== previousLimit && retentionLimit > 0 && statusHistory.length > retentionLimit;
-        if (shouldTrimRetention) {
-            const removedCount = statusHistory.length - retentionLimit;
-            const decision = await showAppConfirmDialog({
-                title: '调整状态栏保留数量',
-                message: `保存后将删除较早的 ${removedCount} 条状态栏历史，此操作无法撤销。`,
-                confirmText: '删除并保存',
-                cancelText: '取消',
-                dismissText: ''
-            });
-            if (decision !== 'confirm') return;
-        }
-        if (window.Moments) window.Moments.saveCharacterSettings(e);
+        // 保存提醒阈值不删展示历史，整理在独立页面由用户手动确认。
+        try { if (window.Moments) window.Moments.saveCharacterSettings(e); }
+        catch (error) { showToast(error.message || '动态设置无效，请检查时间'); return; }
         const avatarPreviewEl = document.getElementById('setting-char-avatar-preview');
         if (avatarPreviewEl) {
             e.avatar = avatarPreviewEl.src;
@@ -317,9 +304,6 @@ async function saveSettingsFromSidebar() {
         const historyLimitInput = parseInt(document.getElementById('setting-status-history-limit').value, 10);
         e.statusPanel.historyLimit = isNaN(historyLimitInput) ? 3 : historyLimitInput;
         e.statusPanel.historyRetentionLimit = retentionLimit;
-        if (shouldTrimRetention) {
-            e.statusPanel.history = statusHistory.slice(0, retentionLimit);
-        }
 
         // 保存角色正则过滤设置
         if (!e.regexFilter) e.regexFilter = {};
@@ -474,6 +458,7 @@ async function saveSettingsFromSidebar() {
         // phoneControlVisibleCharIds 的保存将在弹窗确认时直接操作 db 并触发 saveData，这里无需额外处理，只需保持状态同步
 
         await saveData();
+        if (window.MomentsControls) await window.MomentsControls.reschedule(e.momentsActorId || 'char:' + e.id);
         showToast('设置已保存！');
         chatRoomTitle.textContent = e.remarkName;
         renderChatList();

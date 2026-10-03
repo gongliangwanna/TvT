@@ -79,7 +79,7 @@ assert.equal(state.batch.candidates.length, 1, 'failed persistence keeps the dra
 saveSucceeds = true;
 await saveBatchContacts();
 assert.equal(db.moments.contacts.length, 1);
-assert.equal(db.moments.contacts[0].mayPost, false, 'new contacts do not post automatically');
+assert.deepEqual(Object.keys(db.moments.contacts[0].preferences), [], 'new NPCs inherit global participation instead of freezing individual defaults');
 assert.equal(db.moments.contacts[0].batchExtras.experience, '曾一起看海');
 assert.equal(state.batch, null, 'successful save closes the draft');
 console.log('Moments batch constraints, opt-in extras and category binding checks passed.');

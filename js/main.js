@@ -3,7 +3,7 @@
 // 注册 Service Worker
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js')
+        navigator.serviceWorker.register(new URL('sw.js', window.OVOFileUpdate?.baseUrl || window.location.href).href, { updateViaCache: 'none' })
             .then(registration => {
                 console.log('ServiceWorker registration successful with scope: ', registration.scope);
             })

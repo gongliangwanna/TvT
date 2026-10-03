@@ -1,4 +1,21 @@
-async function fetchAiResponse(settings, requestBody, headers, endpoint, forceStream = false) {
+async function fetchAiResponse(settings, requestBody, headers, endpoint, forceStream = false, requestOptions = null) {
+    if (settings?._roleBinding && !settings._roleAttempt) {
+        const candidates = [settings, ...(settings._roleBinding.fallbackConfigs || [])];
+        let lastError;
+        for (let index = 0; index < candidates.length; index++) {
+            const candidate = candidates[index];
+            try {
+                if (candidate._bindingError) throw new Error(candidate._bindingError);
+                const response = await fetchAiResponse({ ...candidate, _roleAttempt: true }, requestBody,
+                    getApiConfigHeaders(candidate), getApiConfigEndpoint(candidate, forceStream), forceStream, requestOptions);
+                if (!String(response || '').trim()) throw new Error('绑定的 API 未返回有效内容');
+                settings._lastRoleApiUsed = window.RoleApiBindings.describe(candidate);
+                settings._lastRoleApiUsed.fallback ||= index > 0;
+                return response;
+            } catch (error) { lastError = error; if (requestOptions?.signal?.aborted || requestOptions?.isAllowed && !requestOptions.isAllowed()) throw error; }
+        }
+        throw lastError;
+    }
     const prepared = prepareAiProviderRequest(settings, requestBody, headers, endpoint, forceStream);
     requestBody = prepared.body; headers = prepared.headers; endpoint = prepared.endpoint;
     const provider = prepared.provider;
@@ -15,13 +32,19 @@ async function fetchAiResponse(settings, requestBody, headers, endpoint, forceSt
         }
     }
 
+    if (requestOptions?.beforeRequest) await requestOptions.beforeRequest();
+    // Token records are diagnostics only and do not change request parameters.
+    const tokenRecord = typeof recordAuxiliaryTokenRequest === 'function' ? recordAuxiliaryTokenRequest(settings, requestBody) : null;
     // 2. 发送请求
-    const response = await fetch(endpoint, {
+    let response;
+    try { response = await fetch(endpoint, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify(requestBody)
-    });
+        body: JSON.stringify(requestBody),
+        ...(requestOptions?.signal ? { signal: requestOptions.signal } : {})
+    }); } catch (error) { if (tokenRecord) tokenRecord.status = 'failed'; throw error; }
 
+    if (tokenRecord) tokenRecord.status = response.ok ? 'responded' : 'failed';
     if (!response.ok) {
         const errorText = await response.text();
         const error = new Error(`API Error: ${response.status} ${errorText}`);
@@ -35,7 +58,7 @@ async function fetchAiResponse(settings, requestBody, headers, endpoint, forceSt
     const isStreamResponse = streamEnabled || contentType.includes('text/event-stream');
 
     if (isStreamResponse) {
-        return await readStreamResponse(response, provider);
+        return await readStreamResponse(response, provider, tokenRecord);
     } else {
         // 普通 JSON 响应 (带容错处理)
         const text = await response.text();
@@ -52,6 +75,7 @@ async function fetchAiResponse(settings, requestBody, headers, endpoint, forceSt
                     if (line.startsWith('data: ') && !line.includes('[DONE]')) {
                         try {
                             const json = JSON.parse(line.substring(6));
+                            if (tokenRecord && typeof captureChatTokenUsage === 'function') captureChatTokenUsage(null, json, tokenRecord);
                             fallbackContent += json.choices[0].delta?.content || "";
                         } catch (e2) {}
                     }
@@ -61,11 +85,12 @@ async function fetchAiResponse(settings, requestBody, headers, endpoint, forceSt
             throw new Error(`Failed to parse JSON response: ${text.substring(0, 100)}...`);
         }
 
+        if (tokenRecord && typeof captureChatTokenUsage === 'function') captureChatTokenUsage(null, data, tokenRecord);
         return extractAiProviderResponse(data, provider).content;
     }
 }
 
-async function readStreamResponse(response, provider) {
+async function readStreamResponse(response, provider, tokenRecord = null) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let fullResponse = "";
@@ -86,6 +111,7 @@ async function readStreamResponse(response, provider) {
                     if (data.trim() !== "[DONE]") {
                         try {
                             const json = JSON.parse(data);
+                            if (tokenRecord && typeof captureChatTokenUsage === 'function') captureChatTokenUsage(null, json, tokenRecord);
                             fullResponse += extractAiProviderResponse(json, provider, true).content;
                         } catch (e) {}
                     }
@@ -101,6 +127,7 @@ async function readStreamResponse(response, provider) {
              if (data.trim() !== "[DONE]") {
                  try {
                      const json = JSON.parse(data);
+                            if (tokenRecord && typeof captureChatTokenUsage === 'function') captureChatTokenUsage(null, json, tokenRecord);
                      fullResponse += extractAiProviderResponse(json, provider, true).content;
                  } catch (e) {}
              }
@@ -113,7 +140,7 @@ async function readStreamResponse(response, provider) {
             // 尝试解析为 JSON 数组
             const parsedStream = JSON.parse(accumulatedChunk);
             if (Array.isArray(parsedStream)) {
-                fullResponse = parsedStream.map(item => extractAiProviderResponse(item, provider, true).content).join('');
+                fullResponse = parsedStream.map(item => { if (tokenRecord && typeof captureChatTokenUsage === 'function') captureChatTokenUsage(null, item, tokenRecord); return extractAiProviderResponse(item, provider, true).content; }).join('');
             }
         } catch (e) {
             console.error("Gemini stream parsing failed", e);
@@ -419,12 +446,13 @@ function _nai_blobToDataUrl(blob) {
 }
 
 // 从 ZIP Blob 中提取图片，返回 DataURL
-async function _nai_extractPngFromZipBlob(zipBlob) {
+async function _nai_extractPngFromZipBlob(zipBlob, allImages = false) {
     const arrayBuffer = await zipBlob.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
 
     // 标准 ZIP 中图片通常经过 deflate 压缩，不能只在压缩字节里搜索 PNG 签名。
     const view = new DataView(arrayBuffer);
+    const extracted = [];
     for (let offset = 0; offset <= uint8.length - 46; offset++) {
         if (view.getUint32(offset, true) !== 0x02014b50) continue;
         const method = view.getUint16(offset + 10, true);
@@ -448,11 +476,14 @@ async function _nai_extractPngFromZipBlob(zipBlob) {
                 continue;
             }
             const mime = /\.jpe?g$/i.test(fileName) ? 'image/jpeg' : /\.webp$/i.test(fileName) ? 'image/webp' : 'image/png';
-            return _nai_blobToDataUrl(new Blob([imageBytes], { type: mime }));
+            const url = await _nai_blobToDataUrl(new Blob([imageBytes], { type: mime }));
+            if (!allImages) return url;
+            extracted.push(url);
         }
         offset += 45 + fileNameLength + extraLength + commentLength;
     }
 
+    if (allImages) return extracted;
     // 在 zip 字节流中定位 PNG 签名 (89 50 4E 47)
     let pngStart = -1;
     for (let i = 0; i < uint8.length - 8; i++) {
@@ -755,6 +786,27 @@ function applyApiGenerationParams(body, settings, protocol) {
 }
 
 function prepareAiProviderRequest(settings = {}, originalBody = {}, originalHeaders = {}, originalEndpoint = '', forceStream = false) {
+    if (settings._roleBinding) {
+        if (settings._bindingError) throw new Error(settings._bindingError);
+        originalBody = { ...originalBody, model: settings.model };
+        if (!originalBody.messages && Array.isArray(originalBody.contents)) {
+            const instruction = originalBody.systemInstruction || originalBody.system_instruction;
+            originalBody.messages = [
+                ...(instruction ? [{ role: 'system', content: (instruction.parts || []).map(part => part.text || '').join('\n') }] : []),
+                ...originalBody.contents.map(content => ({ role: content.role === 'model' ? 'assistant' : 'user', content: (content.parts || []).map(part => {
+                    if (part.text !== undefined) return { type: 'text', text: part.text };
+                    const inline = part.inlineData || part.inline_data;
+                    return inline ? { type: 'image_url', image_url: { url: `data:${inline.mimeType || inline.mime_type};base64,${inline.data}` } } : null;
+                }).filter(Boolean) }))
+            ];
+            const temperature = originalBody.generationConfig?.temperature;
+            delete originalBody.contents; delete originalBody.systemInstruction; delete originalBody.system_instruction;
+            delete originalBody.generationConfig;
+            if (temperature !== undefined) originalBody.temperature = temperature;
+        }
+        originalEndpoint = getApiConfigEndpoint(settings, forceStream);
+        originalHeaders = getApiConfigHeaders(settings);
+    }
     const protocol = settings.apiProtocol || (settings.provider === 'gemini' ? 'gemini' : 'openai_chat');
     const provider = protocol === 'anthropic' ? 'anthropic' : protocol === 'gemini' ? 'gemini' : protocol === 'deepseek' ? 'deepseek' : (settings.provider || 'newapi');
     let body = JSON.parse(JSON.stringify(originalBody || {}));
@@ -1094,29 +1146,41 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
 
     // 拼接最终 prompt：系统基础 Prompt + 画师串 + 用户 prompt。VIBE 走独立图片引用字段。
     const merged = _imageMergePrompt([artistTags, prompt].filter(Boolean).join(', '), 'novelai', systemPrompt, negativePrompt);
-    const fullPrompt = merged.prompt;
-    const fullNegativePrompt = merged.negativePrompt;
+    const compat = window.NovelAiCompat;
+    if (!compat) throw new Error('NovelAI 适配模块未加载，请刷新页面');
+    const modernModel = /nai-diffusion-[45]/.test(model);
+    const expanded = modernModel ? compat.prompts(merged.prompt, merged.negativePrompt, model, settings) : { prompt: merged.prompt, negativePrompt: merged.negativePrompt };
+    const fullPrompt = expanded.prompt;
+    const fullNegativePrompt = expanded.negativePrompt;
+    if (modernModel && compat.catalog[model]) {
+        if (!compat.catalog[model].quality.some(item => item.id === expanded.quality)) throw new Error('当前模型不支持所选质量预设，请使用 Standard 或关闭质量增强');
+        if (!compat.catalog[model].negative.some(item => item.id === expanded.uc)) throw new Error('当前模型不支持所选负面预设，请调整负面预设后重试');
+    }
 
     console.log('[NovelAI] 最终 Prompt:', fullPrompt);
 
     // inpainting 模型不能直接生成，回退到同版本普通模型
     if (model === 'nai-diffusion-3-inpainting') model = 'nai-diffusion-3';
 
-    const modelFamily = window.NovelAiVibe?.modelFamily?.(model) || (model.includes('nai-diffusion-4') ? 'v4' : 'v3');
+    const modelFamily = window.NovelAiVibe?.modelFamily?.(model) || compat.family(model);
     const isV4 = modelFamily === 'v4';
     const isV5 = modelFamily === 'v5';
     const isModern = isV4 || isV5;
     const configuredSeed = settings.seed === '' || settings.seed == null ? null : Number(settings.seed);
-    const commonSeed = Number.isFinite(configuredSeed) ? Math.max(0, Math.trunc(configuredSeed)) : Math.floor(Math.random() * 9999999999);
+    if (configuredSeed !== null && (!Number.isInteger(configuredSeed) || configuredSeed < 0 || configuredSeed > 4294967295)) throw new Error('Seed 必须是 0 到 4294967295 的整数，或留空随机');
+    const commonSeed = Number.isFinite(configuredSeed) ? Math.max(0, Math.trunc(configuredSeed)) : Math.floor(Math.random() * 0x100000000);
     const vibe = window.NovelAiVibe?.resolveForGeneration
-        ? await window.NovelAiVibe.resolveForGeneration(model)
+        ? await window.NovelAiVibe.resolveForGeneration(model, settings, signal)
         : { images: [], information: [], strengths: [], groupName: '' };
     const precise = window.NovelAiVibe?.resolvePreciseReferences
-        ? await window.NovelAiVibe.resolvePreciseReferences(model)
+        ? await window.NovelAiVibe.resolvePreciseReferences(model, settings, signal)
         : { images: [], strengths: [], fidelity: [], descriptions: [] };
-    const noiseSchedule = settings.noiseSchedule || (isModern ? 'karras' : 'native');
+    const noiseSchedule = isV5 ? 'karras' : (settings.noiseSchedule || (isModern ? 'karras' : 'native'));
+    const sampleCount = Math.max(1, Math.min(4, Math.trunc(Number(settings.nSamples) || 1)));
+    if (isV5 && (!Number.isFinite(scale) || scale < 0 || scale > 10)) throw new Error('V5 的 Guidance 必须在 0 到 10 之间；请调整当前数值后重试');
     const qualityToggle = settings.qualityToggle !== false;
     const ucPreset = Number.isFinite(Number(settings.ucPreset)) ? Number(settings.ucPreset) : 0;
+    if (!isModern && (ucPreset > 3 || settings.qualityPresetId === 'light')) throw new Error('V3 不支持所选预设，请使用原有负面预设与 Standard 质量预设');
 
     // 根据模型版本构建不同的请求体
     let requestBody;
@@ -1126,10 +1190,10 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
             model: model,
             action: 'generate',
             parameters: {
-                params_version: 3,
+                params_version: 4,
                 width, height, scale, sampler, steps,
                 seed: commonSeed,
-                n_samples: 1,
+                n_samples: sampleCount,
                 ucPreset,
                 qualityToggle,
                 autoSmea: !!settings.autoSmea,
@@ -1163,19 +1227,19 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
         requestBody.parameters.sm_dyn = !!settings.smeaDyn;
         const characterLimit = isV5 ? 22 : 6;
         const characters = (Array.isArray(settings.characterPrompts) ? settings.characterPrompts : [])
-            .filter(item => String(item?.prompt || '').trim())
-            .slice(0, characterLimit)
+            .filter(item => item?.enabled !== false && String(item?.prompt || '').trim())
             .map(item => {
                 const x = Number(item.center?.x);
                 const y = Number(item.center?.y);
                 return {
                     prompt: String(item.prompt).trim(), uc: String(item.uc || '').trim(),
                     center: {
-                        x: Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0.5,
-                        y: Number.isFinite(y) ? Math.min(1, Math.max(0, y)) : 0.5
+                        x: Number.isFinite(x) ? (isV5 ? Math.min(1, Math.max(0, x)) : (Math.round(Math.min(0.9, Math.max(0.1, x)) * 5 - 0.5) * 2 + 1) / 10) : 0.5,
+                        y: Number.isFinite(y) ? (isV5 ? Math.min(1, Math.max(0, y)) : (Math.round(Math.min(0.9, Math.max(0.1, y)) * 5 - 0.5) * 2 + 1) / 10) : 0.5
                     }
                 };
             });
+        if (characters.length > characterLimit) throw new Error(`当前模型最多 ${characterLimit} 个角色提示，已有 ${characters.length} 个；请调整角色列表，原数据不会被删除`);
         if (characters.length) {
             const useCoords = !!settings.characterUseCoords;
             requestBody.parameters.use_coords = useCoords;
@@ -1194,21 +1258,19 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
             requestBody.parameters.director_reference_descriptions = precise.descriptions.map(description => ({ caption: { base_caption: description, char_captions: [] }, legacy_uc: false }));
             requestBody.parameters.director_reference_information_extracted = precise.images.map(() => 1);
             requestBody.parameters.director_reference_strength_values = precise.strengths;
-            requestBody.parameters.director_reference_secondary_strength_values = precise.fidelity;
+            requestBody.parameters.director_reference_secondary_strength_values = precise.fidelity.map(value => 1 - value);
         }
+        requestBody.parameters.tag_hint_qt = compat.hints[expanded.quality] ?? 0;
+        requestBody.parameters.tag_hint_uc_preset = compat.hints[expanded.uc] ?? 0;
+        delete requestBody.parameters.ucPreset;
+        delete requestBody.parameters.qualityToggle;
         if (isV5) {
-            requestBody.parameters.params_version = 4;
-            requestBody.parameters.ucPresetId = ['heavy', 'light', 'human_focus', 'none'][ucPreset] || 'heavy';
-            requestBody.parameters.qualityPresetId = 'standard';
-            requestBody.parameters.tag_hint_qt = qualityToggle ? 1 : 0;
-            requestBody.parameters.tag_hint_uc_preset = 2;
-            requestBody.parameters.straight_alpha = true;
+            requestBody.parameters.straight_alpha = settings.straightAlpha !== false;
+            requestBody.parameters.tag_hint_transparent_background = !!settings.transparentBackground;
             requestBody.parameters.image_format = settings.imageFormat || 'png';
-            requestBody.parameters.inpaintImg2ImgStrength = 1;
-            delete requestBody.parameters.ucPreset;
             delete requestBody.parameters.sm;
             delete requestBody.parameters.sm_dyn;
-            delete requestBody.parameters.qualityToggle;
+            delete requestBody.parameters.autoSmea;
             delete requestBody.parameters.skip_cfg_above_sigma;
         }
     } else {
@@ -1220,7 +1282,7 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
             parameters: {
                 width, height, scale, sampler, steps,
                 seed: commonSeed,
-                n_samples: 1,
+                n_samples: sampleCount,
                 ucPreset,
                 qualityToggle,
                 sm: !!settings.smea,
@@ -1241,33 +1303,35 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
         }
     }
 
-    // 确定 API 地址
-    let apiUrl = '';
-    if (customUrlEnabled && customUrl) {
-        apiUrl = customUrl;
-        if ((settings.endpointMode || 'auto') !== 'full' && !apiUrl.includes('/ai/generate-image')) {
-            apiUrl = apiUrl.replace(/\/$/, '');
-            const configuredPath = isModern ? settings.streamPath : settings.generatePath;
-            apiUrl += configuredPath || (isModern ? '/ai/generate-image-stream' : '/ai/generate-image');
+    const action = settings.action || 'generate';
+    if (!['generate', 'img2img', 'infill'].includes(action)) throw new Error('不支持的 NovelAI 创作操作');
+    requestBody.action = action;
+    if (action !== 'generate') {
+        if (!settings.initImage) throw new Error('请先选择原图');
+        requestBody.parameters.image = await compat.fitImage(settings.initImage, width, height, isV5 ? 'transparent' : 'white', signal);
+        requestBody.parameters.strength = Math.min(1, Math.max(0, Number.isFinite(Number(settings.strength)) ? Number(settings.strength) : 0.7));
+        requestBody.parameters.noise = Math.min(1, Math.max(0, Number(settings.noise) || 0));
+        requestBody.parameters.extra_noise_seed = commonSeed;
+        if (!isV5) { requestBody.parameters.sm = false; requestBody.parameters.sm_dyn = false; }
+        if (action === 'infill') {
+            if (!settings.mask) throw new Error('请在原图上涂抹需要重绘的区域');
+            requestBody.parameters.mask = await compat.fitImage(settings.mask, width, height, 'black', signal);
+            if (isModern) requestBody.parameters.img2img = { strength: requestBody.parameters.strength, color_correct: true };
+            const inpaintingModels = { 'nai-diffusion-4-curated-preview': 'nai-diffusion-4-curated-inpainting', 'nai-diffusion-5-curated': 'nai-diffusion-4-5-curated-inpainting' };
+            requestBody.model = inpaintingModels[model] || model + '-inpainting';
+            if (model === 'nai-diffusion-5-curated') throw new Error('V5 Curated 当前使用 V4.5 Curated 重绘；请在模型设置中明确选择 V4.5 Curated 后重试');
         }
-    } else {
-        // V4/V4.5/V5 使用 stream 端点，V3 使用普通端点
-        apiUrl = isModern
-            ? 'https://image.novelai.net/ai/generate-image-stream'
-            : 'https://image.novelai.net/ai/generate-image';
     }
-
-    console.log('[NovelAI] 发送生图请求:', { apiUrl, model, modelFamily, width, height, steps, scale, sampler, vibeCount: vibe.images.length, preciseReferenceCount: precise.images.length });
-
-    const correlationId = crypto.randomUUID ? crypto.randomUUID() : `ovo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const requestHeaders = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream, application/zip, image/*', 'x-correlation-id': correlationId };
-    if (authMode === 'bearer' && cleanToken) requestHeaders.Authorization = `Bearer ${cleanToken}`;
-    if (authMode === 'header' && cleanToken) requestHeaders[settings.authHeaderName || 'Authorization'] = cleanToken;
-    if (settings.extraHeaders && typeof settings.extraHeaders === 'object') Object.assign(requestHeaders, settings.extraHeaders);
-    if (authMode === 'query' && cleanToken) {
-        const separator = apiUrl.includes('?') ? '&' : '?';
-        apiUrl += `${separator}${encodeURIComponent(settings.authQueryName || 'key')}=${encodeURIComponent(cleanToken)}`;
+    if (settings.enhanceMax) {
+        if (!isV5 || action !== 'img2img') throw new Error('Max Enhance 仅支持 V5 图生图');
+        requestBody.parameters.upscaled_enhance = true;
     }
+    const useStream = settings.generationMode === 'stream' || (settings.generationMode !== 'normal' && isModern);
+    if (useStream) requestBody.parameters.stream = 'sse';
+    const apiUrl = compat.endpoint(settings, useStream ? 'stream' : 'generate');
+    const requestHeaders = compat.headers(settings, useStream ? 'text/event-stream' : 'application/json');
+    const correlationId = requestHeaders['x-correlation-id'];
+    console.log('[NovelAI] 发送生图请求:', { model: requestBody.model, modelFamily, width, height, steps, scale, sampler, correlationId });
 
     const response = await fetch(apiUrl, {
         method: 'POST',
@@ -1279,53 +1343,31 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
     console.log(`[NovelAI] 响应状态: ${response.status}, Content-Type: ${response.headers.get('content-type')}`);
 
     if (!response.ok) {
-        throw await _imageReadError(response, 'NovelAI');
+        const error = await _imageReadError(response, 'NovelAI');
+        if (!error.message.includes(correlationId)) error.message += `；请求 ID：${correlationId}`;
+        throw error;
     }
 
     // === 根据响应 Content-Type 选择解析策略 ===
     const contentType = response.headers.get('content-type') || '';
     let imageDataUrl = null;
+    let imageResults = [];
 
     if (contentType.includes('text/event-stream') || contentType.includes('application/x-ndjson')) {
-        // === V4 SSE 流式响应 ===
-        console.log('[NovelAI] 解析 SSE 流式响应...');
-        const sseText = await response.text();
-        const lines = sseText.trim().split('\n');
-        let streamError = '';
-
-        // 从后往前扫描，找到最终的图片数据
-        for (let i = lines.length - 1; i >= 0; i--) {
-            const line = lines[i].trim();
-            if (!line.startsWith('data:') || /^data:\s*\[DONE\]$/.test(line)) continue;
-
-            const payload = line.substring(5).trim();
-            try {
-                const obj = JSON.parse(payload);
-                if (obj?.event_type === 'error' || obj?.type === 'error' || obj?.error) {
-                    streamError = obj?.error?.message || obj?.message || obj?.error || '流式生成失败';
-                    continue;
-                }
-                imageDataUrl = await _image_extractFromJson(obj);
-                if (imageDataUrl) break;
-            } catch (e) {
-                // 非 JSON，当成原始 base64 尝试
-                if (payload.length > 100) {
-                    imageDataUrl = await _image_resolveCandidate(payload);
-                    if (imageDataUrl) break;
-                }
-            }
-        }
-
-        if (!imageDataUrl) {
-            console.error('[NovelAI] SSE 响应中未找到图片数据, 前500字符:', sseText.substring(0, 500));
-            throw new Error(streamError ? `NovelAI 流式生成失败：${String(streamError).slice(0, 300)}；请求 ID：${correlationId}` : `SSE 响应中未找到图片数据；请求 ID：${correlationId}`);
-        }
-
+        try { imageResults = await compat.readSSE(response, settings.onProgress, signal); }
+        catch (error) { if (error.name !== 'AbortError') error.message += `；请求 ID：${correlationId}`; throw error; }
+        imageDataUrl = imageResults[0]?.imageUrl;
     } else if (contentType.includes('application/json')) {
         // === JSON 响应（某些代理会返回 JSON） ===
         console.log('[NovelAI] 解析 JSON 响应...');
         const jsonData = await response.json();
-        imageDataUrl = await _image_extractFromJson(jsonData);
+        if (Array.isArray(jsonData.images)) {
+            for (const [index, item] of jsonData.images.entries()) {
+                const image = await _image_resolveCandidate(item);
+                if (image) imageResults.push({ imageUrl: image, seed: item?.seed, index: item?.index ?? index });
+            }
+        }
+        imageDataUrl = imageResults[0]?.imageUrl || await _image_extractFromJson(jsonData);
         if (!imageDataUrl) {
             throw new Error('JSON 响应中未找到图片数据');
         }
@@ -1346,7 +1388,11 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
             }
             imageDataUrl = await _nai_blobToDataUrl(typedBlob);
         } else {
-            imageDataUrl = await _nai_extractPngFromZipBlob(blob);
+            if (sampleCount > 1) {
+                const urls = await _nai_extractPngFromZipBlob(blob, true);
+                imageResults = urls.map((imageUrl, index) => ({ imageUrl, index }));
+                imageDataUrl = imageResults[0]?.imageUrl;
+            } else imageDataUrl = await _nai_extractPngFromZipBlob(blob);
         }
     }
 
@@ -1354,25 +1400,29 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
         throw new Error('未能从响应中获取图片');
     }
 
-    // 将普通 URL 转换为 DataURL 以实现持久化本地缓存，防止过期裂图
-    if (imageDataUrl.startsWith('http')) {
+    if (!imageResults.length) imageResults = [{ imageUrl: imageDataUrl, seed: commonSeed, index: 0 }];
+    for (const result of imageResults) {
+        if (!result.imageUrl.startsWith('http')) continue;
         try {
-            console.log('[NovelAI] 尝试将返回的 URL 图片持久化为 Base64...');
-            const imgRes = await fetch(imageDataUrl, { signal });
-            const imgBlob = await imgRes.blob();
-            imageDataUrl = await _nai_blobToDataUrl(imgBlob);
-        } catch (e) {
-            console.warn('[NovelAI] 图片 URL 转 Base64 失败，使用原链接:', e);
+            const imgRes = await fetch(result.imageUrl, { signal });
+            if (!imgRes.ok) throw new Error('图片下载失败');
+            result.imageUrl = await _nai_blobToDataUrl(await imgRes.blob());
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            console.warn('[NovelAI] 原图持久化失败，保留原链接');
         }
     }
+    imageDataUrl = imageResults[0].imageUrl;
 
     console.log('[NovelAI] ✅ 生图成功');
     const snapshotParameters = { ...requestBody.parameters };
     delete snapshotParameters.reference_image_multiple;
     delete snapshotParameters.director_reference_images;
+    delete snapshotParameters.image;
+    delete snapshotParameters.mask;
     return {
-        imageUrl: imageDataUrl, originalImageUrl: imageDataUrl, provider: 'novelai', model,
-        size: resolution, seed: commonSeed, vibeGroup: vibe.groupName || '', vibeCount: vibe.images.length,
+        imageUrl: imageDataUrl, originalImageUrl: imageDataUrl, images: imageResults.length ? imageResults : [{ imageUrl: imageDataUrl, seed: commonSeed, index: 0 }], provider: 'novelai', model: requestBody.model,
+        size: resolution, seed: imageResults[0]?.seed ?? commonSeed, vibeGroup: vibe.groupName || '', vibeCount: vibe.images.length,
         mimeType: /^data:([^;,]+)/.exec(imageDataUrl)?.[1] || '', correlationId,
         requestSnapshot: {
             input: requestBody.input, model: requestBody.model, action: requestBody.action,

@@ -429,7 +429,7 @@
         if (confirmBtn) confirmBtn.onclick = function () {
             if (useAiCheck && useAiCheck.checked) {
                 confirmBtn.disabled = true;
-                callVisionAPI(imageUrl).then(function (recognizedText) {
+                callVisionAPI(imageUrl, charId).then(function (recognizedText) {
                     if (nameInput) nameInput.value = '';
                     if (descInput) descInput.value = recognizedText || '';
                     useAiCheck.checked = false;

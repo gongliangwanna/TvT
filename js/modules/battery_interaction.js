@@ -145,7 +145,7 @@ ${BilingualContent.prompt(chat, 'battery', '这一句角色内心独白；若使
 `;
 
             // 2. 调用 API
-            const batteryApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('battery', db.apiSettings) : db.apiSettings;
+            const batteryApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('battery', db.apiSettings, chat) : db.apiSettings;
             let {url, key, model, provider} = batteryApiConfig;
             if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(batteryApiConfig) : (!url || !key || !model)) return;
 

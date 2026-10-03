@@ -1,6 +1,328 @@
 const OVO_REPLY_IDLE_TIMEOUT_MS = 90 * 1000;
 const OVO_REPLY_TOTAL_TIMEOUT_MS = 10 * 60 * 1000;
 
+// Shared by request sending and token preview; preserve the existing filtering and serialization order.
+function getChatRequestHistory(chat, chatType = 'private') {
+    const rawLimit = Number(chat.maxMemory);
+    const historyLimit = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.floor(rawLimit) : 20;
+    let historySlice = (chat.history || []).filter(message => message && !message.isMomentsActivity).slice(-historyLimit);
+
+    // 节点系统：上下文截断与记忆隔离
+    if (chatType === 'private' && chat.activeNodeId && chat.nodes) {
+        const activeNode = chat.nodes.find(n => n.id === chat.activeNodeId);
+        if (activeNode) {
+            let startIndex = -1;
+            for (let i = chat.history.length - 1; i >= 0; i--) {
+                const m = chat.history[i];
+                if (m.isNodeBoundary && m.nodeAction === 'start' && m.nodeId === chat.activeNodeId) {
+                    startIndex = i;
+                    break;
+                }
+            }
+            if (startIndex !== -1) {
+                // 无论是否开启 readMemory，当前对话视口严格只保留节点内的消息
+                const nodeMsgs = chat.history.slice(startIndex + 1).filter(message => !message.isMomentsActivity);
+                historySlice = nodeMsgs.slice(-historyLimit);
+
+                // 上下文截断 (保留摘要)
+                if (activeNode.enableSummary) {
+                    const summaryFloor = db.nodeSummaryFloor || 10;
+                    const nodeMsgsInSlice = historySlice.filter(m => !m.isNodeBoundary);
+                    if (nodeMsgsInSlice.length > summaryFloor) {
+                        const msgsToSummarize = nodeMsgsInSlice.slice(0, nodeMsgsInSlice.length - summaryFloor);
+                        historySlice = historySlice.map(m => {
+                            if (msgsToSummarize.includes(m)) {
+                                if (m.isNodeSummaryMsg) {
+                                    return { ...m, content: `[过往剧情摘要：${m.content}]`, parts: [{type: 'text', text: `[过往剧情摘要：${m.content}]`}] };
+                                } else if (m.nodeSummary) {
+                                    // 替换为摘要消息
+                                    return { ...m, content: `[过往剧情摘要：${m.nodeSummary}]`, parts: [{type: 'text', text: `[过往剧情摘要：${m.nodeSummary}]`}] };
+                                } else {
+                                    // 没有摘要的旧消息直接丢弃
+                                    return { ...m, isContextDisabled: true };
+                                }
+                            }
+                            return m;
+                        });
+
+                        // 去重连续的相同摘要
+                        let lastSummary = null;
+                        historySlice = historySlice.filter(m => {
+                            if (m.content && typeof m.content === 'string' && m.content.startsWith('[过往剧情摘要：')) {
+                                if (m.content === lastSummary) return false;
+                                lastSummary = m.content;
+                                return true;
+                            }
+                            lastSummary = null;
+                            return true;
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 节点系统：过滤掉已收纳节点的消息
+    if (chatType === 'private' && chat.nodes) {
+        const archivedNodeIds = chat.nodes.filter(n => n.status === 'archived').map(n => n.id);
+        if (archivedNodeIds.length > 0) {
+            let currentArchivedNodeId = null;
+            historySlice = historySlice.filter(m => {
+                if (m.isNodeBoundary) {
+                    if (m.nodeAction === 'start' && archivedNodeIds.includes(m.nodeId)) {
+                        currentArchivedNodeId = m.nodeId;
+                        return false;
+                    }
+                    if (m.nodeAction === 'end' && m.nodeId === currentArchivedNodeId) {
+                        currentArchivedNodeId = null;
+                        return false;
+                    }
+                }
+                if (currentArchivedNodeId) return false;
+                return true;
+            });
+        }
+    }
+
+    // 使用工具函数进行过滤（包含深度克隆、屏蔽过滤、双语修正、状态栏剔除）
+    historySlice = filterHistoryForAI(chat, historySlice);
+    // MCP 状态卡只供用户查看，所有模型供应商都不得把它当作聊天上下文。
+    historySlice = historySlice.filter(m => !m.excludeFromContext && m.type !== 'mcp_activity');
+    // 【新增】过滤掉不应进入上下文的消息（如思考过程、被撤回的消息标记等）
+    historySlice = historySlice.filter(m => !m.isContextDisabled);
+
+    // 【双重保险】再次过滤掉内容匹配 <thinking> 的消息，防止 isContextDisabled 属性丢失
+    historySlice = historySlice.filter(m => {
+        if (m.isThinking) return false;
+        if (m.content && typeof m.content === 'string' && m.content.trim().startsWith('<thinking>')) return false;
+        return true;
+    });
+    return historySlice;
+}
+
+function serializeChatHistoryForGemini(chat, chatType, historySlice, apiConfig = {}, replyOptions = {}, latestTurnProtectionEnabled = false) {
+    let lastMsgTimeForAI = 0;
+    const contents = historySlice.map(msg => {
+        const role = (msg.role === 'assistant' || msg.role === 'char') && (!replyOptions.member || msg.senderId === replyOptions.member.id) ? 'model' : 'user';
+        let prefix = '';
+        const currentMsgTime = msg.timestamp;
+        const timeDiff = currentMsgTime - lastMsgTimeForAI;
+        const isSameDay = new Date(currentMsgTime).toDateString() === new Date(lastMsgTimeForAI).toDateString();
+
+       if (lastMsgTimeForAI === 0 || timeDiff > 20 * 60 * 1000 || !isSameDay) {
+           const dateObj = new Date(currentMsgTime);
+           const timeStr = `${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())} ${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`;
+
+           prefix = `[system: ${timeStr}]`;
+
+           if (db.apiSettings && db.apiSettings.timePerceptionEnabled && timeDiff > 30 * 60 * 1000 && lastMsgTimeForAI !== 0) {
+               prefix += `\n[system: 距离上次互动已过去 ${formatTimeGap(timeDiff)}。话题可能已中断，请自然地开启新话题或对时间流逝做出反应。]`;
+           }
+
+           prefix += '\n';
+       }
+        lastMsgTimeForAI = currentMsgTime;
+
+        let parts;
+        if (msg.role === 'user' && msg.quote) {
+            const replyTextMatch = msg.content.match(/\[.*?的消息：([\s\S]+?)\]/);
+            const replyText = replyTextMatch ? replyTextMatch[1] : msg.content;
+            let content = `[${chat.myName}引用“${msg.quote.content}”并回复：${replyText}]`;
+            parts = [{text: content}];
+        } else if (msg.parts && msg.parts.length > 0) {
+            parts = collapseStickerPartsForAI(msg.parts).map(p => {
+                if (p.type === 'text' || p.type === 'html') {
+                    return {text: p.text};
+                } else if (p.type === 'image') {
+                    if (apiConfig.imageMode === 'reject') return {text: '[图片未发送：当前节点被用户设为不接收图片]'};
+                    if (apiConfig.imageMode === 'description') return {text: p.description ? `[图片描述：${p.description}]` : '[图片：尚无可用描述]'};
+                    if (p.description) {
+                        return {text: `[图片描述：${p.description}]`};
+                    } else {
+                        const match = p.data.match(/^data:(image\/(.+));base64,(.*)$/);
+                        if (match) {
+                            if (match[1] === 'image/gif') {
+                                return {text: `[动态图片(GIF)]`};
+                            }
+                            return {inline_data: {mime_type: match[1], data: match[3]}};
+                        }
+                    }
+                }
+                return null;
+            }).filter(p => p);
+        } else {
+            let content = msg.content || '';
+            // 展开小剧场分享卡片
+            const theaterShareMatch = content.match(/\[小剧场分享[：:](.+?)\]/);
+            if (theaterShareMatch) {
+                const scenarioId = theaterShareMatch[1];
+                let scenario = null;
+                if (typeof db !== 'undefined' && db) {
+                    if (Array.isArray(db.theaterScenarios)) {
+                        scenario = db.theaterScenarios.find(s => s.id === scenarioId);
+                    }
+                    if (!scenario && Array.isArray(db.theaterHtmlScenarios)) {
+                        scenario = db.theaterHtmlScenarios.find(s => s.id === scenarioId);
+                    }
+                }
+                if (scenario) {
+                    let readableContent = scenario.content || '';
+                    if (scenario.mode === 'html' || /<[^>]+>/.test(readableContent)) {
+                        readableContent = readableContent
+                            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                            .replace(/<[^>]+>/g, ' ')
+                            .replace(/\s{2,}/g, ' ')
+                            .trim();
+                    }
+                    const title = scenario.title || '小剧场';
+                    const excerpt = readableContent;
+                    content = content.replace(
+                        /\[小剧场分享[：:].+?\]/,
+                        `（我刚刚写了一篇小剧场，标题是「${title}」。以下是我写的内容：\n${excerpt}）`
+                    );
+                }
+            }
+            parts = [{text: content}];
+        }
+
+        if (prefix) {
+            if (parts.length > 0 && parts[0].text) {
+                parts[0].text = prefix + parts[0].text;
+            } else {
+                parts.unshift({text: prefix});
+            }
+        }
+
+        if (msg.role === 'user' && chatType === 'private' && chat.characterAutoFavoriteEnabled && parts.length > 0 && parts[0].text) {
+            parts[0].text = '[id:' + msg.id + ']\n' + parts[0].text;
+        }
+
+        return { role, parts, ...(latestTurnProtectionEnabled && msg.id ? { __ovoMessageId: msg.id } : {}) };
+    });
+
+    return contents;
+}
+
+function serializeChatHistoryMessages(chat, chatType, historySlice, apiConfig = {}, replyOptions = {}, latestTurnProtectionEnabled = false) {
+    const messages = [];
+    let lastMsgTimeForAI = 0;
+
+    historySlice.forEach(msg => {
+       let content;
+       let prefix = '';
+
+       const currentMsgTime = msg.timestamp;
+       const timeDiff = currentMsgTime - lastMsgTimeForAI;
+       const isSameDay = new Date(currentMsgTime).toDateString() === new Date(lastMsgTimeForAI).toDateString();
+
+       if (lastMsgTimeForAI === 0 || timeDiff > 20 * 60 * 1000 || !isSameDay) {
+           const dateObj = new Date(currentMsgTime);
+           const timeStr = `${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())} ${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`;
+           prefix = `[system: ${timeStr}]\n`;
+       }
+       lastMsgTimeForAI = currentMsgTime;
+
+       if (msg.role === 'user' && msg.quote) {
+           const replyTextMatch = msg.content.match(/\[.*?的消息：([\s\S]+?)\]/);
+           const replyText = replyTextMatch ? replyTextMatch[1] : msg.content;
+
+           let textContent = `${prefix}[${chat.myName}引用“${msg.quote.content}”并回复：${replyText}]`;
+           if (chatType === 'private' && chat.characterAutoFavoriteEnabled) {
+               textContent = '[id:' + msg.id + ']\n' + textContent;
+           }
+           content = [{type: 'text', text: textContent}];
+
+       } else {
+           if (msg.parts && msg.parts.length > 0) {
+               let prefixAdded = false;
+               content = collapseStickerPartsForAI(msg.parts).map(p => {
+                   if (p.type === 'text' || p.type === 'html') {
+                       const textContent = (!prefixAdded) ? (prefix + p.text) : p.text;
+                       prefixAdded = true;
+                       return {type: 'text', text: textContent};
+                   } else if (p.type === 'image') {
+                       const imageMode = apiConfig.imageMode || '';
+                       if (imageMode === 'reject') {
+                           const textContent = (!prefixAdded ? prefix : '') + '[图片未发送：当前节点被用户设为不接收图片]';
+                           prefixAdded = true;
+                           return {type: 'text', text: textContent};
+                       }
+                       if (imageMode === 'description') {
+                           const textContent = (!prefixAdded ? prefix : '') + (p.description ? `[图片描述：${p.description}]` : '[图片：尚无可用描述]');
+                           prefixAdded = true;
+                           return {type: 'text', text: textContent};
+                       }
+                       if (p.description) {
+                           // 即便有描述，也同时把原图发给模型（如果模型支持的话）
+                           const textContent = (!prefixAdded) ? (prefix + `[图片描述：${p.description}]`) : `[图片描述：${p.description}]`;
+                           prefixAdded = true;
+                           return [
+                                {type: 'text', text: textContent},
+                                {type: 'image_url', image_url: {url: p.data}}
+                           ];
+                       } else {
+                           return {type: 'image_url', image_url: {url: p.data}};
+                       }
+                   }
+                   return null;
+               }).flat().filter(p => p);
+           } else {
+               content = prefix + msg.content;
+               const theaterShareMatch = content.match(/\[小剧场分享[：:](.+?)\]/);
+               if (theaterShareMatch) {
+                   const scenarioId = theaterShareMatch[1];
+                   let scenario = null;
+                   if (typeof db !== 'undefined' && db) {
+                       if (Array.isArray(db.theaterScenarios)) {
+                           scenario = db.theaterScenarios.find(s => s.id === scenarioId);
+                       }
+                       if (!scenario && Array.isArray(db.theaterHtmlScenarios)) {
+                           scenario = db.theaterHtmlScenarios.find(s => s.id === scenarioId);
+                       }
+                   }
+                   if (scenario) {
+                       let readableContent = scenario.content || '';
+                       if (scenario.mode === 'html' || /<[^>]+>/.test(readableContent)) {
+                           readableContent = readableContent
+                               .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                               .replace(/<[^>]+>/g, ' ')
+                               .replace(/\s{2,}/g, ' ')
+                               .trim();
+                       }
+                       const title = scenario.title || '小剧场';
+                       const excerpt = readableContent;
+                       content = content.replace(
+                           /\[小剧场分享[：:].+?\]/,
+                           `（我刚刚写了一篇小剧场，标题是「${title}」。以下是我写的内容：\n${excerpt}）`
+                       );
+                   }
+               }
+           }
+           if (msg.role === 'user' && chatType === 'private' && chat.characterAutoFavoriteEnabled) {
+               if (typeof content === 'string') {
+                   content = '[id:' + msg.id + ']\n' + content;
+               } else if (Array.isArray(content) && content[0] && content[0].text) {
+                   content[0].text = '[id:' + msg.id + ']\n' + content[0].text;
+               }
+           }
+
+           if (typeof content === 'string') {
+               content = [{type: 'text', text: content}];
+           }
+       }
+
+       const role = (msg.role === 'assistant' || msg.role === 'char') && (!replyOptions.member || msg.senderId === replyOptions.member.id) ? 'assistant' : 'user';
+
+       if (Array.isArray(content) && content.every(c => c.type === 'text')) {
+            messages.push({ role: role, content: content.map(c => c.text).join(''), ...(latestTurnProtectionEnabled && msg.id ? { __ovoMessageId: msg.id } : {}) });
+        } else {
+            messages.push({ role: role, content: content, ...(latestTurnProtectionEnabled && msg.id ? { __ovoMessageId: msg.id } : {}) });
+       }
+    });
+
+    return messages;
+}
+
 function restoreMissingThinkingStart(response, cotEnabled, chat) {
     if (!cotEnabled || !response) return response;
     const tagPairs = [['<thinking>', '</thinking>'], ['<think>', '</think>']];
@@ -45,7 +367,15 @@ function collapseStickerPartsForAI(parts) {
 }
 
 async function getAiReply(chatId, chatType, isBackground = false, isSummary = false, isCharBlockedMonologue = false, isPhoneControlRevokeAttempt = false, replyOptions = {}) {
-    if (isGenerating && !isBackground && !replyOptions.recoveryTaskId) return;
+    if (window.StatusStorage?.isChatLocked(chatType, chatId)) {
+        if (!isBackground) showToast('此会话正在整理状态栏数据，请在操作完成后再调用');
+        return;
+    }
+    if (isGenerating && !isBackground && !replyOptions.recoveryTaskId && !replyOptions.memberTask) return;
+    if (chatType === 'group' && !isSummary && !replyOptions.memberTask && window.MemberApiRuntime) {
+        const group = db.groups.find(item => item.id === chatId);
+        if (window.MemberApiRuntime.isIndependent(group)) return window.MemberApiRuntime.reply(group, isBackground, replyOptions);
+    }
 
     // 拉黑检查：被拉黑的角色不回复（角色拉黑用户后的「让TA说说」不在此列）
     if (chatType === 'private' && !isCharBlockedMonologue) {
@@ -56,7 +386,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
     // 免打扰时段检查：后台消息在免打扰时段内直接跳过
     if (isBackground && isInQuietHours(chatId)) return;
 
-    if (!isBackground && !replyOptions.recoveryTaskId) {
+    if (!isBackground && !replyOptions.recoveryTaskId && !replyOptions.memberTask) {
         if (db.globalSendSound) {
             playSound(db.globalSendSound);
         } else {
@@ -77,16 +407,20 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         // 默认使用主API
         apiConfig = db.apiSettings;
     }
-    const routeChat = chatType === 'private' ? db.characters.find(item => item.id === chatId) : db.groups.find(item => item.id === chatId);
+    const routeChat = replyOptions.workingChat || (chatType === 'private' ? db.characters.find(item => item.id === chatId) : db.groups.find(item => item.id === chatId));
     const apiFeature = isSummary ? 'summary' : isBackground ? 'background' : (!isSummary && !isBackground && chatType === 'private' && routeChat?.webSearchEnabled ? 'webSearch' : (chatType === 'group' ? 'groupChat' : 'chat'));
-    apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature(apiFeature, apiConfig) : apiConfig;
+    const bindingFeature = replyOptions.backgroundReason === 'followUp' ? 'followUp' : apiFeature;
+    const roleContext = replyOptions.member ? { chat: routeChat, member: replyOptions.member } : routeChat;
+    const apiStartedAt = Date.now();
+    apiConfig = replyOptions.apiConfigSnapshot || (typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature(bindingFeature, apiConfig, roleContext) : apiConfig);
     
     let {url, key, model, provider} = apiConfig;
     let streamEnabled = apiConfig.streamEnabled !== undefined ? apiConfig.streamEnabled : db.apiSettings.streamEnabled;
     
     if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!url || !key || !model)) {
+        if (replyOptions.memberTask) { replyOptions.onError?.(new Error(apiConfig._bindingError || '成员 API 尚未配置')); return false; }
         if (!isBackground) {
-            showToast('请先在“api”应用中完成设置！');
+            showToast(apiConfig._bindingError || '请先在“api”应用中完成设置！');
             if (!replyOptions.recoveryTaskId) switchScreen('api-settings-screen');
         }
         return;
@@ -103,12 +437,13 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         url = url.slice(0, -1);
     }
 
-    const chat = (chatType === 'private') ? db.characters.find(c => c.id === chatId) : db.groups.find(g => g.id === chatId);
+    const chat = replyOptions.workingChat || ((chatType === 'private') ? db.characters.find(c => c.id === chatId) : db.groups.find(g => g.id === chatId));
     if (!chat) return;
     const backgroundReason = replyOptions.backgroundReason || 'inactivity';
+    const backgroundSpeaker = replyOptions.member ? (replyOptions.member.groupNickname || replyOptions.member.realName) : chat.realName;
     const backgroundInstruction = backgroundReason === 'followUp'
-        ? `[系统通知：你刚刚已经回复过用户，但用户暂时还没有接话。请以${chat.realName}的身份，根据最近对话、人设、关系与当前时间，自然地追加一轮较简短的表达。可以补充刚想到的内容、延续上一话题、分享情绪或轻微追问；不要解释为何再次发送，不要提及系统、概率或等待规则，不要重复上一轮，也不要责怪或催促用户回复。]`
-        : `[系统通知：距离上次互动已有一段时间。请以${chat.realName}的身份主动发起新话题，或自然地延续之前的对话。]`;
+        ? `[系统通知：你刚刚已经回复过用户，但用户暂时还没有接话。请以${backgroundSpeaker}的身份，根据最近对话、人设、关系与当前时间，自然地追加一轮较简短的表达。可以补充刚想到的内容、延续上一话题、分享情绪或轻微追问；不要解释为何再次发送，不要提及系统、概率或等待规则，不要重复上一轮，也不要责怪或催促用户回复。]`
+        : `[系统通知：距离上次互动已有一段时间。请以${backgroundSpeaker}的身份主动发起新话题，或自然地延续之前的对话。]`;
     const latestTurnProtectionEnabled = !isBackground && !isSummary && !!db.apiSettings?.latestTurnProtectionEnabled;
     let latestTurnIds = [];
     const recordLatestTurnProtectionCheck = check => {
@@ -181,8 +516,16 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             throw cancelledError;
         }
         if (replyTask) await window.ReplyResilience.markFinalizing(replyTask, fullResponse);
+        if (replyOptions.memberTask && replyOptions.onResult) {
+            await replyOptions.onResult({ fullResponse, replyTask, runtimeChat: chat, apiUsage: { ...window.RoleApiBindings.describe(apiConfig), elapsedMs: Date.now() - apiStartedAt } });
+            return;
+        }
         const historyLengthBefore = Array.isArray(chat.history) ? chat.history.length : 0;
         await handleAiReplyContent(fullResponse, chat, chatId, chatType, isBackground, isCharBlockedMonologue, replyOptions);
+        if (apiConfig._roleBinding && Array.isArray(chat.history)) {
+            chat.history.slice(historyLengthBefore).forEach(message => { message.apiUsage = { ...window.RoleApiBindings.describe(apiConfig), elapsedMs: Date.now() - apiStartedAt }; });
+            await persistTargetChat();
+        }
         if (replyTask && Array.isArray(chat.history)) {
             chat.history.slice(historyLengthBefore).forEach(message => {
                 if (message && !message.replyRequestId) message.replyRequestId = replyTask.id;
@@ -198,9 +541,20 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 console.warn('[FollowUpReply] could not schedule follow-up:', followUpScheduleError);
             }
         }
+        if (!isSummary && !isCharBlockedMonologue && !isPhoneControlRevokeAttempt && chatType === 'private' && window.Moments?.chatEvent) {
+            try {
+                await window.Moments.chatEvent(chat, isBackground, replyTask?.id || '');
+            } catch (momentsScheduleError) {
+                console.warn('[Moments] could not schedule NPC activity:', momentsScheduleError);
+            }
+        }
     };
 
-    if (!isBackground) {
+    if (window.StatusStorage?.isChatLocked(chatType, chatId)) {
+        if (!isBackground) showToast('此会话正在整理状态栏数据，请在操作完成后再调用');
+        return;
+    }
+    if (!isBackground && !replyOptions.memberTask) {
         currentReplyAbortController = new AbortController();
         requestAbortController = currentReplyAbortController;
         isGenerating = true;
@@ -213,6 +567,11 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
     } else {
         // 后台请求使用独立 controller，避免前台中止或其他角色请求串线。
         requestAbortController = new AbortController();
+    }
+    const abortMemberRequest = () => requestAbortController.abort(replyOptions.signal.reason);
+    if (replyOptions.signal) {
+        if (replyOptions.signal.aborted) abortMemberRequest();
+        else replyOptions.signal.addEventListener('abort', abortMemberRequest, { once: true });
     }
 
     if (resilienceEnabled) {
@@ -227,7 +586,8 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 streamEnabled,
                 isBackground: !!isBackground,
                 recoveryTaskId: replyOptions.recoveryTaskId || '',
-                initialState: 'preparing'
+                initialState: 'preparing',
+                memberId: replyOptions.member?.id || ''
             });
         } catch (resilienceError) {
             console.warn('[ReplyResilience] could not persist request start:', resilienceError);
@@ -236,98 +596,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
 
     try {
         let requestBody;
-        let historySlice = chat.history.filter(message => !message.isMomentsActivity).slice(-chat.maxMemory);
-        
-        // 节点系统：上下文截断与记忆隔离
-        if (chatType === 'private' && chat.activeNodeId && chat.nodes) {
-            const activeNode = chat.nodes.find(n => n.id === chat.activeNodeId);
-            if (activeNode) {
-                let startIndex = -1;
-                for (let i = chat.history.length - 1; i >= 0; i--) {
-                    const m = chat.history[i];
-                    if (m.isNodeBoundary && m.nodeAction === 'start' && m.nodeId === chat.activeNodeId) {
-                        startIndex = i;
-                        break;
-                    }
-                }
-                if (startIndex !== -1) {
-                    // 无论是否开启 readMemory，当前对话视口严格只保留节点内的消息
-                    const nodeMsgs = chat.history.slice(startIndex + 1).filter(message => !message.isMomentsActivity);
-                    historySlice = nodeMsgs.slice(-chat.maxMemory);
-                    
-                    // 上下文截断 (保留摘要)
-                    if (activeNode.enableSummary) {
-                        const summaryFloor = db.nodeSummaryFloor || 10;
-                        const nodeMsgsInSlice = historySlice.filter(m => !m.isNodeBoundary);
-                        if (nodeMsgsInSlice.length > summaryFloor) {
-                            const msgsToSummarize = nodeMsgsInSlice.slice(0, nodeMsgsInSlice.length - summaryFloor);
-                            historySlice = historySlice.map(m => {
-                                if (msgsToSummarize.includes(m)) {
-                                    if (m.isNodeSummaryMsg) {
-                                        return { ...m, content: `[过往剧情摘要：${m.content}]`, parts: [{type: 'text', text: `[过往剧情摘要：${m.content}]`}] };
-                                    } else if (m.nodeSummary) {
-                                        // 替换为摘要消息
-                                        return { ...m, content: `[过往剧情摘要：${m.nodeSummary}]`, parts: [{type: 'text', text: `[过往剧情摘要：${m.nodeSummary}]`}] };
-                                    } else {
-                                        // 没有摘要的旧消息直接丢弃
-                                        return { ...m, isContextDisabled: true };
-                                    }
-                                }
-                                return m;
-                            });
-                            
-                            // 去重连续的相同摘要
-                            let lastSummary = null;
-                            historySlice = historySlice.filter(m => {
-                                if (m.content && typeof m.content === 'string' && m.content.startsWith('[过往剧情摘要：')) {
-                                    if (m.content === lastSummary) return false;
-                                    lastSummary = m.content;
-                                    return true;
-                                }
-                                lastSummary = null;
-                                return true;
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // 节点系统：过滤掉已收纳节点的消息
-        if (chatType === 'private' && chat.nodes) {
-            const archivedNodeIds = chat.nodes.filter(n => n.status === 'archived').map(n => n.id);
-            if (archivedNodeIds.length > 0) {
-                let currentArchivedNodeId = null;
-                historySlice = historySlice.filter(m => {
-                    if (m.isNodeBoundary) {
-                        if (m.nodeAction === 'start' && archivedNodeIds.includes(m.nodeId)) {
-                            currentArchivedNodeId = m.nodeId;
-                            return false;
-                        }
-                        if (m.nodeAction === 'end' && m.nodeId === currentArchivedNodeId) {
-                            currentArchivedNodeId = null;
-                            return false;
-                        }
-                    }
-                    if (currentArchivedNodeId) return false;
-                    return true;
-                });
-            }
-        }
-        
-        // 使用工具函数进行过滤（包含深度克隆、屏蔽过滤、双语修正、状态栏剔除）
-        historySlice = filterHistoryForAI(chat, historySlice);
-        // MCP 状态卡只供用户查看，所有模型供应商都不得把它当作聊天上下文。
-        historySlice = historySlice.filter(m => !m.excludeFromContext && m.type !== 'mcp_activity');
-        // 【新增】过滤掉不应进入上下文的消息（如思考过程、被撤回的消息标记等）
-        historySlice = historySlice.filter(m => !m.isContextDisabled);
-        
-        // 【双重保险】再次过滤掉内容匹配 <thinking> 的消息，防止 isContextDisabled 属性丢失
-        historySlice = historySlice.filter(m => {
-            if (m.isThinking) return false;
-            if (m.content && typeof m.content === 'string' && m.content.trim().startsWith('<thinking>')) return false;
-            return true;
-        });
+        let historySlice = getChatRequestHistory(chat, chatType);
         if (latestTurnProtectionEnabled) latestTurnIds = getLatestConversationTurnIds(historySlice);
 
         let weatherText = '';
@@ -352,10 +621,10 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                     console.warn('[VectorMemory] failed to prepare prompt context:', error);
                 }
             }
-            systemPrompt = generatePrivateSystemPrompt(chat, { isPhoneControlRevokeAttempt, weatherText });
+            systemPrompt = generatePrivateSystemPrompt(chat, { isPhoneControlRevokeAttempt, weatherText, isBackground });
         } else {
             if (typeof generateGroupSystemPrompt === 'function') {
-                systemPrompt = generateGroupSystemPrompt(chat);
+                systemPrompt = generateGroupSystemPrompt(chat, { targetMember: replyOptions.member || null });
             } else {
                 systemPrompt = "Group chat system prompt not available.";
             }
@@ -363,8 +632,19 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
 
         // 检查是否开启了后台自动识图
         if (db.imageRecognitionEnabled) {
+            if (replyOptions.featureConfigSnapshots ? replyOptions.featureConfigSnapshots.stickerBound : window.RoleApiBindings?.selection(roleContext, 'stickerVision')) {
+                const message = [...historySlice].reverse().find(item => item.role === 'user');
+                const stickers = message?.parts?.filter(part => part.type === 'sticker' && !part.description && part.data) || [];
+                if (stickers.length && !message.roleStickerRecognitionAttempted) {
+                    message.roleStickerRecognitionAttempted = true;
+                    const config = replyOptions.featureConfigSnapshots?.sticker || getApiConfigForFeature('stickerVision', isApiConfigReady(db.stickerRecognitionApiSettings) ? db.stickerRecognitionApiSettings : db.apiSettings, roleContext);
+                    const temporary = { parts: stickers.map(part => ({ ...part, type: 'image' })) };
+                    await generateImageDescription(temporary, chat, config);
+                    stickers.forEach((part, index) => { if (temporary.parts[index].description) part.description = temporary.parts[index].description; });
+                }
+            }
             let descApiConfig = (db.imageRecognitionApiSettings && db.imageRecognitionApiSettings.url && db.imageRecognitionApiSettings.key && db.imageRecognitionApiSettings.model) ? db.imageRecognitionApiSettings : db.apiSettings;
-            descApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('imageChat', descApiConfig) : descApiConfig;
+            descApiConfig = replyOptions.featureConfigSnapshots?.image || (typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('imageChat', descApiConfig, roleContext) : descApiConfig);
             
             // 从后往前找，只看开启之后的轮数（只找最新的一条用户消息）
             let lastUserMsg = null;
@@ -400,104 +680,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         }
 
         if (provider === 'gemini') {
-            let lastMsgTimeForAI = 0;
-            const contents = historySlice.map(msg => {
-                const role = (msg.role === 'assistant' || msg.role === 'char') ? 'model' : 'user';
-                let prefix = '';
-                const currentMsgTime = msg.timestamp;
-                const timeDiff = currentMsgTime - lastMsgTimeForAI;
-                const isSameDay = new Date(currentMsgTime).toDateString() === new Date(lastMsgTimeForAI).toDateString();
-               
-               if (lastMsgTimeForAI === 0 || timeDiff > 20 * 60 * 1000 || !isSameDay) {
-                   const dateObj = new Date(currentMsgTime);
-                   const timeStr = `${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())} ${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`;
-                   
-                   prefix = `[system: ${timeStr}]`;
-                   
-                   if (db.apiSettings && db.apiSettings.timePerceptionEnabled && timeDiff > 30 * 60 * 1000 && lastMsgTimeForAI !== 0) {
-                       prefix += `\n[system: 距离上次互动已过去 ${formatTimeGap(timeDiff)}。话题可能已中断，请自然地开启新话题或对时间流逝做出反应。]`;
-                   }
-                   
-                   prefix += '\n';
-               }
-                lastMsgTimeForAI = currentMsgTime;
-
-                let parts;
-                if (msg.role === 'user' && msg.quote) {
-                    const replyTextMatch = msg.content.match(/\[.*?的消息：([\s\S]+?)\]/);
-                    const replyText = replyTextMatch ? replyTextMatch[1] : msg.content;
-                    let content = `[${chat.myName}引用“${msg.quote.content}”并回复：${replyText}]`;
-                    parts = [{text: content}];
-                } else if (msg.parts && msg.parts.length > 0) {
-                    parts = collapseStickerPartsForAI(msg.parts).map(p => {
-                        if (p.type === 'text' || p.type === 'html') {
-                            return {text: p.text};
-                        } else if (p.type === 'image') {
-                            if (apiConfig.imageMode === 'reject') return {text: '[图片未发送：当前节点被用户设为不接收图片]'};
-                            if (apiConfig.imageMode === 'description') return {text: p.description ? `[图片描述：${p.description}]` : '[图片：尚无可用描述]'};
-                            if (p.description) {
-                                return {text: `[图片描述：${p.description}]`};
-                            } else {
-                                const match = p.data.match(/^data:(image\/(.+));base64,(.*)$/);
-                                if (match) {
-                                    if (match[1] === 'image/gif') {
-                                        return {text: `[动态图片(GIF)]`};
-                                    }
-                                    return {inline_data: {mime_type: match[1], data: match[3]}};
-                                }
-                            }
-                        }
-                        return null;
-                    }).filter(p => p);
-                } else {
-                    let content = msg.content || '';
-                    // 展开小剧场分享卡片
-                    const theaterShareMatch = content.match(/\[小剧场分享[：:](.+?)\]/);
-                    if (theaterShareMatch) {
-                        const scenarioId = theaterShareMatch[1];
-                        let scenario = null;
-                        if (typeof db !== 'undefined' && db) {
-                            if (Array.isArray(db.theaterScenarios)) {
-                                scenario = db.theaterScenarios.find(s => s.id === scenarioId);
-                            }
-                            if (!scenario && Array.isArray(db.theaterHtmlScenarios)) {
-                                scenario = db.theaterHtmlScenarios.find(s => s.id === scenarioId);
-                            }
-                        }
-                        if (scenario) {
-                            let readableContent = scenario.content || '';
-                            if (scenario.mode === 'html' || /<[^>]+>/.test(readableContent)) {
-                                readableContent = readableContent
-                                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                                    .replace(/<[^>]+>/g, ' ')
-                                    .replace(/\s{2,}/g, ' ')
-                                    .trim();
-                            }
-                            const title = scenario.title || '小剧场';
-                            const excerpt = readableContent;
-                            content = content.replace(
-                                /\[小剧场分享[：:].+?\]/,
-                                `（我刚刚写了一篇小剧场，标题是「${title}」。以下是我写的内容：\n${excerpt}）`
-                            );
-                        }
-                    }
-                    parts = [{text: content}];
-                }
-
-                if (prefix) {
-                    if (parts.length > 0 && parts[0].text) {
-                        parts[0].text = prefix + parts[0].text;
-                    } else {
-                        parts.unshift({text: prefix});
-                    }
-                }
-                
-                if (msg.role === 'user' && chatType === 'private' && chat.characterAutoFavoriteEnabled && parts.length > 0 && parts[0].text) {
-                    parts[0].text = '[id:' + msg.id + ']\n' + parts[0].text;
-                }
-
-                return { role, parts, ...(latestTurnProtectionEnabled && msg.id ? { __ovoMessageId: msg.id } : {}) };
-            });
+            const contents = serializeChatHistoryForGemini(chat, chatType, historySlice, apiConfig, replyOptions, latestTurnProtectionEnabled);
 
             if (contents.length > 0 && contents[contents.length - 1].role === 'model' && !isBackground && !isCharBlockedMonologue) {
                 contents.push({
@@ -546,120 +729,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         } else {
             let messages = [{role: 'system', content: systemPrompt}];
             
-            let lastMsgTimeForAI = 0;
-            
-            historySlice.forEach(msg => {
-               let content;
-               let prefix = '';
-               
-               const currentMsgTime = msg.timestamp;
-               const timeDiff = currentMsgTime - lastMsgTimeForAI;
-               const isSameDay = new Date(currentMsgTime).toDateString() === new Date(lastMsgTimeForAI).toDateString();
-               
-               if (lastMsgTimeForAI === 0 || timeDiff > 20 * 60 * 1000 || !isSameDay) {
-                   const dateObj = new Date(currentMsgTime);
-                   const timeStr = `${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())} ${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`;
-                   prefix = `[system: ${timeStr}]\n`;
-               }
-               lastMsgTimeForAI = currentMsgTime;
-
-               if (msg.role === 'user' && msg.quote) {
-                   const replyTextMatch = msg.content.match(/\[.*?的消息：([\s\S]+?)\]/);
-                   const replyText = replyTextMatch ? replyTextMatch[1] : msg.content;
-                   
-                   let textContent = `${prefix}[${chat.myName}引用“${msg.quote.content}”并回复：${replyText}]`;
-                   if (chatType === 'private' && chat.characterAutoFavoriteEnabled) {
-                       textContent = '[id:' + msg.id + ']\n' + textContent;
-                   }
-                   content = [{type: 'text', text: textContent}];
-
-               } else {
-                   if (msg.parts && msg.parts.length > 0) {
-                       let prefixAdded = false;
-                       content = collapseStickerPartsForAI(msg.parts).map(p => {
-                           if (p.type === 'text' || p.type === 'html') {
-                               const textContent = (!prefixAdded) ? (prefix + p.text) : p.text;
-                               prefixAdded = true;
-                               return {type: 'text', text: textContent};
-                           } else if (p.type === 'image') {
-                               const imageMode = apiConfig.imageMode || '';
-                               if (imageMode === 'reject') {
-                                   const textContent = (!prefixAdded ? prefix : '') + '[图片未发送：当前节点被用户设为不接收图片]';
-                                   prefixAdded = true;
-                                   return {type: 'text', text: textContent};
-                               }
-                               if (imageMode === 'description') {
-                                   const textContent = (!prefixAdded ? prefix : '') + (p.description ? `[图片描述：${p.description}]` : '[图片：尚无可用描述]');
-                                   prefixAdded = true;
-                                   return {type: 'text', text: textContent};
-                               }
-                               if (p.description) {
-                                   // 即便有描述，也同时把原图发给模型（如果模型支持的话）
-                                   const textContent = (!prefixAdded) ? (prefix + `[图片描述：${p.description}]`) : `[图片描述：${p.description}]`;
-                                   prefixAdded = true;
-                                   return [
-                                        {type: 'text', text: textContent},
-                                        {type: 'image_url', image_url: {url: p.data}}
-                                   ];
-                               } else {
-                                   return {type: 'image_url', image_url: {url: p.data}};
-                               }
-                           }
-                           return null;
-                       }).flat().filter(p => p);
-                   } else {
-                       content = prefix + msg.content;
-                       const theaterShareMatch = content.match(/\[小剧场分享[：:](.+?)\]/);
-                       if (theaterShareMatch) {
-                           const scenarioId = theaterShareMatch[1];
-                           let scenario = null;
-                           if (typeof db !== 'undefined' && db) {
-                               if (Array.isArray(db.theaterScenarios)) {
-                                   scenario = db.theaterScenarios.find(s => s.id === scenarioId);
-                               }
-                               if (!scenario && Array.isArray(db.theaterHtmlScenarios)) {
-                                   scenario = db.theaterHtmlScenarios.find(s => s.id === scenarioId);
-                               }
-                           }
-                           if (scenario) {
-                               let readableContent = scenario.content || '';
-                               if (scenario.mode === 'html' || /<[^>]+>/.test(readableContent)) {
-                                   readableContent = readableContent
-                                       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                                       .replace(/<[^>]+>/g, ' ')
-                                       .replace(/\s{2,}/g, ' ')
-                                       .trim();
-                               }
-                               const title = scenario.title || '小剧场';
-                               const excerpt = readableContent;
-                               content = content.replace(
-                                   /\[小剧场分享[：:].+?\]/,
-                                   `（我刚刚写了一篇小剧场，标题是「${title}」。以下是我写的内容：\n${excerpt}）`
-                               );
-                           }
-                       }
-                   }
-                   if (msg.role === 'user' && chatType === 'private' && chat.characterAutoFavoriteEnabled) {
-                       if (typeof content === 'string') {
-                           content = '[id:' + msg.id + ']\n' + content;
-                       } else if (Array.isArray(content) && content[0] && content[0].text) {
-                           content[0].text = '[id:' + msg.id + ']\n' + content[0].text;
-                       }
-                   }
-                   
-                   if (typeof content === 'string') {
-                       content = [{type: 'text', text: content}];
-                   }
-               }
-               
-               const role = (msg.role === 'assistant' || msg.role === 'char') ? 'assistant' : 'user';
-               
-               if (Array.isArray(content) && content.every(c => c.type === 'text')) {
-                    messages.push({ role: role, content: content.map(c => c.text).join(''), ...(latestTurnProtectionEnabled && msg.id ? { __ovoMessageId: msg.id } : {}) });
-                } else {
-                    messages.push({ role: role, content: content, ...(latestTurnProtectionEnabled && msg.id ? { __ovoMessageId: msg.id } : {}) });
-               }
-            });
+            messages.push(...serializeChatHistoryMessages(chat, chatType, historySlice, apiConfig, replyOptions, latestTurnProtectionEnabled));
 
             if (messages.length > 1 && messages[messages.length - 1].role === 'assistant' && !isBackground && !isCharBlockedMonologue) {
                 messages.push({
@@ -905,15 +975,19 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                         };
                         toolEndpoint = `${url}/v1/chat/completions`;
                     }
-                    const toolResponse = await fetch(toolEndpoint, {
+                    const toolTokenRecord = typeof recordChatTokenRequest === 'function' ? recordChatTokenRequest(chat, chatType, toolRequestBody, apiConfig, { history: historySlice, systemPrompt, scope: 'tools', roundId: replyTask?.id || '' }) : null;
+                    let toolResponse;
+                    try { toolResponse = await fetch(toolEndpoint, {
                         method: 'POST',
                         headers: provider === 'gemini' ? { 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
                         body: JSON.stringify(toolRequestBody),
                         signal
-                    });
+                    }); } catch (error) { if (toolTokenRecord) toolTokenRecord.status = 'failed'; throw error; }
+                    if (toolTokenRecord) toolTokenRecord.status = toolResponse.ok ? 'responded' : 'failed';
                     touchReplyProgress();
                     if (!toolResponse.ok) throw new Error(`MCP 工具回合 API 错误：${toolResponse.status} ${(await toolResponse.text()).slice(0, 300)}`);
                     const payload = await toolResponse.json();
+                    if (toolTokenRecord && typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, payload, toolTokenRecord);
                     touchReplyProgress();
                     if (provider === 'gemini') {
                         const assistantMessage = payload.candidates?.[0]?.content || { role: 'model', parts: [] };
@@ -954,17 +1028,37 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             recordLatestTurnProtectionCheck(check);
             if (!check.valid) throw new Error('最新轮次保护校验失败：最终请求未以本轮用户消息作为对话触发点');
         }
-        const sendPrepared = async (targetEndpoint, targetHeaders, targetBody) => {
-            const preparedResponse = await fetch(targetEndpoint, {
-                method: 'POST',
-                headers: targetHeaders,
-                body: JSON.stringify(targetBody),
-                signal: requestAbortController ? requestAbortController.signal : undefined
-            });
-            touchReplyProgress();
-            return preparedResponse;
+        const sendPrepared = async (targetEndpoint, targetHeaders, targetBody, tokenSettings = apiConfig) => {
+            const tokenRecord = typeof recordChatTokenRequest === 'function' ? recordChatTokenRequest(chat, chatType, targetBody, tokenSettings, {
+                history: historySlice, systemPrompt, scope: isBackground ? 'background' : isSummary ? 'summary' : 'chat', memberId: replyOptions.member?.id || '', roundId: replyTask?.id || ''
+            }) : null;
+            try {
+                const preparedResponse = await fetch(targetEndpoint, {
+                    method: 'POST', headers: targetHeaders, body: JSON.stringify(targetBody),
+                    signal: requestAbortController ? requestAbortController.signal : undefined
+                });
+                if (tokenRecord) { tokenRecord.status = preparedResponse.ok ? 'responded' : 'failed'; preparedResponse._ovoTokenRecord = tokenRecord; }
+                touchReplyProgress();
+                return preparedResponse;
+            } catch (error) { if (tokenRecord) tokenRecord.status = 'failed'; throw error; }
         };
-        let response = await sendPrepared(endpoint, headers, requestBody);
+        let response;
+        const triedRoleFallbacks = new Set();
+        try { response = await sendPrepared(endpoint, headers, requestBody); }
+        catch (error) {
+            if (!apiConfig._roleBinding || requestAbortController?.signal.aborted) throw error;
+            let lastError = error;
+            for (const fallbackConfig of getApiFallbackConfigsForFeature(apiFeature, apiConfig._nodeId || '', apiConfig)) {
+                triedRoleFallbacks.add(fallbackConfig._nodeId || 'system');
+                try {
+                    const fallbackStream = fallbackConfig.streamEnabled ?? streamEnabled;
+                    const next = prepareAiProviderRequest(fallbackConfig, unpreparedRequestBody, getApiConfigHeaders(fallbackConfig), getApiConfigEndpoint(fallbackConfig, fallbackStream), fallbackStream);
+                    response = await sendPrepared(next.endpoint, next.headers, next.body, fallbackConfig);
+                    if (response.ok) { streamEnabled = fallbackStream; provider = next.provider; apiConfig = { ...fallbackConfig, _roleBinding: { ...fallbackConfig._roleBinding, usedFallback: true } }; break; }
+                } catch (fallbackError) { lastError = fallbackError; if (requestAbortController?.signal.aborted) throw fallbackError; }
+            }
+            if (!response) throw lastError;
+        }
         if (!response.ok) {
             const firstErrorText = await response.text();
             let failureMode = activeCotRuntime?.prefillFailure;
@@ -981,13 +1075,17 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 response = await sendPrepared(endpoint, headers, requestBody);
             }
             if (!response.ok) {
-                const fallbacks = typeof getApiFallbackConfigsForFeature === 'function' ? getApiFallbackConfigsForFeature(apiFeature, apiConfig._nodeId || '') : [];
+                const fallbacks = typeof getApiFallbackConfigsForFeature === 'function' ? getApiFallbackConfigsForFeature(apiFeature, apiConfig._nodeId || '', apiConfig) : [];
                 for (const fallbackConfig of fallbacks) {
-                    const fallbackEndpoint = getApiConfigEndpoint(fallbackConfig, streamEnabled);
-                    const fallbackHeaders = getApiConfigHeaders(fallbackConfig);
-                    const fallbackPrepared = prepareAiProviderRequest(fallbackConfig, unpreparedRequestBody, fallbackHeaders, fallbackEndpoint, streamEnabled);
-                    response = await sendPrepared(fallbackPrepared.endpoint, fallbackPrepared.headers, fallbackPrepared.body);
-                    if (response.ok) { provider = fallbackPrepared.provider; break; }
+                    if (triedRoleFallbacks.has(fallbackConfig._nodeId || 'system')) continue;
+                    try {
+                        const fallbackStream = apiConfig._roleBinding ? fallbackConfig.streamEnabled ?? streamEnabled : streamEnabled;
+                        const fallbackEndpoint = getApiConfigEndpoint(fallbackConfig, fallbackStream);
+                        const fallbackHeaders = getApiConfigHeaders(fallbackConfig);
+                        const fallbackPrepared = prepareAiProviderRequest(fallbackConfig, unpreparedRequestBody, fallbackHeaders, fallbackEndpoint, fallbackStream);
+                        response = await sendPrepared(fallbackPrepared.endpoint, fallbackPrepared.headers, fallbackPrepared.body, fallbackConfig);
+                        if (response.ok) { streamEnabled = fallbackStream; provider = fallbackPrepared.provider; apiConfig = { ...fallbackConfig, _roleBinding: fallbackConfig._roleBinding ? { ...fallbackConfig._roleBinding, usedFallback: true } : undefined }; break; }
+                    } catch (fallbackError) { if (!apiConfig._roleBinding || requestAbortController?.signal.aborted) throw fallbackError; }
                 }
             }
             if (!response.ok) {
@@ -1006,7 +1104,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             try {
                 result = await response.json();
                 touchReplyProgress();
-                if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, result);
+                if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, result, response._ovoTokenRecord);
                 console.log('【API完整响应数据】:', result);
             } catch (e) {
                 const text = await response.text();
@@ -1059,6 +1157,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         return true;
 
     } catch (error) {
+        if (replyOptions.memberTask) replyOptions.onError?.(error);
         if (replyTask && window.ReplyResilience) {
             try {
                 await window.ReplyResilience.fail(
@@ -1068,7 +1167,9 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 );
             } catch (_) { /* preserve original error handling */ }
         }
-        if (error.name === 'AbortError') {
+        if (replyOptions.memberTask) {
+            // Group orchestration owns per-member feedback and foreground controls.
+        } else if (error.name === 'AbortError') {
             if (!isBackground && typeof showToast === 'function') showToast('已暂停调用');
         } else if (error.name === 'TimeoutError') {
             if (!isBackground && typeof showToast === 'function') showToast(error.message || '回复等待超时，请重试');
@@ -1079,11 +1180,12 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         }
         return false;
     } finally {
+        if (replyOptions.signal) replyOptions.signal.removeEventListener('abort', abortMemberRequest);
         stopReplyWatchdog();
         if (replyTask && window.ReplyResilience) {
             try { await window.ReplyResilience.flush(replyTask); } catch (_) { /* best effort lifecycle checkpoint */ }
         }
-        if (!isBackground) {
+        if (!isBackground && !replyOptions.memberTask) {
             if (currentReplyAbortController === requestAbortController) currentReplyAbortController = null;
             isGenerating = false;
             getReplyBtn.disabled = false;
@@ -1099,6 +1201,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
 async function processStream(response, chat, apiType, targetChatId, targetChatType, isBackground = false, isCharBlockedMonologue = false, replyTask = null, signal = null, onProgress = null) {
     const reader = response.body.getReader(), decoder = new TextDecoder();
     let fullResponse = "", fullReasoning = "", accumulatedChunk = "";
+    const tokenRecord = response._ovoTokenRecord || null;
     let streamFinished = false;
     const processSseBlock = block => {
         const data = block.split(/\r?\n/)
@@ -1109,7 +1212,7 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         if (data.trim() === '[DONE]') return true;
         try {
             const parsed = JSON.parse(data);
-            if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, parsed);
+            if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, parsed, tokenRecord);
             const extracted = extractAiProviderResponse(parsed, apiType, true);
             fullResponse += extracted.content;
             fullReasoning += extracted.reasoning || '';
@@ -1168,7 +1271,7 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         try {
             const parsedStream = JSON.parse(accumulatedChunk);
             fullResponse = parsedStream.map(item => {
-                if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, item);
+                if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, item, tokenRecord);
                 const extracted = extractAiProviderResponse(item, apiType, true);
                 fullReasoning += extracted.reasoning || '';
                 return extracted.content;

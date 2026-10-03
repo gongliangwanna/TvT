@@ -70,6 +70,19 @@ const VoiceSelector = {
     currentFilter: 'all',
     // 'char' = 角色音色, 'user' = 用户音色
     currentMode: 'char',
+    activeProvider: 'minimax',
+    apiTarget: null,
+    elevenVoices: { char: [], user: [] },
+    modalGeneration: 0,
+    voiceController: null,
+
+    getVoices: function() {
+        return this.activeProvider === 'elevenlabs' ? this.elevenVoices[this.currentMode] : this.voices;
+    },
+
+    escapeHtml: function(value) {
+        return String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    },
 
     // 初始化
     init: function() {
@@ -145,6 +158,14 @@ const VoiceSelector = {
 
     // 显示弹窗
     showModal: function() {
+        const cfg = this.currentMode === 'user' ? MinimaxTTSService.userConfig : MinimaxTTSService.config;
+        if (cfg.provider === 'elevenlabs') {
+            this.showElevenModal(this.currentMode, cfg);
+            return;
+        }
+        this.activeProvider = 'minimax';
+        this.apiTarget = null;
+        this.modalGeneration++;
         const modal = document.getElementById('voice-id-modal');
         if (!modal) return;
         
@@ -155,13 +176,57 @@ const VoiceSelector = {
         this.loadCurrentVoice();
     },
 
+    showElevenModal: async function(mode, cfg, target = null) {
+        const modal = document.getElementById('voice-id-modal');
+        const container = document.getElementById('voice-list-container');
+        if (!modal || !container) return;
+        this.voiceController?.abort();
+        const controller = new AbortController();
+        this.voiceController = controller;
+        const generation = ++this.modalGeneration;
+        this.currentMode = mode;
+        this.activeProvider = 'elevenlabs';
+        this.apiTarget = target;
+        this.elevenVoices[mode] = [];
+        this.currentFilter = 'all';
+        document.querySelectorAll('.voice-lang-filter').forEach(btn => btn.classList.toggle('active', btn.dataset.lang === 'all'));
+        const search = document.getElementById('voice-search-input');
+        if (search) search.value = '';
+        modal.style.display = 'flex';
+        modal.classList.add('visible');
+        this.loadCurrentVoice();
+        if (target) this.selectedVoiceId = document.getElementById(target)?.value || null;
+        container.textContent = '正在读取 ElevenLabs 音色…';
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+            const voices = await TTSService.listElevenLabsVoices(cfg, controller.signal);
+            if (generation !== this.modalGeneration) return;
+            const languages = { zh: '中文', en: '英文', ja: '日文', ko: '韩文' };
+            this.elevenVoices[mode] = voices.map(voice => ({
+                id: voice.voice_id, name: voice.name || voice.voice_id,
+                lang: languages[voice.labels?.language || voice.verified_languages?.[0]?.language] || '其他',
+                gender: ({ male: '男', female: '女' })[voice.labels?.gender] || '音色'
+            }));
+            this.renderVoices(search?.value || '');
+            if (!voices.length) container.textContent = '账号暂无可用音色；可关闭此窗口并手动填写 Voice ID。';
+        } catch (err) {
+            if (generation !== this.modalGeneration) return;
+            container.textContent = err.name === 'AbortError' ? '读取音色超时，请重新选择或手动填写 Voice ID。' : `${err.message}；可手动填写 Voice ID。`;
+        } finally {
+            clearTimeout(timeout);
+            if (this.voiceController === controller) this.voiceController = null;
+        }
+    },
+
     // 隐藏弹窗
     hideModal: function() {
         const modal = document.getElementById('voice-id-modal');
         if (!modal) return;
         
+        this.voiceController?.abort();
+        const generation = ++this.modalGeneration;
         modal.classList.remove('visible');
-        setTimeout(() => modal.style.display = 'none', 300);
+        setTimeout(() => { if (generation === this.modalGeneration) modal.style.display = 'none'; }, 300);
     },
 
     // 渲染音色列表
@@ -169,7 +234,7 @@ const VoiceSelector = {
         const container = document.getElementById('voice-list-container');
         if (!container) return;
 
-        let filteredVoices = this.voices;
+        let filteredVoices = this.getVoices();
 
         // 语言过滤
         if (this.currentFilter !== 'all') {
@@ -188,15 +253,15 @@ const VoiceSelector = {
         // 生成 HTML
         container.innerHTML = filteredVoices.map(voice => `
             <div class="voice-item ${this.selectedVoiceId === voice.id ? 'selected' : ''}" 
-                 data-voice-id="${voice.id}" 
-                 data-voice-name="${voice.name}"
+                 data-voice-id="${this.escapeHtml(voice.id)}"
+                 data-voice-name="${this.escapeHtml(voice.name)}"
                  style="padding: 12px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; background: ${this.selectedVoiceId === voice.id ? '#e3f2fd' : 'white'};">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <div style="font-weight: bold; margin-bottom: 3px;">${voice.name}</div>
-                        <div style="font-size: 11px; color: #999;">${voice.lang} · ${voice.gender}</div>
+                    <div style="min-width: 0; flex: 1;">
+                        <div style="font-weight: bold; margin-bottom: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${this.escapeHtml(voice.name)}</div>
+                        <div style="font-size: 11px; color: #999;">${this.escapeHtml(voice.lang)} · ${this.escapeHtml(voice.gender)}</div>
                     </div>
-                    <div style="font-size: 11px; color: #666; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${voice.id}</div>
+                    <div style="font-size: 11px; color: #666; max-width: 45%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${this.escapeHtml(voice.id)}</div>
                 </div>
             </div>
         `).join('');
@@ -234,6 +299,13 @@ const VoiceSelector = {
     // 确认选择
     confirmSelection: function() {
         const isUser = this.currentMode === 'user';
+        if (this.apiTarget) {
+            const input = document.getElementById(this.apiTarget);
+            if (input) { input.value = this.selectedVoiceId || ''; input.dispatchEvent(new Event('change', { bubbles: true })); }
+            this.hideModal();
+            showToast(this.selectedVoiceId ? '已选择默认音色，请保存 TTS 配置' : '已清除默认音色');
+            return;
+        }
         const btnText = document.getElementById(isUser ? 'current-user-voice-name' : 'current-voice-name');
         if (!this.selectedVoiceId) {
             if (btnText) btnText.textContent = '选择音色';
@@ -245,7 +317,7 @@ const VoiceSelector = {
             return;
         }
 
-        const voice = this.voices.find(v => v.id === this.selectedVoiceId);
+        const voice = this.getVoices().find(v => v.id === this.selectedVoiceId);
         if (!voice) return;
 
         if (btnText) btnText.textContent = voice.name;
@@ -264,12 +336,14 @@ const VoiceSelector = {
             if (!chat) return;
 
             if (!chat.ttsConfig) chat.ttsConfig = {};
-            const key = mode === 'user' ? 'userVoiceId' : 'voiceId';
+            const eleven = this.activeProvider === 'elevenlabs';
+            const key = eleven ? (mode === 'user' ? 'userElevenVoiceId' : 'elevenVoiceId') : (mode === 'user' ? 'userVoiceId' : 'voiceId');
             if (voiceId === null || voiceId === '') {
                 delete chat.ttsConfig[key];
                 console.log('[VoiceSelector] 已清除' + (mode === 'user' ? '用户' : '角色') + '音色配置');
             } else {
                 chat.ttsConfig[key] = voiceId;
+                if (eleven) chat.ttsConfig[mode === 'user' ? 'userElevenVoiceName' : 'elevenVoiceName'] = this.getVoices().find(v => v.id === voiceId)?.name || voiceId;
                 console.log('[VoiceSelector] 音色已保存到' + (mode === 'user' ? '用户' : '角色') + '配置');
             }
             await saveData();
@@ -283,7 +357,9 @@ const VoiceSelector = {
         try {
             if (typeof currentChatId === 'undefined' || !currentChatId) return;
             const chat = db.characters.find(c => c.id === currentChatId);
-            const key = this.currentMode === 'user' ? 'userVoiceId' : 'voiceId';
+            const key = this.activeProvider === 'elevenlabs'
+                ? (this.currentMode === 'user' ? 'userElevenVoiceId' : 'elevenVoiceId')
+                : (this.currentMode === 'user' ? 'userVoiceId' : 'voiceId');
             this.selectedVoiceId = (chat && chat.ttsConfig && chat.ttsConfig[key]) ? chat.ttsConfig[key] : null;
             this.renderVoices();
         } catch (err) {
@@ -304,6 +380,15 @@ const VoiceSelector = {
             if (!chat || !chat.ttsConfig) return null;
 
             const isUser = mode === 'user';
+            const cfg = isUser ? MinimaxTTSService.userConfig : MinimaxTTSService.config;
+            if (cfg.provider === 'elevenlabs') {
+                const custom = chat.ttsConfig[isUser ? 'userElevenCustomVoiceId' : 'elevenCustomVoiceId'];
+                return {
+                    voiceId: custom?.trim() || chat.ttsConfig[isUser ? 'userElevenVoiceId' : 'elevenVoiceId'] || cfg.elevenVoiceId || '',
+                    language: chat.ttsConfig[isUser ? 'userLanguage' : 'language'] || 'auto',
+                    speed: Math.min(1.2, Math.max(0.7, Number(chat.ttsConfig[isUser ? 'userElevenSpeed' : 'elevenSpeed']) || 1))
+                };
+            }
             const customKey = isUser ? 'userCustomVoiceId' : 'customVoiceId';
             const voiceKey = isUser ? 'userVoiceId' : 'voiceId';
             const langKey = isUser ? 'userLanguage' : 'language';

@@ -39,9 +39,8 @@
                 <div class="moments-compose-options">
                     <button type="button" id="moments-audience-btn"><span>谁可以看</span><span id="moments-audience-label">仅自己　›</span></button>
                     <button type="button" id="moments-remind-btn"><span>提醒谁看</span><span id="moments-remind-label">选择角色　›</span></button>
-                    <label class="moments-field moments-view-choice">这条动态何时让提醒的人看<select id="moments-compose-view-mode"><option value="default">按动态设置</option><option value="now">马上观看</option><option value="later">过段时间观看</option></select></label>
                 </div>
-                <p class="moments-hint">马上观看只对“提醒谁看”的对象生效。@ 不会改变可见范围。</p>
+                <p class="moments-hint">发布后，可见对象会按各自设置直接观看。提醒谁看会立即提醒并安排观看；@ 不会改变可见范围。</p>
             </main>
         </div>
 
@@ -70,12 +69,15 @@
                 <section class="moments-settings-card"><h2>动态名字</h2><label class="moments-field">角色未设置网名时显示<select id="moments-character-name-source"><option value="remark">角色备注</option><option value="real">真名</option></select></label><p class="moments-hint">点击个人主页上的名字，可为角色、人脉或当前用户身份设置独立的动态网名。</p></section>
                 <section class="moments-settings-card"><h2>网名互动</h2><div class="moments-nickname-switches"><label><span>角色感知网名</span><input type="checkbox" id="moments-character-nickname-awareness"></label><label><span>人脉感知网名</span><input type="checkbox" id="moments-contact-nickname-awareness"></label><label><span>角色自主修改网名</span><input type="checkbox" id="moments-character-self-rename"></label><label><span>人脉自主修改网名</span><input type="checkbox" id="moments-contact-self-rename"></label></div><p class="moments-hint">仅允许修改自己的动态网名，自主改名最多每天一次。具体角色和人脉可单独选择允许或禁止。</p></section>
                 <section class="moments-settings-card"><h2>互动可见范围</h2><label class="moments-field">谁能看见点赞和评论<select id="moments-interaction-visibility"><option value="mutual">共同人脉可见</option><option value="all">所有可看帖的人可见</option></select></label><p class="moments-hint">发帖者始终能看到自己动态下的全部互动。</p></section>
-                <section class="moments-settings-card"><h2>观看默认方式</h2><label class="moments-field">提醒谁看之后<select id="moments-default-view-mode"><option value="now">马上观看</option><option value="later">过段时间观看</option></select></label><p class="moments-hint">单条动态的选择优先于这里。</p></section>
                 <section class="moments-settings-card"><h2>可见分组</h2><div id="moments-groups-list"></div><div class="moments-inline-actions"><button type="button" id="moments-add-group-btn">＋ 新建分组</button></div><p class="moments-hint">分组只包含聊天角色。发布时会保存当时选中的角色名单。</p></section>
-                <section class="moments-settings-card"><h2>角色认识我的身份</h2><div id="moments-identity-bindings"></div><p class="moments-hint">发动态时按这里的人设区分可见身份；未指定的角色沿用当前展示档案。</p></section>
                 <section class="moments-settings-card"><h2>动态管理</h2><p class="moments-hint">搜索、按发布人筛选，或多选清除动态与 Story。</p><div class="moments-inline-actions"><button type="button" id="moments-manage-btn">管理动态</button></div></section>
-                <section class="moments-settings-card"><h2>主动动态</h2><p class="moments-hint">角色及人脉的开关在对应角色的聊天设置中管理。应用运行时，角色和人脉会按人设自行决定是否发帖、浏览和互动。</p><button type="button" id="moments-generate-now-btn">检查一次自主动态</button></section>
+                <section class="moments-settings-card"><h2>全局动态</h2><p class="moments-hint">主动活动跟随聊天和已开启的后台消息，由 API 决定是否行动；角色的单独设置在聊天设置中覆盖全局。</p><div class="moments-inline-actions"><button type="button" id="moments-controls-btn" class="moments-primary-btn">参与方式与评论回复</button><button type="button" id="moments-generate-now-btn">动态设置</button></div></section>
             </main>
+        </div>
+
+        <div id="moments-controls-screen" class="screen moments-screen">
+            <header class="moments-header"><button type="button" class="moments-icon-btn" id="moments-controls-back" aria-label="返回"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg></button><h1 id="moments-controls-title">全局动态设置</h1><button type="button" class="moments-plain-btn" id="moments-controls-pause">暂停</button></header>
+            <main class="moments-scroll moments-settings-content"><form id="moments-controls-form"></form><section class="moments-settings-card" id="moments-controls-manual"></section><section class="moments-settings-card" id="moments-controls-tasks"></section></main>
         </div>
 
         <div id="moments-manage-screen" class="screen moments-screen">
@@ -161,5 +163,5 @@
         </div>
 
         <div id="moments-story-viewer" class="moments-story-viewer" hidden><button type="button" id="moments-story-close" aria-label="关闭">×</button><div id="moments-story-content"></div></div>
-        <div id="moments-result-dialog" class="moments-picker moments-centered-dialog" hidden><div class="moments-picker-shade" data-action="close-result"></div><div class="moments-editor-panel"><h2>本次观看结果</h2><div id="moments-result-content"></div><div class="moments-inline-actions"><button type="button" data-action="close-result">关闭</button></div></div></div>
+        <div id="moments-result-dialog" class="moments-picker moments-centered-dialog" hidden><div class="moments-picker-shade" data-action="close-result"></div><div class="moments-editor-panel"><h2>观看情况</h2><div id="moments-result-content"></div><div class="moments-inline-actions"><button type="button" data-action="close-result">关闭</button></div></div></div>
         <div id="moments-friend-dialog" class="moments-picker moments-centered-dialog" hidden><div class="moments-picker-shade" data-action="close-friend"></div><div class="moments-editor-panel"><h2 id="moments-friend-title">添加好友</h2><p id="moments-friend-description" class="moments-hint"></p><div class="moments-inline-actions"><button type="button" data-action="close-friend">取消</button><button type="button" id="moments-friend-send" class="moments-primary-btn">发送申请</button></div></div></div>

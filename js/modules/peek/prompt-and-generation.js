@@ -480,7 +480,7 @@ async function generateAndRenderPeekContent(appType, options = {}) {
     if (db.peekApiSettings && db.peekApiSettings.url && db.peekApiSettings.key && db.peekApiSettings.model) {
         apiConfig = db.peekApiSettings;
     }
-    apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('peek', apiConfig) : apiConfig;
+    apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('peek', apiConfig, char) : apiConfig;
     let { url, key, model, provider } = apiConfig;
     if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!url || !key || !model)) {
         showToast('请先在“api”应用中完成设置！');

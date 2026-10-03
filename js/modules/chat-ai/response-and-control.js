@@ -191,6 +191,13 @@ function extractThinkingBlocks(response) {
 }
 
 async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChatType, isBackground = false, isCharBlockedMonologue = false, replyOptions = {}) {
+    const forcedMember = targetChatType === 'group' && replyOptions.memberId ? chat.members.find(member => member.id === replyOptions.memberId) : null;
+    if (replyOptions.memberId && !forcedMember) throw new Error('发言成员已不存在');
+    if (replyOptions.shouldStop?.()) return;
+    if (forcedMember) fullResponse = window.MemberApiRuntime.guardCommands(fullResponse, forcedMember);
+    const findReplyMember = name => forcedMember
+        ? [forcedMember.realName, forcedMember.groupNickname].includes(name) ? forcedMember : null
+        : chat.members.find(member => member.realName === name || member.groupNickname === name);
     const rawResponse = fullResponse;
     const saveReplyTargetChat = async () => {
         if (targetChatType === 'group' && typeof saveGroup === 'function') return saveGroup(targetChatId);
@@ -261,6 +268,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                 isContextDisabled: true, // 【关键】标记为不进入上下文
                 thinkingDisplay: chat._cotDisplayMode || ''
             };
+            if (forcedMember) thinkingMsg.senderId = forcedMember.id;
             
             // 存入历史记录
             chat.history.push(thinkingMsg);
@@ -300,7 +308,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
         }
 
         if (targetChatType === 'private' && window.Moments && typeof window.Moments.consumeAiCommands === 'function') {
-            const momentsResult = await window.Moments.consumeAiCommands(fullResponse, chat);
+            const momentsResult = await window.Moments.consumeAiCommands(fullResponse, chat, isBackground);
             fullResponse = momentsResult.cleaned;
             if (momentsResult.errors.length) fullResponse += `\n[系统提示：动态操作未完成：${momentsResult.errors.join('；')}]`;
         }
@@ -337,6 +345,13 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
         let firstMessageProcessed = false;
 
         for (const item of messages) {
+            if (replyOptions.shouldStop?.()) break;
+            if (forcedMember) {
+                if (!window.MemberApiRuntime.allowedItem(item, forcedMember, chat)) continue;
+                item.content = item.content.replace(/^\[unknown的消息[：:]/, `[${forcedMember.realName}的消息：`);
+                if (!item.char && !/^\[/.test(item.content.trim())) item.content = `[${forcedMember.realName}的消息：${item.content}]`;
+                if (item.type === 'html') item.char = forcedMember.realName;
+            }
             // 自动剔除不存在的表情包
             const stickerRegex = /\[(?:.*?的)?表情包[：:](.+?)\]/i;
             const stickerMatch = item.content.match(stickerRegex);
@@ -458,15 +473,16 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
 
                         const storedLimit = char.statusPanel.historyRetentionLimit;
                         const retentionLimit = Number.isSafeInteger(storedLimit) && storedLimit >= 0 ? storedLimit : 20;
-                        if (retentionLimit > 0 && char.statusPanel.history.length > retentionLimit) {
-                            char.statusPanel.history = char.statusPanel.history.slice(0, retentionLimit);
+                        // 数量阈值仅提醒；旧状态由用户在整理页手动勾选清理。
+                        if (retentionLimit > 0 && char.statusPanel.history.length === retentionLimit + 1) {
+                            showToast('状态栏历史已超过参考数量，可在存储分析中手动整理');
                         }
 
                         char.statusPanel.currentStatusRaw = rawStatus;
                         char.statusPanel.currentStatusHtml = html;
                         
                         item.isStatusUpdate = true;
-                        item.statusSnapshot = {
+                        item.statusSnapshot = window.StatusStorage ? window.StatusStorage.makeSnapshot(char, pattern) : {
                             regex: pattern,
                             replacePattern: char.statusPanel.replacePattern
                         };
@@ -508,6 +524,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
             if (!isBackground) {
                 const delay = firstMessageProcessed ? (900 + Math.random() * 1300) : (400 + Math.random() * 400);
                 await new Promise(resolve => setTimeout(resolve, delay));
+                if (replyOptions.shouldStop?.()) break;
                 
                 // 如果开启了多条消息提示音，且不是第一条消息（第一条已由系统默认逻辑播放），则播放提示音
                 if (firstMessageProcessed && db.multiMsgSoundEnabled && db.globalReceiveSound) {
@@ -539,7 +556,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                 if (isCharBlockedMonologue) message.sentWhileCharBlocked = true;
 
                 if (targetChatType === 'group') {
-                    const sender = chat.members.find(m => (m.realName === characterName || m.groupNickname === characterName));
+                    const sender = findReplyMember(characterName);
                     if (sender) {
                         message.senderId = sender.id;
                     }
@@ -718,7 +735,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                         if (senderName === group.me.nickname) {
                             senderId = 'user_me';
                         } else {
-                            const sender = group.members.find(m => m.realName === senderName || m.groupNickname === senderName);
+                            const sender = findReplyMember(senderName);
                             if (sender) senderId = sender.id;
                         }
                     }
@@ -742,7 +759,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                 
                 if (transferActionMatch) {
                     const actorName = transferActionMatch[1].trim();
-                    const sender = group.members.find(m => (m.realName === actorName || m.groupNickname === actorName));
+                    const sender = findReplyMember(actorName);
                     if (sender) {
                         const message = {
                             id: `msg_${Date.now()}_${Math.random()}`,
@@ -767,7 +784,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                 
                 if (transferMatch) {
                     const senderName = transferMatch[1];
-                    const sender = group.members.find(m => (m.realName === senderName || m.groupNickname === senderName));
+                    const sender = findReplyMember(senderName);
                     if (sender) {
                         const message = {
                             id: `msg_${Date.now()}_${Math.random()}`,
@@ -783,7 +800,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                     }
                 } else if (nameMatch || item.char) {
                     const senderName = item.char || (nameMatch[1]);
-                    const sender = group.members.find(m => (m.realName === senderName || m.groupNickname === senderName));
+                    const sender = findReplyMember(senderName);
                     console.log(sender)
                     if (sender) {
                         const message = {
@@ -831,13 +848,13 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
         }
 
         // 回复全部结束后检查是否达到自动总结间隔，若达到则静默总结到完整区间（如 1-100）
-        if (typeof checkAndTriggerAutoJournal === 'function') {
+        if (!replyOptions.suppressAutoTasks && typeof checkAndTriggerAutoJournal === 'function') {
             setTimeout(() => checkAndTriggerAutoJournal(chat), 500);
         }
-        if (typeof checkAndTriggerAutoTableUpdate === 'function') {
+        if (!replyOptions.suppressAutoTasks && typeof checkAndTriggerAutoTableUpdate === 'function') {
             setTimeout(() => checkAndTriggerAutoTableUpdate(chat), 650);
         }
-        if (typeof checkAndTriggerVectorMemory === 'function') {
+        if (!replyOptions.suppressAutoTasks && typeof checkAndTriggerVectorMemory === 'function') {
             setTimeout(() => checkAndTriggerVectorMemory(chat), 800);
         }
 
@@ -855,6 +872,7 @@ async function handleRegenerate() {
     const chat = (currentChatType === 'private')
         ? db.characters.find(c => c.id === currentChatId)
         : db.groups.find(g => g.id === currentChatId);
+    if (currentChatType === 'group' && window.MemberApiRuntime?.isIndependent(chat)) return window.MemberApiRuntime.regenerate(chat);
 
     if (!chat || !chat.history || chat.history.length === 0) {
         showToast('没有可供重新生成的内容。');

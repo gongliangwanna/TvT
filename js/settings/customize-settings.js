@@ -814,7 +814,7 @@ function renderCustomizeForm() {
             <div class="cust-card-header">
                 <div>
                     <h3 class="cust-card-title">主屏幕完整方案</h3>
-                    <p class="cust-card-subtitle">将当前主屏全部小组件、壁纸与图标组合保存为完整预设方案，支持导出分享。</p>
+                    <p class="cust-card-subtitle">将当前主屏全部小组件、壁纸与图标组合保存为完整预设方案。导出默认不分享图片，确认选择后才会包含。</p>
                 </div>
             </div>
             <div class="cust-preset-bar">

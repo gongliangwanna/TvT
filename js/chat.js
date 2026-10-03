@@ -444,10 +444,11 @@ function setupChatRoom() {
                     const playKey = wrapper ? wrapper.dataset.id : null;
                     const svc = typeof MinimaxTTSService !== 'undefined' ? MinimaxTTSService : null;
                     const state = svc ? svc.getPlayState() : {};
+                    const isUserMsg = wrapper && wrapper.classList.contains('sent');
 
-                    // 两个开关必须同时打开才进行 TTS：API 全局开关 + 角色开关
+                    // 对应的角色/用户 API 开关 + 当前聊天语音开关必须同时打开
                     // 任一未开启则静默忽略，不弹提示
-                    if (!svc || !svc.config.enabled) return;
+                    if (!svc || !(isUserMsg ? svc.userConfig.enabled : svc.config.enabled)) return;
                     if (currentChatId && typeof db !== 'undefined' && db.characters) {
                         const _chat = db.characters.find(c => c.id === currentChatId);
                         if (!_chat || !_chat.ttsConfig || !_chat.ttsConfig.chatTtsEnabled) return;
@@ -459,7 +460,6 @@ function setupChatRoom() {
                         return;
                     }
 
-                    const isUserMsg = wrapper && wrapper.classList.contains('sent');
                     const opts = playKey ? { playKey: playKey } : {};
                     if (isUserMsg) {
                         if (svc && MinimaxTTSService.isUserConfigured && MinimaxTTSService.isUserConfigured() && typeof VoiceSelector !== 'undefined' && currentChatId) {

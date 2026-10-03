@@ -471,7 +471,7 @@ function setupMemoryJournalScreen() {
                 && db.summaryApiSettings.model
                 ? db.summaryApiSettings
                 : db.apiSettings;
-            apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('journal', apiConfig) : apiConfig;
+            apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('journal', apiConfig, chat) : apiConfig;
             const rawContent = await requestJournalSummary(apiConfig, summaryPrompt);
             const journalData = parseJournalResponse(rawContent);
 

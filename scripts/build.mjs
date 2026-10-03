@@ -99,10 +99,15 @@ function collectRuntimeAssets(directory, relativePrefix = '') {
 }
 
 const serviceWorkerAssets = collectRuntimeAssets(root);
+// Git may normalize Windows CRLF to LF when publishing; both represent the same text asset.
+const runtimeText = asset => read(asset).replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
 const serviceWorkerVersion = createHash('sha256')
-    .update(serviceWorkerAssets.map(asset => `${asset}\0${fs.readFileSync(path.join(root, asset))}`).join('\0'))
+    .update(serviceWorkerAssets.map(asset => `${asset}\0${runtimeText(asset)}`).join('\0'))
+    .update(runtimeText('sw.js'))
     .digest('hex')
     .slice(0, 16);
-writeIfChanged('sw-assets.js', `self.__OVO_SW_MANIFEST=${JSON.stringify({ version: serviceWorkerVersion, assets: serviceWorkerAssets })};\n`);
+const serviceWorkerIntegrity = Object.fromEntries(serviceWorkerAssets.map(asset => [asset,
+    createHash('sha256').update(runtimeText(asset)).digest('hex')]));
+writeIfChanged('sw-assets.js', `self.__OVO_SW_MANIFEST=${JSON.stringify({ version: serviceWorkerVersion, assets: serviceWorkerAssets, integrity: serviceWorkerIntegrity })};\n`);
 
 console.log('Built compact index.html, local HTML loaders, legacy runtime bundles, and the service-worker asset manifest.');

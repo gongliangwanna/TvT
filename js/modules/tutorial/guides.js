@@ -143,12 +143,15 @@ function showUpdateModal() {
     closeBtn.onclick = () => {
         modal.classList.remove('visible');
         localStorage.setItem('lastSeenVersion', appVersion);
+        localStorage.setItem('lastSeenUpdateLogRevision', latestLog.revision || '');
     };
 }
 
 function checkForUpdates() {
     const lastSeenVersion = localStorage.getItem('lastSeenVersion');
-    if (lastSeenVersion !== appVersion) {
+    const latestRevision = updateLog[0]?.revision || '';
+    const lastSeenRevision = localStorage.getItem('lastSeenUpdateLogRevision') || '';
+    if (lastSeenVersion !== appVersion || lastSeenRevision !== latestRevision) {
         // 仅当当前版本为 1.8.0 时，才执行引导重置
         if (appVersion === '1.8.0') {
             Object.keys(localStorage).forEach(key => {

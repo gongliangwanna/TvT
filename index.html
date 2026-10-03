@@ -131,11 +131,15 @@
     <!-- [1. 基础层] -->
     <script src="js/core/ui-and-content-utils.js"></script>
     <script src="js/core/centered-select.js"></script> <!-- 统一居中选择弹窗：接管原生 select 展开交互 -->
+    <script src="js/core/novelai-compat.js"></script> <!-- NovelAI 请求格式、预设与参考图适配 -->
     <script src="js/core/api-and-image-utils.js"></script> <!-- 工具函数：图片压缩、Toast提示、随机数等 -->
     <script src="js/data/defaults-and-state.js"></script>
     <script src="js/data/indexed-db.js"></script> <!-- 数据层：Dexie数据库配置、全局变量定义、数据存取 -->
+    <script src="js/modules/status-storage.js"></script> <!-- 状态栏模板策略与手动整理 -->
+    <script src="js/core/role-api-routing.js"></script>
     <script src="js/core/bilingual-content.js"></script> <!-- 非聊天场景的双语阅读 -->
     <script src="js/modules/novelai-vibe.js"></script> <!-- NovelAI 原生 VIBE 素材、编码与组管理 -->
+    <script src="js/modules/novelai-studio.js"></script> <!-- NovelAI 独立创作工具 -->
 
     <!-- [2. 核心交互层] -->
     <script src="js/ui.js"></script> <!-- UI交互：界面切换、主屏幕逻辑、右键菜单 -->
@@ -159,6 +163,7 @@
     <script src="js/modules/chat-ai/prompt-studio.js"></script>
     <script src="js/modules/chat-ai/private-prompt.js"></script>
     <script src="js/modules/chat-ai/token-stats.js"></script>
+    <script src="js/modules/chat-ai/token-ui.js"></script>
     <script src="js/modules/chat-ai/call-reply.js"></script>
     <script src="js/modules/chat_features.js"></script>
     <script src="js/modules/poke.js"></script> <!-- 拍一拍：单聊/群聊轻互动 -->
@@ -173,6 +178,8 @@
     <script src="js/settings/magic-room-settings.js"></script>
     <script src="js/modules/vector-memory-core.js"></script>
     <script src="js/settings/api-settings.js"></script>
+    <script src="js/settings/role-api-settings.js"></script>
+    <script src="js/group-chat/member-api-runtime.js"></script>
     <script src="js/settings/api-presets.js"></script>
     <script src="js/settings/image-api-settings.js"></script>
     <script src="js/settings/style-presets.js"></script>
@@ -194,6 +201,7 @@
     <script src="js/modules/forum/settings-and-profile.js"></script>
     <script src="js/modules/forum/direct-messages.js"></script>
     <script src="js/modules/forum/ai-interactions.js"></script> <!-- 虚拟论坛功能 -->
+    <script src="js/modules/moments-controls.js"></script> <!-- 用户自定义动态调用与接话 -->
     <script src="js/modules/moments.js"></script> <!-- 熟人动态与限时动态 -->
     <script src="js/modules/theater/data-and-render.js"></script>
     <script src="js/modules/theater/editor-and-generation.js"></script>
@@ -214,9 +222,12 @@
     <script src="js/modules/vector_memory.js"></script> <!-- 向量记忆 -->
     <script src="js/modules/reminder.js"></script> <!-- 提醒事项 -->
     <script src="js/modules/storage.js"></script> <!-- 存储空间分析图表 -->
+    <script src="js/modules/status-storage-ui.js"></script>
     <script src="js/modules/widgets.js"></script> <!-- 桌面小组件设置 -->
     <script src="js/modules/tutorial/guides.js"></script>
+    <script src="js/modules/tutorial/file-update.js"></script>
     <script src="js/modules/tutorial/content-and-data-tools.js"></script>
+    <script src="js/modules/feedback-tools.js"></script>
     <script src="js/modules/feedback.js"></script> <!-- UWU 反馈与许愿 -->
     <script src="js/modules/tutorial/backup-and-restore.js"></script>
     <script src="js/modules/tutorial/github-backup.js"></script> <!-- 教程、更新日志、GitHub备份 -->

@@ -767,6 +767,8 @@ async function importBackupData(data) {
             if (g.theme === undefined || g.theme === null || g.theme === '') g.theme = 'white_pink';
         });
 
+        if (!Array.isArray(restoredData.pomodoroRecords)) restoredData.pomodoroRecords = [];
+        if (!restoredData.pomodoroActiveSession) restoredData.pomodoroActiveSession = null;
         if (!restoredData.pomodoroTasks) restoredData.pomodoroTasks = [];
         if (!restoredData.pomodoroSettings) restoredData.pomodoroSettings = { boundCharId: null, userPersona: '', focusBackground: '', taskCardBackground: '', encouragementMinutes: 25, pokeLimit: 5, globalWorldBookIds: [] };
         if (!restoredData.insWidgetSettings) restoredData.insWidgetSettings = { avatar1: 'https://i.postimg.cc/Y96LPskq/o-o-2.jpg', bubble1: 'love u.', avatar2: 'https://i.postimg.cc/GtbTnxhP/o-o-1.jpg', bubble2: 'miss u.' };

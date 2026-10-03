@@ -203,11 +203,11 @@ async function forumGenerateAIDMReply() {
     
     const forumApiSettings = db.forumApiSettings || {};
     let apiSettings = forumApiSettings.useForumApi ? forumApiSettings : db.apiSettings;
-    apiSettings = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('forum', apiSettings) : apiSettings;
+    apiSettings = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('forum', apiSettings, (db.characters || []).find(char => char.id === getForumStrangerProfile(targetUserId)?.linkedCharId)) : apiSettings;
     
     if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiSettings) : (!apiSettings.url || !apiSettings.key || !apiSettings.model)) {
         forumFinishJob(generationJob);
-        showToast('请先配置API设置');
+        showToast(apiSettings._bindingError || '请先配置API设置');
         return;
     }
     

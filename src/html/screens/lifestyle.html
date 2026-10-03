@@ -167,6 +167,21 @@
                 </div>
             </header>
             <main class="content">
+                <div class="pomodoro-summary"><span id="pomodoro-today">今日专注 0 分钟</span><button type="button" id="pomodoro-history-btn" class="pomodoro-text-btn">专注记录</button></div>
+                <div id="pomodoro-active-session" class="pomodoro-active-session" hidden><span></span><button type="button" id="pomodoro-continue-btn" class="task-card-start-btn">继续本轮</button></div>
+                <form id="pomodoro-quick-form" class="pomodoro-quick-form">
+                    <label class="pomodoro-sr-only" for="pomodoro-quick-name">这轮想做什么</label>
+                    <input id="pomodoro-quick-name" type="text" placeholder="这轮想做什么？可不填" maxlength="200">
+                    <div class="pomodoro-quick-options">
+                        <label class="pomodoro-sr-only" for="pomodoro-quick-duration">专注时长</label>
+                        <select id="pomodoro-quick-duration"><option value="25">25 分钟</option><option value="45">45 分钟</option><option value="60">60 分钟</option><option value="custom">自定义</option><option value="stopwatch">正计时</option></select>
+                        <label class="pomodoro-sr-only" for="pomodoro-quick-char">陪伴角色</label>
+                        <select id="pomodoro-quick-char"><option value="">不绑定角色</option></select>
+                    </div>
+                    <label class="pomodoro-sr-only" for="pomodoro-quick-custom">自定义分钟数</label>
+                    <input id="pomodoro-quick-custom" type="number" min="1" step="1" placeholder="自定义分钟数" hidden>
+                    <button class="btn btn-primary" type="submit">开始专注</button>
+                </form>
                 <div class="task-list-container" id="pomodoro-task-list">
                     <!-- Task cards will be rendered here by JS -->
                 </div>
@@ -192,14 +207,17 @@
             </header>
             <main class="content">
                 <div class="focus-timer-container">
-                    <h2 class="focus-task-title">阅读一章《JavaScript高级程序设计》</h2>
-                    <div class="focus-timer-display">24:32</div>
+                    <h2 class="focus-task-title">自由专注</h2>
+                    <div class="focus-timer-display" role="timer" aria-label="本轮计时">25:00</div>
+                    <progress id="pomodoro-progress" class="pomodoro-progress" max="1" value="0" aria-label="本轮进度"></progress>
                     <div class="focus-timer-mode">倒计时</div>
                     <div class="focus-total-time" id="pomodoro-total-focused-time">已专注 0 分钟</div>
                 </div>
 
                 <div class="focus-footer">
-                    <div class="focus-message-bubble">
+                    <p id="pomodoro-companion-label" class="pomodoro-companion-label">自由专注</p>
+                    <div id="pomodoro-rest-duration-group" class="pomodoro-rest-duration-group" hidden><label for="pomodoro-rest-duration">休息分钟</label><input id="pomodoro-rest-duration" type="number" min="1" step="1" value="5"></div>
+                    <div class="focus-message-bubble" role="status" aria-live="polite">
                         <p>保持专注，你做得很好！</p>
                     </div>
                     <div class="focus-bottom-controls">
@@ -208,18 +226,18 @@
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"
                                     stroke="currentColor" stroke-width="0">
                                     <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                                </svg>
+                                </svg><span>继续</span>
                             </button>
                             <button class="control-btn" id="pomodoro-pause-btn" title="暂停" style="display: none;">
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"
                                     stroke="currentColor" stroke-width="1">
                                     <rect x="6" y="4" width="4" height="16"></rect>
                                     <rect x="14" y="4" width="4" height="16"></rect>
-                                </svg>
+                                </svg><span>暂停</span>
                             </button>
                         </div>
-                        <img src="https://i.postimg.cc/Y96LPskq/o-o-2.jpg" class="focus-avatar" alt="avatar">
-                        <button class="control-btn" id="pomodoro-giveup-btn" title="放弃">
+                        <img src="https://i.postimg.cc/Y96LPskq/o-o-2.jpg" class="focus-avatar" alt="戳一戳陪伴角色" role="button" tabindex="0">
+                        <button class="control-btn" id="pomodoro-giveup-btn" title="结束本次">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -228,6 +246,7 @@
                         </button>
                     </div>
                 </div>
+                <div class="pomodoro-session-actions"><button id="pomodoro-finish-btn" type="button" class="pomodoro-text-btn">结束并保存</button><button id="pomodoro-next-round-btn" type="button" class="btn btn-primary" hidden>开始下一轮</button></div>
             </main>
         </div>
 
@@ -389,6 +408,9 @@
             <div class="modal-window" style="max-height: 80vh; overflow-y: auto;">
                 <h3>专注设置</h3>
                 <form id="pomodoro-settings-form">
+                    <div class="form-group"><label for="pomodoro-companion-style">陪伴方式</label><select id="pomodoro-companion-style"><option value="quiet">安静陪伴</option><option value="caring">温柔关怀</option><option value="intimate">亲密陪伴</option><option value="coach">专注督学</option><option value="together">并肩学习</option><option value="custom">自定义</option><option value="legacy">原有定时陪伴</option></select><p class="pomodoro-setting-note">安静陪伴在开始、休息和结束时回应；原有定时陪伴沿用下方间隔与次数设置。</p></div>
+                    <div class="form-group"><label for="pomodoro-companion-preference">陪伴偏好（可选）</label><input id="pomodoro-companion-preference" type="text" maxlength="500" placeholder="例如：中途别说话，结束后一起总结"></div>
+                    <div class="form-group"><label for="pomodoro-end-sound">结束提示音</label><select id="pomodoro-end-sound"><option value="on">温和提示</option><option value="off">关闭</option></select></div>
                     <div class="form-group">
                         <label for="pomodoro-char-select">绑定陪伴角色</label>
                         <select id="pomodoro-char-select" class="form-group"></select>
@@ -443,6 +465,7 @@
                     全局专注设置<br>
                     (作用于所有番茄钟任务)
                 </div>
+                <button class="action-sheet-button" id="pomodoro-default-settings-btn">默认陪伴与外观</button>
                 <button class="action-sheet-button" id="link-global-pomodoro-world-book-btn">关联世界书</button>
                 <button class="action-sheet-button danger" id="close-pomodoro-global-settings-btn">取消</button>
             </div>
@@ -451,27 +474,34 @@
         <!-- Pomodoro Certificate Modal -->
         <div id="pomodoro-certificate-modal" class="modal-overlay">
             <div class="modal-window" style="text-align: center;">
-                <h3>专注完成！</h3>
+                <h3 id="pomodoro-cert-title">专注完成！</h3>
                 <div id="pomodoro-certificate-content"
                     style="border: 2px dashed var(--primary-color); padding: 20px; margin: 15px 0; border-radius: 10px; background: #fff8fa;">
+                    <p id="cert-status" class="pomodoro-setting-note">本轮完成</p>
                     <p><strong>任务名称:</strong> <span id="cert-task-name"></span></p>
                     <p><strong>专注时长:</strong> <span id="cert-duration"></span></p>
+                    <p><strong>陪伴:</strong> <span id="cert-companion"></span></p>
                     <p><strong>“戳一戳”次数:</strong> <span id="cert-poke-count"></span></p>
+                    <p id="pomodoro-cert-message">专注记录已自动保存。</p>
                 </div>
-                <p>做的很棒！要不要把这次的专注成果分享一下？</p>
-                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <div class="pomodoro-certificate-actions">
+                    <button type="button" id="pomodoro-retry-save-btn" class="btn btn-primary" hidden>重试保存</button>
+                    <button type="button" id="pomodoro-rest-btn" class="btn btn-primary">休息 · 5分钟</button>
+                    <button type="button" id="pomodoro-again-btn" class="btn btn-secondary">再来一轮</button>
+                    <button type="button" id="pomodoro-save-image-btn" class="btn btn-secondary">保存图片</button>
                     <button id="forward-certificate-btn" class="btn btn-primary" style="flex: 1;">转发到聊天框</button>
                     <button id="close-certificate-btn" class="btn btn-neutral" style="flex: 1;">关闭</button>
                 </div>
             </div>
         </div>
 
+        <div id="pomodoro-history-modal" class="modal-overlay"><div class="modal-window pomodoro-history-window"><h3>专注记录</h3><p class="pomodoro-setting-note">近七天 · 分钟</p><div id="pomodoro-week-chart" class="pomodoro-week-chart" aria-label="近七天专注时长"></div><div id="pomodoro-history-list"></div><button type="button" id="pomodoro-history-close" class="btn btn-neutral">关闭</button></div></div>
         <!-- Pomodoro Record Detail Modal -->
 
         <!-- Pomodoro Create Task Modal -->
         <div id="pomodoro-create-modal" class="modal-overlay">
             <div class="modal-window">
-                <h3>创建专注任务</h3>
+                <h3 id="pomodoro-create-title">创建专注任务</h3>
                 <form id="pomodoro-create-form">
                     <div class="form-group">
                         <label for="pomodoro-task-name">任务名称</label>
@@ -488,13 +518,16 @@
                         </div>
                     </div>
                     <div id="pomodoro-duration-options" class="visible">
-                        <button type="button" class="duration-pill active" data-duration="30">30分钟</button>
+                        <button type="button" class="duration-pill active" data-duration="25">25分钟</button>
+                        <button type="button" class="duration-pill" data-duration="30">30分钟</button>
                         <button type="button" class="duration-pill" data-duration="45">45分钟</button>
                         <button type="button" class="duration-pill" data-duration="60">60分钟</button>
                         <button type="button" class="duration-pill" data-duration="custom">自定义</button>
                         <input type="number" id="pomodoro-custom-duration-input" class="form-group" placeholder="输入分钟数">
                     </div>
-                    <button type="submit" class="btn btn-primary" style="margin-top: 20px;">创建任务</button>
+                    <div class="form-group"><label for="pomodoro-create-char">陪伴角色</label><select id="pomodoro-create-char"><option value="">不绑定角色</option></select></div>
+                    <button id="pomodoro-create-submit" type="submit" class="btn btn-primary" style="margin-top: 20px;">创建任务</button>
+                    <button id="pomodoro-create-close" type="button" class="btn btn-neutral">取消</button>
                 </form>
             </div>
         </div>
@@ -538,4 +571,3 @@
                 </div>
             </div>
         </div>
-

@@ -859,8 +859,9 @@ function getMixedContent(responseData) {
 
 // 过滤聊天记录用于 AI 上下文 (包含状态栏剔除和双语格式化)
 function filterHistoryForAI(chat, historySlice, ignoreContextDisabled = false) {
+    const includeMomentsActivity = window.Moments?.isChatLinked?.(chat.id) !== false;
     // 仅复制下方过滤逻辑会改动的消息及 part；图片数据字符串保持引用，避免每次请求复制整份 Base64。
-    let filteredHistory = (historySlice || chat.history || []).map(message => ({
+    let filteredHistory = (historySlice || chat.history || []).filter(message => includeMomentsActivity || !message.isMomentsActivity).map(message => ({
         ...message,
         parts: Array.isArray(message.parts) ? message.parts.map(part => ({ ...part })) : message.parts
     }));
@@ -1232,9 +1233,14 @@ function applyApiNodeRouteParameterMode(config, route) {
     return config;
 }
 
-function getApiConfigForFeature(feature, legacyConfig) {
+function getApiConfigForFeature(feature, legacyConfig, ownerContext) {
+    if (ownerContext && typeof window !== 'undefined' && window.RoleApiBindings) {
+        const bound = window.RoleApiBindings.resolve(feature, legacyConfig, ownerContext);
+        if (bound) return bound;
+    }
+    if (feature === 'followUp') feature = 'background';
     const nodes = (typeof db !== 'undefined' && Array.isArray(db.apiNodes))
-        ? db.apiNodes.filter(node => node && node.enabled !== false && Array.isArray(node.features) && node.features.includes(feature))
+        ? db.apiNodes.filter(node => node && !node.ownerCharacterId && node.enabled !== false && Array.isArray(node.features) && node.features.includes(feature))
         : [];
     if (nodes.length === 1) return applyApiNodeRouteParameterMode(apiNodeToConfig(nodes[0]), db.apiNodeRoutes?.[feature]);
     if (nodes.length > 1) {
@@ -1249,12 +1255,15 @@ function getApiConfigForFeature(feature, legacyConfig) {
     return legacyConfig || null;
 }
 
-function getApiFallbackConfigsForFeature(feature, currentNodeId) {
+function getApiFallbackConfigsForFeature(feature, currentNodeId, currentConfig) {
+    if (currentConfig?._roleBinding && typeof window !== 'undefined' && window.RoleApiBindings) {
+        return window.RoleApiBindings.fallbackConfigs(feature, currentConfig) || [];
+    }
     if (typeof db === 'undefined' || !Array.isArray(db.apiNodes)) return [];
     const route = db.apiNodeRoutes && db.apiNodeRoutes[feature];
     if (!route || route.failureMode !== 'automatic') return [];
     return db.apiNodes
-        .filter(node => node && node.enabled !== false && node.id !== currentNodeId && Array.isArray(node.features) && node.features.includes(feature))
+        .filter(node => node && !node.ownerCharacterId && node.enabled !== false && node.id !== currentNodeId && Array.isArray(node.features) && node.features.includes(feature))
         .map(node => {
             return applyApiNodeRouteParameterMode(apiNodeToConfig(node), route);
         });

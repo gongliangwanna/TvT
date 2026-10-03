@@ -667,6 +667,7 @@ function sendRenameNotification(group, newName) {
 
 function generateGroupSystemPrompt(group, opts) {
     opts = opts || {};
+    const targetMember = opts.targetMember || null;
     // 收集关联的 + 全局的世界书（去重）
     let isOfflineNode = false;
     if (group.activeNodeId && group.nodes) {
@@ -681,7 +682,7 @@ function generateGroupSystemPrompt(group, opts) {
     }
     let associatedIds = group.worldBookIds || [];
     if (isOfflineNode) {
-        associatedIds = (group.offlineWorldBookIds && group.offlineWorldBookIds.length > 0) ? group.offlineWorldBookIds : (group.worldBookIds || []);
+        associatedIds = (group.offlineWorldBookSelectionExplicit || (group.offlineWorldBookIds && group.offlineWorldBookIds.length > 0)) ? (group.offlineWorldBookIds || []) : (group.worldBookIds || []);
     }
     const globalBooks = db.worldBooks.filter(wb => wb.isGlobal && !wb.disabled);
     const globalIds = globalBooks.map(wb => wb.id);
@@ -726,6 +727,7 @@ function generateGroupSystemPrompt(group, opts) {
         let privateMemoryContext = '';
 
         group.members.forEach(member => {
+            if (targetMember && member.id !== targetMember.id) return;
             const char = db.characters.find(c => c.id === member.originalCharId);
             if (!char) return;
 
@@ -788,7 +790,9 @@ function generateGroupSystemPrompt(group, opts) {
         }
     }
 
-    prompt += `1. **核心任务**: 你需要同时扮演这个群聊中的 **所有** AI 成员。我会作为唯一的人类用户（“我”，昵称：${group.me.nickname}）与你们互动。\n\n`;
+    prompt += targetMember
+        ? `1. **核心任务**: 本次你只扮演“${targetMember.realName}”（群昵称：${targetMember.groupNickname}）。其他成员由独立请求负责，你不得替他们发言或执行操作。用户昵称：${group.me.nickname}。你的每条发言和动作都必须使用你自己的姓名。\n\n`
+        : `1. **核心任务**: 你需要同时扮演这个群聊中的 **所有** AI 成员。我会作为唯一的人类用户（“我”，昵称：${group.me.nickname}）与你们互动。\n\n`;
     prompt += `2. **群聊成员列表**: 以下是你要扮演的所有角色以及我的信息：\n`;
     
     let userAgeInfo = "";
@@ -943,7 +947,7 @@ function generateGroupSystemPrompt(group, opts) {
     prompt += `   - 严格扮演每个角色的人设，不同角色之间应有明显的性格和语气差异。\n`;
     prompt += `   - 你的回复中只能包含第4点列出的合法格式的消息。绝对不能包含任何其他内容，如 \`[场景描述]\`, \`(心理活动)\`, \`*动作*\` 或任何格式之外的解释性文字。\n`;
     prompt += `   - 保持对话的持续性，不要主动结束对话。\n\n`;
-    prompt += `现在，请根据以上设定，开始扮演群聊中的所有角色。`;
+    prompt += targetMember ? `现在只以“${targetMember.realName}”的身份回复。其他角色的示例格式仅供理解，不能替他们发言。` : `现在，请根据以上设定，开始扮演群聊中的所有角色。`;
     if (group.me && group.me.nickname) {
         prompt = prompt.replace(/\{\{user\}\}/gi, group.me.nickname);
     }

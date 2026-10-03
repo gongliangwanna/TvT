@@ -182,6 +182,7 @@ async function analyzeLegacyChatStorage(collections, onProgress) {
 }
 
 function setupStorageAnalysisScreen() {
+    window.setupStatusStorageScreen?.();
     const screen = document.getElementById('storage-analysis-screen');
     const chartContainer = document.getElementById('storage-chart-container');
     const detailsList = document.getElementById('storage-details-list');

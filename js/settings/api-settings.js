@@ -491,22 +491,33 @@ function setupApiNodeManager() {
     el('protocol')?.addEventListener('change', () => nodeGenerationEditor?.setProtocol(el('protocol').value || 'openai_chat'));
     document.getElementById('api-node-generation-reset')?.addEventListener('click', () => { nodeGenerationEditor?.inheritAll(); showToast('节点参数已恢复为逐项继承'); });
     let editorSnapshot = '';
+    let roleEditorContext = null;
     const snapshotEditor = () => JSON.stringify({
         fields: Object.keys(fields).map(key => el(key)?.value || ''),
         features: Array.from(document.querySelectorAll('input[name="api-node-feature"]')).map(input => input.checked),
-        generationParams: nodeGenerationEditor?.get()
+        generationParams: nodeGenerationEditor?.get(),
+        roleOwner: document.getElementById('api-node-owner-id')?.value,
+        roleVisibility: document.getElementById('api-node-role-visibility')?.value,
+        capabilities: Array.from(document.querySelectorAll('input[name="api-node-capability"]')).map(input => input.checked)
     });
-    const close = async (force = false) => {
+    const close = async (force = false, savedNode = null) => {
         if (!force && editorScreen.classList.contains('active') && snapshotEditor() !== editorSnapshot) {
             if (typeof customConfirm !== 'function') return showToast('请先保存节点或使用页面内取消按钮');
             const discard = await customConfirm('当前节点有尚未保存的修改，确定放弃并返回吗？', '放弃修改');
             if (!discard) return;
         }
         setStatus('');
-        if (typeof switchScreen === 'function') switchScreen('api-settings-screen');
+        if (typeof switchScreen === 'function') switchScreen(roleEditorContext?.returnScreen || 'api-settings-screen');
+        const callback = roleEditorContext?.onClose;
+        roleEditorContext = null;
+        if (callback) callback(savedNode);
     };
-    const open = node => {
+    const open = (node, context = null) => {
+        roleEditorContext = context;
         form.reset();
+        document.getElementById('api-node-owner-id').value = node?.ownerCharacterId || context?.ownerCharacterId || '';
+        document.getElementById('api-node-role-visibility').value = node?.ownerCharacterId || context?.ownerCharacterId ? 'private' : 'shared';
+        document.querySelectorAll('input[name="api-node-capability"]').forEach(input => { input.checked = !!node?.capabilities?.includes(input.value); });
         const resultRow = document.getElementById('api-node-model-results-row');
         if (resultRow) resultRow.hidden = true;
         Object.keys(fields).forEach(key => { if (el(key)) el(key).value = ''; });
@@ -552,6 +563,8 @@ function setupApiNodeManager() {
         customHeaders: parseJson(el('customHeaders').value, '自定义请求头'),
         customBody: parseJson(el('customBody').value, '自定义请求体'), imageMode: el('imageMode').value,
         generationParamMode: el('generationParamMode').value || 'inherit',
+        ownerCharacterId: document.getElementById('api-node-role-visibility').value === 'private' ? document.getElementById('api-node-owner-id').value || null : null,
+        capabilities: Array.from(document.querySelectorAll('input[name="api-node-capability"]:checked')).map(input => input.value),
         generationParams: nodeGenerationEditor?.get() || normalizeApiGenerationParams(null, true),
         features: Array.from(document.querySelectorAll('input[name="api-node-feature"]:checked')).map(input => input.value)
     });
@@ -582,15 +595,26 @@ function setupApiNodeManager() {
                 generation.textContent = enabledNames.length ? `节点参数：${enabledNames.join('、')}` : '节点参数：按项继承或禁用';
             }
             body.append(heading, meta, features, generation);
+            if (typeof window.RoleApiBindings !== 'undefined') {
+                const refs = window.RoleApiBindings.references(node.id);
+                const bindings = document.createElement('div'); bindings.className = 'api-node-card-meta';
+                bindings.textContent = refs.length ? `角色／群绑定：${refs.length} 处` : '尚未绑定角色';
+                body.appendChild(bindings);
+            }
             const actions = document.createElement('div'); actions.className = 'api-node-card-actions';
             const button = (text, handler) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-small'; b.textContent = text; b.addEventListener('click', handler); return b; };
             actions.append(
                 button('编辑', () => open(node)),
+                button('绑定', () => node.ownerCharacterId
+                    ? window.RoleApiSettings.open('role', { target: db.characters.find(char => char.id === node.ownerCharacterId) })
+                    : window.RoleApiSettings.open('bulk', { nodeId: node.id })),
                 button('复制', async () => { db.apiNodes.push({ ...JSON.parse(JSON.stringify(node)), id: `api_node_${Date.now()}`, name: `${node.name} 副本`, features: [] }); await saveGlobalSettings(['apiNodes']); render(); showToast('已复制，功能分配留空'); }),
                 button('删除', async e => {
                     if (e.currentTarget.dataset.confirm !== '1') {
                         const target = e.currentTarget;
                         target.dataset.confirm = '1'; target.textContent = '再点确认';
+                        const count = window.RoleApiBindings?.references(node.id).length || 0;
+                        if (count) showToast(`此 API 有 ${count} 处角色／群绑定，删除后将显示失效；可先替换绑定`, 6000);
                         setTimeout(() => { if (target.isConnected) { delete target.dataset.confirm; target.textContent = '删除'; } }, 3000);
                         return;
                     }
@@ -607,12 +631,18 @@ function setupApiNodeManager() {
     form.addEventListener('submit', async event => {
         event.preventDefault();
         try {
-            const node = readDraft();
+            const draft = readDraft();
+            const previous = db.apiNodes.find(item => item.id === draft.id);
+            const node = { ...previous, ...draft };
+            if (document.getElementById('api-node-role-visibility').value === 'private' && !node.ownerCharacterId) throw new Error('仅所属角色的配置请从角色设置中新建');
             if (!node.name || !node.protocol || !node.url || !node.model || !el('enabled').value || !node.streamMode) throw new Error('请完成所有必选项');
             if (typeof BLOCKED_API_DOMAINS !== 'undefined' && BLOCKED_API_DOMAINS.some(domain => node.url.includes(domain))) throw new Error('该 API 站点已被屏蔽');
             const index = db.apiNodes.findIndex(item => item.id === node.id);
             if (index >= 0) db.apiNodes[index] = node; else db.apiNodes.push(node);
-            await saveGlobalSettings(['apiNodes']); await close(true); render(); showToast('API 节点已保存');
+            const oldNodes = db.apiNodes.slice();
+            if (index >= 0) oldNodes[index] = previous; else oldNodes.pop();
+            if (await saveGlobalSettings(['apiNodes']) === false) { db.apiNodes = oldNodes; throw new Error('API 节点保存失败'); }
+            await close(true, node); render(); showToast('API 节点已保存');
         } catch (error) { setStatus(error.message, true); }
     });
     document.getElementById('api-node-add-btn').addEventListener('click', () => open(null));
@@ -631,6 +661,8 @@ function setupApiNodeManager() {
         catch (error) { setStatus(`连接失败：${error.message}`, true); }
     });
     render();
+    window.openApiNodeEditor = open;
+    window.refreshApiNodeList = render;
 }
 
 function renderApiNodeConflicts() {
@@ -638,7 +670,7 @@ function renderApiNodeConflicts() {
     if (!box) return;
     box.replaceChildren();
     Object.keys(API_NODE_FEATURES).forEach(feature => {
-        const nodes = (db.apiNodes || []).filter(node => node.enabled && node.features?.includes(feature));
+        const nodes = (db.apiNodes || []).filter(node => !node.ownerCharacterId && node.enabled && node.features?.includes(feature));
         if (nodes.length < 2) return;
         const route = db.apiNodeRoutes?.[feature] || {};
         const row = document.createElement('div'); row.className = 'api-node-route';

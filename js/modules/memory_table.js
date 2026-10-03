@@ -1554,19 +1554,19 @@
         return prompt.trim();
     }
 
-    function getSummaryApiConfig() {
+    function getSummaryApiConfig(chat) {
         let apiConfig = (db.summaryApiSettings && db.summaryApiSettings.url && db.summaryApiSettings.key && db.summaryApiSettings.model)
             ? db.summaryApiSettings
             : db.apiSettings;
-        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('memorySummary', apiConfig) : apiConfig;
+        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('memorySummary', apiConfig, chat) : apiConfig;
         if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model)) {
             throw new Error('请先配置总结 API');
         }
         return apiConfig;
     }
 
-    async function requestSummaryContent(prompt, temperature = 0.2) {
-        const apiConfig = getSummaryApiConfig();
+    async function requestSummaryContent(prompt, temperature = 0.2, chat) {
+        const apiConfig = getSummaryApiConfig(chat);
         let { url, key, model } = apiConfig;
         if (url.endsWith('/')) url = url.slice(0, -1);
         const endpoint = `${url}/v1/chat/completions`;
@@ -1866,7 +1866,7 @@ ${templateText}
 ${historyText}`;
 
         try {
-            const rawContent = await requestSummaryContent(prompt, 0.2);
+            const rawContent = await requestSummaryContent(prompt, 0.2, chat);
             const changedFields = applyMemoryUpdatesFromXml(chat, rawContent, { source: options.source || 'api' });
             if (!options.isAutoUpdate && !options.skipCursorSync) {
                 const endIndex = options.end || (Array.isArray(chat.history) ? chat.history.length : 0);
@@ -2122,7 +2122,7 @@ ${templateText}
 ${journalText}`;
 
             try {
-                const rawContent = await requestSummaryContent(prompt, 0.2);
+                const rawContent = await requestSummaryContent(prompt, 0.2, chat);
                 const changedFields = applyMemoryUpdatesFromXml(chat, rawContent, {
                     source: 'api',
                     targetTemplateIds: state.selectedTemplateIds,
@@ -2165,7 +2165,7 @@ ${journalText}`;
 ${tableContext}`;
 
             try {
-                const rawContent = await requestSummaryContent(prompt, 0.5);
+                const rawContent = await requestSummaryContent(prompt, 0.5, chat);
                 const parser = new DOMParser();
                 const xmlDoc = parser.parseFromString(`<root>${rawContent || ''}</root>`, 'text/xml');
                 if (xmlDoc.querySelector('parsererror')) {

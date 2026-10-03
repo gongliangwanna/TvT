@@ -1490,3 +1490,59 @@ body.feedback-open {
     max-width: 96%;
   }
 }
+
+/* Secondary feedback tools keep each mailbox's inherited font and monochrome lines. */
+:is(#ephone-feedback,#sakura-feedback) .ft-result,
+:is(#ephone-feedback,#sakura-feedback) .ft-knowledge,
+:is(#ephone-feedback,#sakura-feedback) .ft-transfer{font-size:11px;line-height:1.6;border-top:1px solid #dedede;padding:6px 0;color:inherit;min-width:0}
+:is(#ephone-feedback,#sakura-feedback) .ft-result{margin-top:-8px}
+:is(#ephone-feedback,#sakura-feedback) .ft-result p,
+:is(#ephone-feedback,#sakura-feedback) .ft-knowledge p,
+:is(#ephone-feedback,#sakura-feedback) .ft-transfer p{font-size:12px;font-weight:400;white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0}
+:is(#ephone-feedback,#sakura-feedback) [class^="ft-"] summary{cursor:pointer;overflow-wrap:anywhere}
+:is(#ephone-feedback,#sakura-feedback) .ft-knowledge>details{padding:6px 0;border-top:1px dashed #ddd}
+:is(#ephone-feedback,#sakura-feedback) .ft-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+:is(#ephone-feedback,#sakura-feedback) [data-ft],
+:is(#ephone-feedback,#sakura-feedback) .ft-actions button,
+:is(#ephone-feedback,#sakura-feedback) .ft-public-search button,
+:is(#ephone-feedback,#sakura-feedback) .ft-file-button{display:inline-flex;align-items:center;justify-content:center;font-family:inherit;font-size:11px;font-weight:400;line-height:1.4;border:1px solid #bbb;border-radius:2px;padding:5px 8px;background:#fff;color:inherit;max-width:100%;cursor:pointer}
+:is(#ephone-feedback,#sakura-feedback) .ft-file-button{position:relative;overflow:hidden}
+:is(#ephone-feedback,#sakura-feedback) .ft-file-button input{position:absolute;inset:0;width:100%;opacity:0;cursor:pointer}
+:is(#ephone-feedback,#sakura-feedback) .ft-message-footer{display:flex;align-items:center;justify-content:space-between;min-width:0;gap:5px;margin-top:5px;font-size:10px}
+:is(#ephone-feedback,#sakura-feedback) .ft-message-footer:has(>span:empty):not(:has(details)){display:none}
+:is(#ephone-feedback,#sakura-feedback) .ft-message-footer>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:400;color:#777}
+:is(#ephone-feedback,#sakura-feedback) .ft-message-menu{margin-left:auto;max-width:100%;flex-shrink:0}
+:is(#ephone-feedback,#sakura-feedback) .ft-message-menu summary{list-style:none;padding:0 3px;font:14px/16px sans-serif;text-align:right}
+:is(#ephone-feedback,#sakura-feedback) .ft-message-menu summary::-webkit-details-marker{display:none}
+:is(#ephone-feedback,#sakura-feedback) .ft-message-menu>div{display:flex;gap:4px;margin-top:4px}
+:is(#ephone-feedback,#sakura-feedback) .ft-message-menu button{padding:3px 6px;font-size:10px}
+:is(#ephone-feedback,#sakura-feedback) .ft-edit-form{margin-top:8px;padding-top:8px;border-top:1px dashed #bbb;min-width:0}
+:is(#ephone-feedback,#sakura-feedback) .ft-edit-form label,
+:is(#ephone-feedback,#sakura-feedback) .ft-bug-template label{display:block;font-size:11px;font-weight:400;margin-top:8px}
+:is(#ephone-feedback,#sakura-feedback) .ft-edit-form textarea,
+:is(#ephone-feedback,#sakura-feedback) .ft-bug-template input,
+:is(#ephone-feedback,#sakura-feedback) .ft-bug-template textarea{display:block;width:100%;max-width:100%;min-width:0;margin-top:4px;padding:7px 9px;border:1px solid #bbb;border-radius:2px;background:#fff;font-family:inherit;font-size:13px;line-height:1.6;color:inherit}
+:is(#ephone-feedback,#sakura-feedback) .ft-edit-form textarea,
+:is(#ephone-feedback,#sakura-feedback) .ft-bug-template textarea{min-height:72px;resize:vertical;font-family:inherit;font-size:13px}
+:is(#ephone-feedback,#sakura-feedback) .ft-bug-template{font-size:11px;line-height:1.6;padding:8px 0;border-top:1px dashed #ccc}
+:is(#ephone-feedback,#sakura-feedback) .ft-check{display:flex!important;align-items:center;gap:6px}
+:is(#ephone-feedback,#sakura-feedback) .ft-check input{appearance:none;width:13px;height:13px;margin:0;border:1px solid #777;border-radius:2px;flex-shrink:0}
+:is(#ephone-feedback,#sakura-feedback) .ft-check input:checked{background:#111;box-shadow:inset 0 0 0 3px #fff}
+:is(#ephone-feedback,#sakura-feedback) .ft-image-tools{display:flex;align-items:center;gap:8px;margin-top:7px;font-size:10px;color:#777;min-width:0}
+:is(#ephone-feedback,#sakura-feedback) .ft-image-tools>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:is(#ephone-feedback,#sakura-feedback) .ft-public-search{display:flex;gap:6px;min-width:0;margin-bottom:8px}
+:is(#ephone-feedback,#sakura-feedback) .ft-public-search input{flex:1;width:0;min-width:0;max-width:100%;padding:6px 8px;border:1px solid #bbb;border-radius:2px;background:#fff;font-size:12px}
+:is(#ephone-feedback,#sakura-feedback) .ft-public-search select{appearance:none;flex-shrink:0;max-width:72px;border:1px solid #bbb;border-radius:2px;padding:5px 16px 5px 7px;font-size:11px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='m1 1 3 3 3-3' fill='none' stroke='%23777'/%3E%3C/svg%3E") no-repeat right 5px center}
+:is(#ephone-feedback,#sakura-feedback) .ft-public-search button{flex-shrink:0;padding:5px 7px}
+:is(#ephone-feedback,#sakura-feedback) [hidden]{display:none!important}
+:is(#ephone-feedback,#sakura-feedback) button:disabled{opacity:.5;cursor:default}
+
+/* Keep the fixed header's central title inside its own grid column. */
+#ephone-feedback .mailbox-title,#sakura-feedback .sakura-title{min-width:0;max-width:100%}
+#ephone-feedback .mailbox-sub-emblem,#sakura-feedback .sakura-sub-emblem{min-width:0;max-width:100%;overflow:hidden;white-space:nowrap}
+#ephone-feedback .mailbox-file-tip,#sakura-feedback .sakura-file-tip{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ephone-feedback .mailbox-file-card,#sakura-feedback .sakura-file-card{min-width:0;max-width:100%}
+
+:is(#ephone-feedback,#sakura-feedback) .ft-result>summary,
+:is(#ephone-feedback,#sakura-feedback) .ft-knowledge summary,
+:is(#ephone-feedback,#sakura-feedback) .ft-transfer>summary{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -163,7 +163,7 @@ const DEFAULT_COT_PRESETS = [
 const globalSettingKeys = [
     'apiSettings', 'summaryApiSettings', 'backgroundApiSettings', 'supplementPersonaApiSettings', 'peekApiSettings', 'vectorApiSettings', 'apiNodes', 'apiNodeRoutes', 'imageRecognitionEnabled', 'imageRecognitionApiSettings', 'stickerRecognitionApiSettings', 'wallpaper', 'globalChatWallpaper', 'globalCallWallpaper', 'homeScreenMode', 'fontUrl', 'localFontName', 'customIcons', 'customAppNames', 'namePresets',
     'apiPresets', 'summaryApiPresets', 'backgroundApiPresets', 'supplementPersonaApiPresets', 'peekApiPresets', 'vectorApiPresets', 'imageRecognitionApiPresets', 'stickerRecognitionApiPresets', 'bubbleCssPresets', 'chatAppearancePresets', 'myPersonaPresets', 'globalCss',
-    'globalCssPresets', 'fontPresets', 'homeSignature', 'forumPosts', 'forumBindings', 'forumUserProfile', 'forumSettings', 'forumApiSettings', 'forumMessages', 'forumStrangerProfiles', 'forumFriendRequests', 'forumPendingRequestFromUser', 'forumAltAccounts', 'forumActiveAccountId', 'forumAccountStates', 'forumRelationships', 'forumKnowledge', 'forumSocialEdges', 'forumStoryThreads', 'forumEvents', 'forumNotifications', 'forumDrafts', 'forumSchemaVersion', 'pomodoroTasks', 'pomodoroSettings', 'insWidgetSettings', 'homeWidgetSettings',
+    'globalCssPresets', 'fontPresets', 'homeSignature', 'forumPosts', 'forumBindings', 'forumUserProfile', 'forumSettings', 'forumApiSettings', 'forumMessages', 'forumStrangerProfiles', 'forumFriendRequests', 'forumPendingRequestFromUser', 'forumAltAccounts', 'forumActiveAccountId', 'forumAccountStates', 'forumRelationships', 'forumKnowledge', 'forumSocialEdges', 'forumStoryThreads', 'forumEvents', 'forumNotifications', 'forumDrafts', 'forumSchemaVersion', 'pomodoroTasks', 'pomodoroSettings', 'pomodoroRecords', 'pomodoroActiveSession', 'insWidgetSettings', 'homeWidgetSettings',
     'chatFolders', 'moments', 'fontSizeScale', 'activePersonaId', 'moreProfileCardBg', 'statusBarPresets', 'regexFilterPresets', 'themeSettings', 'themePresets', 'savedKeyboardHeight',
     'globalSendSound', 'globalReceiveSound', 'globalMessageSentSound', 'globalIncomingCallSound', 'multiMsgSoundEnabled', 'soundPresets', 'galleryPresets', 'iconPresets', 'homeWidgetPresets', 'widgetWallpaperPresets', 'voicePresets', 'fontBuffer',
     'cotSettings', 'cotPresets', 'hasSeenVideoCallDisclaimer', 'hasSeenVideoCallAvatarHint',
@@ -171,19 +171,45 @@ const globalSettingKeys = [
     'theaterScenarios', 'theaterPromptPresets',
     'theaterHtmlScenarios', 'theaterHtmlPromptPresets', 'theaterMode',
     'theaterApiSettings', 'theaterFontSize', 'theaterFontPreset',
-    'novelAiSettings', 'novelAiPresets', 'gptImageSettings', 'gptImagePresets',
+    'novelAiSettings', 'novelAiPresets', 'novelAiStudioWorks', 'gptImageSettings', 'gptImagePresets',
     'googleImageSettings', 'stabilityImageSettings', 'activeImageProvider',
     'imageAtmosphereGroups', 'activeImageAtmosphereId', 'novelAiVibeSettings', 'novelAiPreciseReferenceSettings',
     'avatarRecognitionDetailLevel', 'autoCompressImage', 'imageGenTimeout',
     'phoneControlRecycleBin', 'nodeTemplates', 'nodeSummaryText', 'memoryTableTemplates', 'vectorMemoryTemplates',
     'nightModeSettings', 'homeStatusBarSettings', 'homeLayoutMode', 'freeHomeLayout', 'freeHomeWidgetPresets', 'stickerCategories', 'magicRoom',
     'keepAliveCodeEnabled', 'keepAliveAutoWakeEnabled', 'keepAliveAudioEnabled', 'keepAliveAudioSrc', 'keepAliveAudioName', 'keepAliveAudioLibrary',
-    'ttsPresets', 'weatherApiSettings', 'bilingualSettings', 'bilingualTranslations'
+    'ttsPresets', 'weatherApiSettings', 'bilingualSettings', 'bilingualTranslations', 'statusStorageSettings'
 ];
 if (typeof window !== 'undefined') window.globalSettingKeysForBackup = globalSettingKeys;
 
-const appVersion = "6.9.4";
+const appVersion = "6.9.5";
 const updateLog = [
+    {
+        version: "6.9.5",
+        date: "2026-10-02",
+        revision: "2026-10-02.2",
+        notes: [
+            "新增角色 API 绑定。不同角色可使用不同接口和模型，也可分别指定聊天、动态、总结、日记、通话等功能使用的 API；支持批量分配、单独调整参数和设置备用接口。",
+            "新增群聊成员独立回复。成员可分别使用自己的 API，支持自然发言、全员回复或指定成员，以及依次回复、并行回复和额外接话。可查看成员生成状态，单独停止或重试失败的回复。",
+            "新增 API 调用详情。部分聊天消息可通过长按查看实际使用的接口、模型、配置来源及是否启用了备用接口，方便排查问题。",
+            "优化动态设置。全局设置、角色设置、人脉设置分别管理。发动态、Story、观看、浏览、点赞、评论和接话可独立控制，回复等待时间和互相接话轮数可分别调整。",
+            "完善动态自动观看和提醒。发布后自动为符合可见范围、允许观看的角色和人脉安排观看；提醒会立即安排观看，避免同一次发布重复触发。观看详情可查看等待、处理中、不回应、被设置拦截或失败等状态。",
+            "新增“聊天关联动态”开关。可全局设置，也可为单个角色覆盖。关闭后，聊天不再自动带入动态能力、已看内容和互动记录；动态仍可参考聊天与共同记忆，已有数据保留。",
+            "优化动态的人设与关系上下文。互动时结合对应用户身份、角色设定、关系、记忆和世界书；人脉使用自己的设定与经历，避免带入所属角色的私聊内容。修复动态修改、删除或可见范围变化后，旧请求仍可能写入结果的问题。",
+            "重做 Token 统计逻辑。按实际准备发送的上下文统计，细分人设、世界书、聊天历史、记忆、工具等来源。修正部分节点切换、摘要和世界书绑定情况下的统计偏差，完善接口返回的实际输入、输出、缓存和思考用量展示。",
+            "新增 Token 检测与诊断工具。支持检测重复绑定、撤销纠正、复制脱敏诊断和模拟不同历史条数的用量；已适配的 Claude、Gemini 接口可使用官方预计算。设置保存后，统计会同步更新。",
+            "新增状态栏模板保存与手动整理。新消息可选择完整保存、精简保存或共享模板；旧数据可筛选会话和模板、预览整理范围、导出恢复备份，并按需恢复。状态栏历史数量改为提醒阈值，超出后不再自动删除。",
+            "修复状态栏清理与保存问题。修复清理后旧模板可能被后续保存写回、结果显示不准确、列表和占用未及时更新的问题；完善数据库回读核验、失败处理与局部恢复。",
+            "修复并完善 NovelAI 生图。调整不同模型的参数、质量与负面预设、角色坐标及精确参考参数，完善自定义地址、普通／流式生成和多图返回解析。新增 NovelAI 创作工具，支持文生图、图生图、局部重绘、增强、独立放大和漫画创作，并可查看实际发送参数、保存和下载作品。",
+            "新增 ElevenLabs 语音合成。角色与用户可分别配置，支持读取账号音色和模型、填写 Voice ID、自定义接口地址及试听。补充 MiniMax 国内／国际地址，Group ID 改为可选，保留旧配置兼容。",
+            "修复语音播放与下载问题。修复用户语音受到角色语音开关影响、停止后仍可能开始播放、旧队列干扰新播放等问题；切换语音服务时分别保存音色和语速，避免覆盖原配置。",
+            "完善桌面与小组件预设分享。导出时可选择是否包含壁纸、图标、照片和头像等图片，默认不分享；修复导入不含图片的方案时覆盖本机图片的问题。",
+            "修复世界书选择与反馈中心细节。修复线下模式明确取消全部世界书后仍沿用原绑定的问题。反馈中心新增自己的消息修改、撤回和删除、文字草稿保存、信箱凭证导入导出，以及处理结果和常见解答展示。",
+            "修复动态评论反复接话问题。修复角色与 NPC 持续互相回复、重复评论的问题。互相接话默认关闭，可自行设置轮数；首次评论和回复用户评论不消耗互相接话轮数。更新后会停止旧的自动接话任务，保留已有评论和用户评论回复。",
+            "调整动态自主发布机制。取消独立定时发动态，改为跟随正常聊天和已开启的后台消息，由 AI 判断是否发布。新增“后台自主发布动态”开关，控制后台动态及 Story 发布；人脉活动跟随所属角色的聊天和后台消息。修复关闭发布权限后，生成中的旧请求仍可能发布的问题。",
+            "修复并完善番茄钟功能。修复后台切换导致计时不准、刷新后进度丢失及正计时结算问题。新增快速开始、任务编辑、专注记录与统计、休息及连续专注、多种角色陪伴方式，支持保存专注成果图片。陪伴回应失败时，计时和记录仍可正常运行。"
+        ]
+    },
     {
         version: "6.9.4",
         date: "2026-09-30",
@@ -872,6 +898,8 @@ var db = {
         charIds: [],
         userPersonaIds: []
     },
+    pomodoroRecords: [],
+    pomodoroActiveSession: null,
     pomodoroTasks: [],
     pomodoroSettings: {
         boundCharId: null,

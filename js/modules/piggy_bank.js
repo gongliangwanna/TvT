@@ -44,7 +44,10 @@ async function persistWalletState(characterIds = []) {
                 await dexieDB.globalSettings.put({ key: 'piggyBank', value: db.piggyBank });
                 for (const id of ids) {
                     const character = (db.characters || []).find(item => item.id === id);
-                    if (character) await dexieDB.characters.put(character);
+                    if (character) {
+                        if (window.StatusStorage) await window.StatusStorage.persistChats(dexieDB.characters, [character]);
+                        else await dexieDB.characters.put(character);
+                    }
                 }
             });
             return true;

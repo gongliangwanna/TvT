@@ -19,6 +19,7 @@
                                     <select id="tts-provider">
                                         <option value="minimax" selected>Minimax (海螺)</option>
                                         <option value="volcengine">火山引擎 (豆包语音)</option>
+                                        <option value="elevenlabs">ElevenLabs</option>
                                     </select>
                                     <span class="kkt-arrow">›</span>
                                 </div>
@@ -29,7 +30,7 @@
                                 <div class="kkt-item">
                                     <div class="kkt-item-label">Group ID</div>
                                     <div class="kkt-item-control">
-                                        <input type="text" id="minimax-group-id" autocomplete="off" placeholder="输入 GroupId">
+                                        <input type="text" id="minimax-group-id" autocomplete="off" placeholder="可选，兼容旧接口">
                                     </div>
                                 </div>
                                 
@@ -44,6 +45,8 @@
                                     <div class="kkt-item-label">接口域名</div>
                                     <div class="kkt-item-control">
                                         <select id="minimax-domain">
+                                            <option value="api.minimax.cn">国内 (api.minimax.cn)</option>
+                                            <option value="api.minimax.io">国际 (api.minimax.io)</option>
                                             <option value="api.minimaxi.chat">国际 (api.minimaxi.chat)</option>
                                             <option value="api.minimaxi.com">国际 (api.minimaxi.com)</option>
                                             <option value="api.minimax.chat">国内 (api.minimax.chat)</option>
@@ -57,6 +60,8 @@
                                     <div class="kkt-item-control">
                                         <select id="minimax-tts-model">
                                             <option value="speech-01">speech-01</option>
+                                            <option value="speech-01-hd">speech-01-hd</option>
+                                            <option value="speech-01-turbo">speech-01-turbo</option>
                                             <option value="speech-02-turbo">speech-02-turbo</option>
                                             <option value="speech-02-hd">speech-02-hd</option>
                                             <option value="speech-2.6-turbo">speech-2.6-turbo</option>
@@ -67,6 +72,14 @@
                                         <span class="kkt-arrow">›</span>
                                     </div>
                                 </div>
+                            </div>
+
+                            <div id="elevenlabs-tts-config-wrap" class="tts-eleven-config" style="display:none;">
+                                <div class="kkt-item"><div class="kkt-item-label">API Key</div><div class="kkt-item-control"><input type="password" id="elevenlabs-api-key" autocomplete="new-password" placeholder="输入 ElevenLabs API Key"></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">语音模型</div><div class="kkt-item-control tts-eleven-control"><select id="elevenlabs-model"><option value="eleven_multilingual_v2">Multilingual v2（默认）</option><option value="eleven_flash_v2_5">Flash v2.5</option><option value="eleven_v4">Eleven v4</option><option value="eleven_v4_turbo">Eleven v4 Turbo</option><option value="eleven_v3">Eleven v3</option></select><button type="button" class="btn btn-small btn-neutral" id="elevenlabs-load-models">读取</button></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">默认音色</div><div class="kkt-item-control tts-eleven-control"><input type="text" id="elevenlabs-voice-id" autocomplete="off" placeholder="选择或填写 Voice ID"><button type="button" class="btn btn-small btn-secondary" id="elevenlabs-select-voice">选择</button></div></div>
+                                <p class="api-field-tip tts-eleven-tip">角色自定义音色优先；未选择时使用这里的默认音色。试听会消耗语音额度。</p>
+                                <details class="api-nested-details"><summary>高级设置</summary><div class="kkt-item"><div class="kkt-item-label">接口地址</div><div class="kkt-item-control"><input type="text" id="elevenlabs-url" autocomplete="off" placeholder="https://api.elevenlabs.io"></div></div></details>
                             </div>
 
                             <!-- 火山引擎 TTS 配置 -->
@@ -129,6 +142,7 @@
                                     <select id="user-tts-provider">
                                         <option value="minimax" selected>Minimax (海螺)</option>
                                         <option value="volcengine">火山引擎 (豆包语音)</option>
+                                        <option value="elevenlabs">ElevenLabs</option>
                                     </select>
                                     <span class="kkt-arrow">›</span>
                                 </div>
@@ -138,7 +152,7 @@
                                 <div class="kkt-item">
                                     <div class="kkt-item-label">Group ID</div>
                                     <div class="kkt-item-control">
-                                        <input type="text" id="minimax-user-group-id" autocomplete="off" placeholder="输入 GroupId">
+                                        <input type="text" id="minimax-user-group-id" autocomplete="off" placeholder="可选，兼容旧接口">
                                     </div>
                                 </div>
                                 <div class="kkt-item">
@@ -151,6 +165,8 @@
                                     <div class="kkt-item-label">域名选择</div>
                                     <div class="kkt-item-control">
                                         <select id="minimax-user-domain">
+                                            <option value="api.minimax.cn">国内 (api.minimax.cn)</option>
+                                            <option value="api.minimax.io">国际 (api.minimax.io)</option>
                                             <option value="api.minimaxi.chat">国际 (api.minimaxi.chat)</option>
                                             <option value="api.minimaxi.com">国际 (api.minimaxi.com)</option>
                                             <option value="api.minimax.chat">国内 (api.minimax.chat)</option>
@@ -163,6 +179,8 @@
                                     <div class="kkt-item-control">
                                         <select id="minimax-user-tts-model">
                                             <option value="speech-01">speech-01</option>
+                                            <option value="speech-01-hd">speech-01-hd</option>
+                                            <option value="speech-01-turbo">speech-01-turbo</option>
                                             <option value="speech-02-turbo">speech-02-turbo</option>
                                             <option value="speech-02-hd">speech-02-hd</option>
                                             <option value="speech-2.6-turbo">speech-2.6-turbo</option>
@@ -175,6 +193,14 @@
                                 </div>
                             </div>
 
+                            <div id="elevenlabs-user-tts-config-wrap" class="tts-eleven-config" style="display:none;">
+                                <div class="kkt-item"><div class="kkt-item-label">API Key</div><div class="kkt-item-control"><input type="password" id="elevenlabs-user-api-key" autocomplete="new-password" placeholder="输入 ElevenLabs API Key"></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">语音模型</div><div class="kkt-item-control tts-eleven-control"><select id="elevenlabs-user-model"><option value="eleven_multilingual_v2">Multilingual v2（默认）</option><option value="eleven_flash_v2_5">Flash v2.5</option><option value="eleven_v4">Eleven v4</option><option value="eleven_v4_turbo">Eleven v4 Turbo</option><option value="eleven_v3">Eleven v3</option></select><button type="button" class="btn btn-small btn-neutral" id="elevenlabs-user-load-models">读取</button></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">默认音色</div><div class="kkt-item-control tts-eleven-control"><input type="text" id="elevenlabs-user-voice-id" autocomplete="off" placeholder="选择或填写 Voice ID"><button type="button" class="btn btn-small btn-secondary" id="elevenlabs-user-select-voice">选择</button></div></div>
+                                <p class="api-field-tip tts-eleven-tip">角色自定义音色优先；未选择时使用这里的默认音色。试听会消耗语音额度。</p>
+                                <details class="api-nested-details"><summary>高级设置</summary><div class="kkt-item"><div class="kkt-item-label">接口地址</div><div class="kkt-item-control"><input type="text" id="elevenlabs-user-url" autocomplete="off" placeholder="https://api.elevenlabs.io"></div></div></details>
+                            </div>
+
                             <div id="volcengine-user-tts-config-wrap" style="display:none;">
                                 <div class="kkt-item"><div class="kkt-item-label">App ID</div><div class="kkt-item-control"><input type="text" id="volcengine-user-app-id" autocomplete="off" placeholder="输入 App ID"></div></div>
                                 <div class="kkt-item"><div class="kkt-item-label">Access Token</div><div class="kkt-item-control"><input type="password" id="volcengine-user-access-token" autocomplete="new-password" placeholder="输入 Access Token"></div></div>
@@ -184,6 +210,7 @@
                                 <div class="kkt-item"><div class="kkt-item-label">音频格式</div><div class="kkt-item-control"><select id="volcengine-user-audio-format"><option value="mp3">MP3</option><option value="ogg_opus">Ogg/Opus</option><option value="pcm">PCM</option><option value="wav">WAV</option></select><span class="kkt-arrow">›</span></div></div>
                             </div>
                             
+                            <div class="api-actions-row"><button type="button" class="btn btn-secondary" id="test-user-tts-btn">测试用户语音</button></div>
                             <p class="api-field-tip" style="padding: 10px 15px 0;">设置完成后，请点击上方「保存 TTS 配置」统一保存生效</p>
                         </section>
                     </div>
@@ -221,6 +248,9 @@
                         <label class="kkt-item api-node-edit-row"><span class="kkt-item-label">节点状态</span><select id="api-node-enabled" required><option value="">请选择</option><option value="enabled">启用</option><option value="paused">暂停</option></select></label>
                         <label class="kkt-item api-node-edit-row"><span class="kkt-item-label">流式输出</span><select id="api-node-stream" required><option value="">请选择</option><option value="inherit">沿用主 API 开关</option><option value="enabled">启用</option><option value="disabled">关闭</option></select></label>
                         <label class="kkt-item api-node-edit-row"><span class="kkt-item-label">图片发送</span><select id="api-node-image-mode"><option value="">未选择</option><option value="openai_data_url">OpenAI Data URL</option><option value="anthropic_base64">Anthropic Base64</option><option value="gemini_inline">Gemini Inline Data</option><option value="url">仅 URL</option><option value="description">仅图片描述</option><option value="reject">不发送图片</option></select></label>
+                        <input type="hidden" id="api-node-owner-id">
+                        <label class="kkt-item api-node-edit-row"><span class="kkt-item-label">角色可用范围</span><select id="api-node-role-visibility"><option value="shared">共享使用</option><option value="private">仅所属角色</option></select></label>
+                        <div class="api-node-feature-group"><span>能力声明<br>不选表示未知</span><label><input type="checkbox" name="api-node-capability" value="text">文本</label><label><input type="checkbox" name="api-node-capability" value="vision">图片理解</label><label><input type="checkbox" name="api-node-capability" value="tools">工具／联网</label></div>
                     </section>
 
                     <section class="kkt-group api-section-card api-node-edit-group api-generation-card" aria-labelledby="api-node-generation-heading">

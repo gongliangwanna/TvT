@@ -613,6 +613,10 @@ function saveCurrentVoiceAsPreset() {
         userLanguage: tc.userLanguage || 'auto',
         userSpeed: tc.userSpeed != null ? tc.userSpeed : 1
     };
+    for (const key of ['elevenVoiceId', 'elevenCustomVoiceId', 'elevenVoiceName', 'elevenSpeed',
+        'userElevenVoiceId', 'userElevenCustomVoiceId', 'userElevenVoiceName', 'userElevenSpeed']) {
+        if (tc[key] != null) preset[key] = tc[key];
+    }
 
     const name = prompt('请输入音色预设名称（将覆盖同名预设）：');
     if (!name) return;
@@ -646,6 +650,10 @@ function applyVoicePreset(name) {
     chat.ttsConfig.userCustomVoiceId = p.userCustomVoiceId || '';
     chat.ttsConfig.userLanguage = p.userLanguage || 'auto';
     chat.ttsConfig.userSpeed = p.userSpeed != null ? p.userSpeed : 1;
+    for (const key of ['elevenVoiceId', 'elevenCustomVoiceId', 'elevenVoiceName', 'elevenSpeed',
+        'userElevenVoiceId', 'userElevenCustomVoiceId', 'userElevenVoiceName', 'userElevenSpeed']) {
+        if (p[key] != null) chat.ttsConfig[key] = p[key];
+    }
 
     saveData();
 

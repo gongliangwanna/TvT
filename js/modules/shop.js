@@ -739,7 +739,7 @@ async function fetchShopData() {
     `;
 
     // 调用 API
-    const shopApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('shop', db.apiSettings) : db.apiSettings;
+    const shopApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('shop', db.apiSettings, chat) : db.apiSettings;
     let { url, key, model, provider } = shopApiConfig;
     
     // 兼容 Gemini 和其他 OpenAI 格式接口

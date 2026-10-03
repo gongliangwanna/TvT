@@ -953,17 +953,18 @@ function setupChatSettings() {
     let currentWorldBookMode = 'online';
 
     function renderWorldBookSelectionList() {
+        document.getElementById('world-book-token-draft')?.remove();
         const globalIds = (db.worldBooks || []).filter(wb => wb.isGlobal && !wb.disabled).map(wb => wb.id);
         let displayIds = [];
         if (currentChatType === 'private') {
             const character = db.characters.find(c => c.id === currentChatId);
             if (!character) return;
-            const ids = currentWorldBookMode === 'offline' ? (character.offlineWorldBookIds || []) : (character.worldBookIds || []);
+            const ids = currentWorldBookMode === 'offline' && (character.offlineWorldBookSelectionExplicit || character.offlineWorldBookIds?.length) ? (character.offlineWorldBookIds || []) : (character.worldBookIds || []);
             displayIds = [...new Set([...ids, ...globalIds])];
         } else if (currentChatType === 'group') {
             const group = db.groups.find(g => g.id === currentChatId);
             if (!group) return;
-            const ids = currentWorldBookMode === 'offline' ? (group.offlineWorldBookIds || []) : (group.worldBookIds || []);
+            const ids = currentWorldBookMode === 'offline' && (group.offlineWorldBookSelectionExplicit || group.offlineWorldBookIds?.length) ? (group.offlineWorldBookIds || []) : (group.worldBookIds || []);
             displayIds = [...new Set([...ids, ...globalIds])];
         }
         renderCategorizedWorldBookList(document.getElementById('world-book-selection-list'), db.worldBooks, displayIds, 'wb-select');
@@ -990,33 +991,52 @@ function setupChatSettings() {
         });
     });
 
-    document.getElementById('save-world-book-selection-btn')?.addEventListener('click', async () => {
+    // Selection is a draft until the existing confirmation action succeeds.
+    document.getElementById('world-book-selection-list')?.addEventListener('change', () => {
+        const list = document.getElementById('world-book-selection-list');
+        let hint = document.getElementById('world-book-token-draft');
+        if (!hint) { hint = document.createElement('div'); hint.id = 'world-book-token-draft'; hint.className = 'token-method'; list.after(hint); }
+        const selected = Array.from(list.querySelectorAll('.item-checkbox:checked')).map(input => input.value);
+        const chat = currentChatType === 'private' ? db.characters.find(c => c.id === currentChatId) : db.groups.find(g => g.id === currentChatId);
+        if (!chat) return;
+        const offline = window.ChatTokenStats?.isOffline(chat);
+        if ((currentWorldBookMode === 'offline') !== !!offline) { hint.textContent = '当前选择尚未保存；此设置将在对应的线上或线下模式生效。'; return; }
+        try {
+            const overrides = currentWorldBookMode === 'offline' ? { offlineWorldBookIds:selected, offlineWorldBookSelectionExplicit:true } : { worldBookIds:selected };
+            const data = getChatTokenBreakdown(currentChatId,currentChatType,{ overrides });
+            hint.textContent = '尚未保存 · 当前模式预计输入 ' + data.total + ' Token（仅模拟）';
+        } catch (_) { hint.textContent = '当前选择尚未保存，保存后自动更新统计。'; }
+    });
+
+    document.getElementById('save-world-book-selection-btn')?.addEventListener('click', async event => {
+        const button = event.currentTarget; if (button.disabled) return;
+        if (!['private', 'group'].includes(currentChatType)) {
+            await saveData();
+            document.getElementById('world-book-selection-modal').classList.remove('visible');
+            showToast('世界书关联已更新');
+            return;
+        }
         const globalIds = (db.worldBooks || []).filter(wb => wb.isGlobal && !wb.disabled).map(wb => wb.id);
         const selectedIds = Array.from(document.getElementById('world-book-selection-list').querySelectorAll('.item-checkbox:checked')).map(input => input.value);
-        const toSave = selectedIds.filter(id => !globalIds.includes(id));
-        if (currentChatType === 'private') {
-            const character = db.characters.find(c => c.id === currentChatId);
-            if (character) {
-                if (currentWorldBookMode === 'offline') {
-                    character.offlineWorldBookIds = toSave;
-                } else {
-                    character.worldBookIds = toSave;
-                }
-                await saveCharacter(currentChatId);
-            }
-        } else if (currentChatType === 'group') {
-            const group = db.groups.find(g => g.id === currentChatId);
-            if (group) {
-                if (currentWorldBookMode === 'offline') {
-                    group.offlineWorldBookIds = toSave;
-                } else {
-                    group.worldBookIds = toSave;
-                }
-                await saveGroup(currentChatId);
-            }
-        } else {
-            await saveData();
+        const toSave = [...new Set(selectedIds.filter(id => !globalIds.includes(id)))];
+        const chat = currentChatType === 'private' ? db.characters.find(c => c.id === currentChatId) : db.groups.find(g => g.id === currentChatId);
+        if (!chat) return;
+        const key = currentWorldBookMode === 'offline' ? 'offlineWorldBookIds' : 'worldBookIds';
+        const previous = chat[key], explicit = chat.offlineWorldBookSelectionExplicit;
+        chat[key] = toSave;
+        if (currentWorldBookMode === 'offline') chat.offlineWorldBookSelectionExplicit = true;
+        button.disabled = true;
+        let saved;
+        try { saved = await (currentChatType === 'private' ? saveCharacter(currentChatId) : saveGroup(currentChatId)); }
+        catch (_) { saved = false; }
+        finally { button.disabled = false; }
+        if (saved === false) {
+            chat[key] = previous;
+            if (explicit === undefined) delete chat.offlineWorldBookSelectionExplicit; else chat.offlineWorldBookSelectionExplicit = explicit;
+            showToast('保存失败，请重试；世界书选择尚未保存');
+            return;
         }
+        window.ChatTokenStats?.changed(currentChatId, currentChatType, '世界书绑定已更新');
         document.getElementById('world-book-selection-modal').classList.remove('visible');
         showToast('世界书关联已更新');
     });

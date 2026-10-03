@@ -100,6 +100,7 @@
     }
 
     function buildAuth(settings, url) {
+        if (window.NovelAiCompat) return { headers: window.NovelAiCompat.headers(settings, 'application/binary'), url };
         const token = String(settings.token || '').trim().replace(/[\r\n]/g, '');
         const mode = settings.authMode || 'bearer';
         const headers = { 'Content-Type': 'application/json' };
@@ -131,7 +132,7 @@
         const settings = db.novelAiSettings || {};
         if (!settings.token && (settings.authMode || 'bearer') !== 'none') throw new Error('请先配置 NovelAI Token');
         let endpoint = encodeEndpoint(settings);
-        const auth = buildAuth(settings, endpoint);
+        const auth = buildAuth(settings, window.NovelAiCompat ? window.NovelAiCompat.endpoint(settings, 'encode') : endpoint);
         endpoint = auth.url;
         const response = await fetch(endpoint, {
             method: 'POST', headers: auth.headers, signal,
@@ -335,7 +336,7 @@
         URL.revokeObjectURL(url);
     }
 
-    async function resolveForGeneration(model) {
+    async function resolveForGeneration(model, generationSettings = {}, signal) {
         const settings = state();
         if (!settings.enabled || !settings.activeGroupId) return { images: [], information: [], strengths: [], groupName: '' };
         if (!supportsVibe(model)) throw new Error('当前 NovelAI 模型不支持 VIBE。V5 暂不支持，请切换到 V4/V4.5 或 V3，或关闭 VIBE。');
@@ -355,7 +356,7 @@
                 images.push(encoded.encoding);
             } else {
                 if (!source.image) throw new Error(`“${item.name || source.name}”只包含 V4 编码，无法用于 V3；请导入包含原图的 VIBE。`);
-                images.push(dataUrlBody(source.image));
+                images.push(await window.NovelAiCompat.fitImage(source.image, 448, 448, 'black', signal));
             }
             information.push(info);
             strengths.push(clamp(item.strength, 0, 1, 0.6));
@@ -365,7 +366,7 @@
         return { images, information, strengths, groupName: current?.name || '', normalized: total > 1 && settings.normalizeStrength !== false };
     }
 
-    async function resolvePreciseReferences(model) {
+    async function resolvePreciseReferences(model, generationSettings = {}, signal) {
         const settings = preciseState();
         const items = (settings.items || []).filter(item => item.enabled !== false);
         if (!settings.enabled || !items.length) return { images: [], strengths: [], fidelity: [], descriptions: [] };
@@ -375,7 +376,7 @@
         for (const item of items) {
             const source = await asset(item.assetId);
             if (!source?.image) throw new Error(`Precise Reference 素材已丢失：${item.name || item.assetId}`);
-            result.images.push(dataUrlBody(source.image));
+            result.images.push(await window.NovelAiCompat.fitImage(source.image, undefined, undefined, 'black', signal));
             result.strengths.push(clamp(item.strength, 0, 1, 1));
             result.fidelity.push(clamp(item.fidelity, 0, 1, 1));
             result.descriptions.push(item.mode === 'character' ? 'character' : (item.mode === 'style' ? 'style' : 'character&style'));

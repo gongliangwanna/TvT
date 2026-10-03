@@ -157,6 +157,8 @@
 .moments-field { display:block; margin:9px 0; color:#444; font-size:12.5px; }
 .moments-field input, .moments-field textarea, .moments-field select, .moments-editor-panel input, .moments-editor-panel textarea, .moments-editor-panel select { display:block; width:100%; min-width:0; margin-top:5px; border:1px solid #e2e8f0; border-radius:8px; background:#ffffff; color:#181818; padding:8px 10px; outline-color:#111; font-family:inherit; font-size:13px; line-height:1.4; }
 .moments-nickname-switches { display:grid; gap:2px; }
+.moments-chat-link-setting { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; margin:12px 0 0; color:inherit; font-size:12.5px; }
+.moments-chat-link-setting .kkt-switch { flex-shrink:0; }
 .moments-nickname-switches label { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:32px; color:#444; font-size:12.5px; }
 .moments-nickname-switches input { flex:none; width:16px; height:16px; margin:0; accent-color:#111; }
 .moments-contact-nickname-options { display:flex; flex-wrap:wrap; gap:5px 10px; margin-top:7px; }
@@ -188,6 +190,27 @@
 .moments-picker-choice { display:flex; gap:8px; align-items:center; min-height:36px; font-size:12.5px; }
 .moments-picker-choice input { width:auto; margin:0; accent-color:#111; }
 .moments-field textarea, .moments-editor-panel textarea { min-height:75px; resize:vertical; }
+/* 调用设置延续本页字号与控件比例；窄屏输入和单位允许收缩。 */
+.moments-control-group summary { font-size:14px; font-weight:600; color:inherit; cursor:pointer; }
+.moments-control-group fieldset { margin:10px 0 0; padding:0; border:0; min-width:0; }
+.moments-control-group fieldset:disabled { opacity:.5; }
+.moments-control-toggle { display:flex; align-items:center; gap:8px; min-width:0; margin:10px 0; font-size:12.5px; line-height:1.5; color:inherit; }
+.moments-control-toggle span { min-width:0; overflow-wrap:anywhere; }
+.moments-control-toggle input { appearance:none; flex:0 0 16px; width:16px; height:16px; margin:0; border:1px solid #bfc4c9; border-radius:4px; background:transparent; cursor:pointer; }
+.moments-control-toggle input:checked { background:#222; border-color:#222; box-shadow:inset 0 0 0 3px #fff; }
+.moments-control-toggle input:focus-visible { outline:2px solid #888; outline-offset:2px; }
+.moments-control-duration { display:flex; gap:8px; min-width:0; }
+.moments-control-duration input { flex:1 1 0; min-width:0; width:0; }
+.moments-control-duration select { flex:0 1 88px; min-width:0; }
+.moments-control-duration > select { width:100%; margin-top:5px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:#181818; padding:8px 10px; font:inherit; font-size:13px; }
+#moments-controls-form > .moments-settings-card > .moments-control-duration select { flex:1 1 0; width:0; }
+#moments-controls-form select, #moments-controls-manual select { appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' fill='none'/%3E%3C/svg%3E"); background-position:right 10px center; background-repeat:no-repeat; padding-right:28px; }
+.moments-controls-targets { max-height:190px; overflow-y:auto; overflow-wrap:anywhere; }
+.moments-control-task { margin-top:10px; padding-top:8px; border-top:1px solid #edf0f3; font-size:12px; overflow-wrap:anywhere; }
+.moments-control-task summary { cursor:pointer; }
+.moments-control-link, #moments-controls-pause { border:0; background:transparent; color:inherit; font:inherit; font-size:11.5px; padding:5px 3px; cursor:pointer; }
+#moments-controls-pause { max-width:48px; flex-shrink:0; white-space:nowrap; }
+body.night-mode-active .moments-control-toggle input:checked { box-shadow:inset 0 0 0 3px #1e1e1e; background:#eee; border-color:#eee; }
 .moments-inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .moments-inline-actions button, #moments-generate-now-btn { border:1px solid #e2e8f0; border-radius:18px; padding:6px 12px; background:#fff; color:#222; font-size:11.5px; font-weight:500; cursor:pointer; }
 .moments-inline-actions button:disabled { color:#aaa; border-color:#e4e4e4; cursor:default; }
@@ -428,3 +451,17 @@ body.night-mode-active #moments-profile-content .moments-legacy-tools select, bo
 body.night-mode-active .moments-image-preview { background:#262626; border-color:#393939; }
 
 @media(max-width:375px) { .moments-story-strip { gap:10px; } .moments-card { padding-inline:12px; } .moments-card-text,.moments-media-grid,.moments-card-actions,.moments-interactions { margin-left:46px; } .moments-compose-content { padding-inline:12px; } }
+
+/* 常用节奏：预设、滑块和精确输入共用一份值。 */
+.moments-tempo-item { padding:12px 0; border-bottom:1px solid #eee; }
+.moments-tempo-value { display:flex; align-items:center; gap:8px; margin:8px 0; font-size:12px; color:#666; }
+.moments-tempo-value input { width:90px; padding:8px; border:1px solid #ddd; border-radius:8px; font:inherit; }
+.moments-tempo-slider { width:100%; accent-color:#333; }
+.moments-behavior-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.moments-role-tempo { padding:12px 16px; }
+.moments-view-result { padding:10px 0; border-bottom:1px solid #eee; }
+.moments-view-result details summary { font-size:12px; color:#777; cursor:pointer; }
+body.night-mode-active .moments-tempo-item, body.night-mode-active .moments-view-result { border-color:#333; }
+body.night-mode-active .moments-tempo-value { color:#bbb; }
+body.night-mode-active .moments-tempo-value input { color:#eee; background:#252525; border-color:#444; }
+body.night-mode-active .moments-tempo-slider { accent-color:#ddd; }

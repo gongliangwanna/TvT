@@ -33,7 +33,7 @@
         return `<span class="bilingual-content" data-character-id="${escape(character.id)}" data-scope="${escape(scope)}" data-feature="${escape(feature)}" data-source="${escape(value)}"><span class="bilingual-original">${original}</span><button type="button" class="bilingual-reveal" aria-expanded="${expanded && !!translation}" aria-label="${translation && expanded ? '收起翻译' : '查看翻译'}">${translation && expanded ? '收起翻译' : '查看翻译'}</button><span class="bilingual-translation" ${translation && expanded ? '' : 'hidden'}>${escape(translation).replace(/\n/g, '<br>')}</span></span>`;
     }
     const pending = new Map();
-    function apiConfig(feature) {
+    function apiConfig(feature, character) {
         let fallback = db.apiSettings;
         const configured = feature === 'peek' ? db.peekApiSettings
             : feature === 'journal' ? db.summaryApiSettings
@@ -41,7 +41,7 @@
             : feature === 'forum' && db.forumApiSettings?.useForumApi ? db.forumApiSettings
             : feature === 'theater' ? db.theaterApiSettings : null;
         if (configured && (typeof isApiConfigReady === 'function' ? isApiConfigReady(configured) : configured.url && configured.model && configured.key)) fallback = configured;
-        return typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature(feature, fallback) : fallback;
+        return typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature(feature, fallback, character) : fallback;
     }
     async function translate(character, scope, source, feature) {
         const cacheKey = key(character.id, scope, source);
@@ -49,7 +49,7 @@
         if (saved) return saved;
         if (pending.has(cacheKey)) return pending.get(cacheKey);
         const work = (async () => {
-            const config = apiConfig(feature);
+            const config = apiConfig(feature, character);
             if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(config) : !config?.url || !config?.model || !config?.key) throw new Error('请先配置可用的翻译 API');
             const url = String(config.url).replace(/\/+$/, '') + '/v1/chat/completions';
             const body = { model: config.model, messages: [{ role: 'system', content: '你是翻译器。只将用户提供的原文翻译成自然的简体中文。保留人名、@提及、网址、金额、换行和原有语气。不要续写、解释或添加引号；若原文已经是中文，则原样返回。' }, { role: 'user', content: source }], temperature: 0.2 };

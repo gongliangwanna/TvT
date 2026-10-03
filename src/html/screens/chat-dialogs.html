@@ -92,7 +92,7 @@
         </div>
 
         <!-- Token 分布弹窗（点击角色资料卡 Token 打开） -->
-        <div id="token-distribution-modal" class="modal-overlay">
+        <div id="token-distribution-modal" class="modal-overlay" data-token-layout="prepared-context-20261001">
             <div class="modal-window token-distribution-window">
                 <h3 class="token-distribution-title">本次对话 Token</h3>
                 <div class="token-chart-summary">
@@ -108,9 +108,27 @@
                     <span>图片消息 <strong id="token-image-count">0</strong> 张</span>
                 </div>
                 <div id="token-actual-usage" class="token-actual-usage" hidden></div>
+                <div id="token-method" class="token-method" role="status"></div>
+                <div id="token-change" class="token-method"></div>
                 <div class="token-section-label">内容来源</div>
                 <div class="token-details-list" id="token-details-list"></div>
                 <div class="token-detail-desc" id="token-detail-desc"></div>
+                <div class="token-actions" id="token-actions">
+                    <button type="button" class="btn btn-neutral" data-token-action="detect">检测纠错</button>
+                    <button type="button" class="btn btn-neutral" data-token-action="official">官方精算</button>
+                    <button type="button" class="btn btn-neutral" data-token-action="copy">复制诊断</button>
+                    <button type="button" class="btn btn-neutral" data-token-action="all">检测全部</button>
+                </div>
+                <div id="token-status" class="token-method" role="status" aria-live="polite"></div>
+                <details class="token-more"><summary>请求明细与自检</summary>
+                    <div id="token-request-ledger" class="token-method"></div>
+                    <div class="token-actions">
+                        <button type="button" class="btn btn-neutral" data-token-action="selftest">统计自检</button>
+                        <button type="button" class="btn btn-neutral" data-token-action="undo">撤销纠正</button>
+                    </div>
+                    <label class="token-simulation">模拟历史条数 <input id="token-sim-limit" type="number" min="1" max="10000" inputmode="numeric" aria-label="模拟历史条数"><button type="button" class="btn btn-neutral" data-token-action="simulate">模拟</button></label>
+                    <div id="token-sim-result" class="token-method"></div>
+                </details>
                 <button type="button" class="btn btn-neutral token-storage-link" id="token-storage-link">查看本地占用</button>
                 <button type="button" class="btn btn-neutral token-distribution-close" id="token-distribution-close-btn">关闭</button>
             </div>
