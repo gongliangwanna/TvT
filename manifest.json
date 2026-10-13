@@ -5,10 +5,11 @@
   "optional": [],
   "dependencies": [],
   "js": "tavern/st-launcher.js",
+  "generate_interceptor": "uwuPhoneMemoryInterceptor",
   "author": "",
-  "version": "1.0.0",
+  "version": "1.2.9",
   "homePage": "",
   "auto_update": false,
-  "minimum_client_version": "1.11.0",
+  "minimum_client_version": "1.12.0",
   "i18n": {}
 }

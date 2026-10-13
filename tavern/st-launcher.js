@@ -10,6 +10,171 @@
 // 所以仓库叫什么名字、装在酒馆的哪个文件夹都不用改这里。
 const PHONE_URL = new URL('../index.html', import.meta.url).href;
 
+// 记忆模块只在酒馆页加载。异步加载出错时，原来的手机入口和推送监听仍能使用。
+let phoneMemoryModule = null;
+let phoneMemoryAdapter = null;
+let phoneMemoryLoadTask = null;
+let phoneMemoryGenerationEpoch = 0;
+let phoneMemoryCancellationEpoch = 0;
+let phoneMemoryBridgeReady = false;
+let phoneMemoryObservedSnapshot = null;
+
+function isPrimaryPhoneMemoryGeneration(type, options = {}, dryRun = false) {
+    return !dryRun && ['', 'normal', 'regenerate', 'swipe', 'continue'].includes(String(type || '').toLowerCase())
+        && !options?.quiet_prompt && !options?.quietToLoud && !options?.quietImage
+        && !options?.depth && !options?.internal;
+}
+
+function hasOnlyPhoneBlocks(message) {
+    if (!message?.extra?.from_uwu) return false;
+    const text = String(message.mes || '');
+    let depth = 0, end = 0, found = false;
+    for (const tag of text.matchAll(/<\/?phone_chat>/g)) {
+        if (!depth && text.slice(end, tag.index).trim()) return false;
+        if (tag[0] === '<phone_chat>') depth++;
+        else if (!depth) return false;
+        else depth--;
+        end = tag.index + tag[0].length; found = true;
+    }
+    return found && !depth && !text.slice(end).trim();
+}
+
+function phoneMemoryChatSnapshot() {
+    const ctx = getCtx();
+    if (!ctx || !Array.isArray(ctx.chat)) return null;
+    const character = ctx.characters?.[ctx.characterId];
+    return JSON.stringify([ctx.groupId ?? null, character?.avatar ?? ctx.characterId ?? null,
+        ctx.getCurrentChatId?.() ?? character?.chat ?? null,
+        ctx.chat.map((message, index) => [message?.mes, message?.is_user,
+            // 历史手机楼和普通角色楼的 is_system 是原生隐藏标志。
+            // 当前普通用户输入及真正 System 楼的身份变化仍须阻止旧开始。
+            Boolean(message?.is_system && !hasOnlyPhoneBlocks(message) && (/^system$/i.test(message?.name || '')
+                || (message?.is_user && (!message?.extra?.from_uwu || index === ctx.chat.length - 1)))),
+            message?.swipe_id ?? 0, message?.extra?.from_uwu,
+            message?.extra?.bbs_omit, message?.extra?.uwu_msg_ids, message?.extra?.uwu_line_lens,
+            message?.extra?.uwu_summary, message?.extra?.uwu_created,
+            message?.extra?.uwu_internal, message?.extra?.isSmallSys, message?.name,
+            // /role system 可只改原生 type，保持原名和可见性；其他插件的 type 不改变此身份。
+            message?.extra?.type === 'narrator' || message?.extra?.type === 'comment',
+            message?.send_date, message?.gen_started, message?.gen_finished])]);
+}
+
+function installPhoneMemoryLifecycleBridge() {
+    if (phoneMemoryBridgeReady) return true;
+    const ctx = getCtx();
+    const events = ctx?.eventSource;
+    const types = ctx?.eventTypes || ctx?.event_types;
+    if (!events?.on || !types?.GENERATION_STARTED) return false;
+    phoneMemoryObservedSnapshot = phoneMemoryChatSnapshot();
+    events.on(types.GENERATION_STARTED, async (...args) => {
+        // 并行摘要/预览并非新的主回复，不能取消正在等模块加载的主开始事件。
+        const primary = isPrimaryPhoneMemoryGeneration(...args);
+        const epoch = primary ? ++phoneMemoryGenerationEpoch : phoneMemoryGenerationEpoch;
+        const cancellationEpoch = phoneMemoryCancellationEpoch;
+        const snapshot = phoneMemoryChatSnapshot();
+        // 后台开始不能掩盖等待中的主生成所要观察的来源变更。
+        if (primary) phoneMemoryObservedSnapshot = snapshot;
+        try {
+            // 模块就绪后同步进入适配器；无须再让出微任务给并行后台的结束事件。
+            const adapter = phoneMemoryAdapter || await phoneMemoryLoadTask;
+            if ((primary && epoch !== phoneMemoryGenerationEpoch) || cancellationEpoch !== phoneMemoryCancellationEpoch
+                || snapshot !== phoneMemoryChatSnapshot()
+                || args[1]?.signal?.aborted) return;
+            // 宿主会 await 开始事件，再删除 regenerate 的目标楼；必须在此处捕获目标。
+            // 适配器使用 managed 模式，不在本次 emit 过程中追加第二个开始监听。
+            if (typeof adapter?.startGeneration === 'function') return await adapter.startGeneration(...args);
+            clearPhoneMemorySlotAfterFailure();
+        } catch (error) {
+            if (epoch !== phoneMemoryGenerationEpoch) return;
+            clearPhoneMemorySlotAfterFailure();
+            console.warn('[小手机] 手机剧情生成准备失败:', error);
+            if (globalThis.toastr) globalThis.toastr.error('本次手机剧情补充失败，已清理临时补充；酒馆仍可正常回复。');
+        }
+    });
+    for (const name of ['GENERATION_STOPPED', 'GENERATION_ENDED', 'CHAT_CHANGED',
+        'CHARACTER_DELETED', 'PERSONA_CHANGED', 'MAIN_API_CHANGED', 'CONNECTION_PROFILE_LOADED',
+        'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED']) {
+        if (types[name]) events.on(types[name], () => {
+            phoneMemoryGenerationEpoch++;
+            phoneMemoryCancellationEpoch++;
+            phoneMemoryObservedSnapshot = phoneMemoryChatSnapshot();
+        });
+    }
+    if (types.MESSAGE_UPDATED) events.on(types.MESSAGE_UPDATED, () => {
+        const snapshot = phoneMemoryChatSnapshot();
+        if (snapshot === phoneMemoryObservedSnapshot) return;
+        phoneMemoryObservedSnapshot = snapshot;
+        phoneMemoryGenerationEpoch++;
+        phoneMemoryCancellationEpoch++;
+    });
+    phoneMemoryBridgeReady = true;
+    return true;
+}
+
+function clearPhoneMemorySlotAfterFailure() {
+    try {
+        const ctx = getCtx();
+        if (typeof ctx?.setExtensionPrompt === 'function') {
+            ctx.setExtensionPrompt('uwu_phone_memory', '', 1, 1, false, 0, () => false);
+        }
+    } catch (error) { console.warn('[小手机] 清理手机剧情临时补充失败:', error); }
+}
+
+// 宿主加载 manifest 时就能找到拦截器。加载中的第一次生成等待初始化，
+// 随后直接调用返回的适配器，避免重新读取全局函数而调回代理自身。
+globalThis.uwuPhoneMemoryInterceptor = async (...args) => {
+    const epoch = phoneMemoryGenerationEpoch;
+    try {
+        const adapter = phoneMemoryAdapter || await phoneMemoryLoadTask;
+        if (epoch !== phoneMemoryGenerationEpoch) return;
+        if (typeof adapter?.interceptor !== 'function') {
+            clearPhoneMemorySlotAfterFailure();
+            return;
+        }
+        return await adapter.interceptor(...args);
+    } catch (error) {
+        clearPhoneMemorySlotAfterFailure();
+        console.warn('[小手机] 按需补充手机剧情执行失败:', error);
+        if (globalThis.toastr) globalThis.toastr.error('本次手机剧情补充失败，已清理临时补充；酒馆仍可正常回复。');
+    }
+};
+
+async function initializePhoneMemoryFeature() {
+    // 重新加载失败时不能继续调用上一次的适配器。
+    phoneMemoryAdapter = null;
+    try {
+        const module = await import('./st-phone-memory.js');
+        // 少数宿主先执行扩展、再提供事件接口；等它就绪后仍由同步桥接管理开始事件。
+        const deadline = Date.now() + 10000;
+        while (!installPhoneMemoryLifecycleBridge()) {
+            if (Date.now() >= deadline) throw new Error('酒馆生成事件接口尚未就绪');
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        const adapter = await module.initializePhoneMemory({ generationStartManaged: true });
+        phoneMemoryModule = module;
+        phoneMemoryAdapter = adapter;
+        return adapter;
+    } catch (error) {
+        clearPhoneMemorySlotAfterFailure();
+        console.warn('[小手机] 按需补充手机剧情初始化失败:', error);
+        if (globalThis.toastr) {
+            globalThis.toastr.error('按需补充手机剧情未能加载，请确认补丁文件完整并刷新酒馆。小手机入口与原推送仍可使用。');
+        }
+        return null;
+    }
+}
+
+function invalidatePhoneMemoryAfterReload() {
+    phoneMemoryGenerationEpoch++;
+    phoneMemoryCancellationEpoch++;
+    try {
+        phoneMemoryModule?.invalidatePhoneMemory('phone-chat-reloaded');
+    } catch (error) {
+        console.warn('[小手机] 手机剧情来源更新失败:', error);
+        if (globalThis.toastr) globalThis.toastr.error('手机剧情来源缓存未能更新，请刷新酒馆后再继续。');
+    }
+}
+
 // 酒馆页面不受小手机的旧离线缓存控制，可以在打开前先把缓存版本更新完。
 let phoneUpdateTask = null;
 function preparePhoneUpdate() {
@@ -87,6 +252,7 @@ function addPhoneMenuButton() {
 // 所以忙完、重新读完之后，回话告诉小手机是哪几次保存、当时在忙什么、什么时候忙完的，小手机据此核对并补推。
 let channel = null;
 let pendingReload = null;   // { avatar, file, saves: [{ saveId, time }], busySince, busyReason }：等着重新读的聊天
+let activeReload = null;    // 在途读取完成后再处理新的保存通知，避免旧读取覆盖新读取。
 let reloadTimer = null;
 const SETTLE_MS = 1500;     // 忙完后再等一会儿：让酒馆把生成完的回复存好，再去读，免得读到半截
 
@@ -142,12 +308,14 @@ function tryReload() {
     reloadTimer = null;
     const p = pendingReload;
     if (!p) return;
+    if (activeReload) return; // 完成回调会重新安排待处理任务。
     const cur = currentChat();
     // 酒馆现在开的不是这个聊天：它会在打开时自己从文件读，不用管
     if (!cur || cur.avatar !== p.avatar || cur.file !== p.file) { pendingReload = null; return; }
     const reason = busyReason();
     if (reason) {
         if (!p.busySince) { p.busySince = Date.now(); p.busyReason = reason; }
+        p.busyEnded = null; // 等待保存时再次变忙，下一次结束仍须重新等待保存。
         reloadTimer = setTimeout(tryReload, 2000);
         return;
     }
@@ -158,12 +326,28 @@ function tryReload() {
         return;
     }
     pendingReload = null;
-    const done = () => { if (p.busySince) replyMaybeOverwrote(p, currentChat() && currentChat().ctx); };
+    let reloadedContext = null;
+    const done = () => { if (p.busySince) replyMaybeOverwrote(p, reloadedContext); };
     if (typeof cur.ctx.reloadCurrentChat === 'function') {
-        p.reloaded = true;
-        Promise.resolve(cur.ctx.reloadCurrentChat())
-            .catch(e => { p.reloaded = false; console.warn('[小手机] 重新读取聊天失败:', e); })
-            .finally(done);
+        activeReload = p;
+        p.reloaded = false;
+        // async 包裹也接住旧宿主的同步抛错，确保队列释放、覆盖风险回话都能完成。
+        (async () => {
+            try {
+                await cur.ctx.reloadCurrentChat();
+                const after = currentChat();
+                if (after && after.avatar === p.avatar && after.file === p.file) {
+                    p.reloaded = true;
+                    reloadedContext = after.ctx;
+                    invalidatePhoneMemoryAfterReload();
+                }
+            } catch (e) { console.warn('[小手机] 重新读取聊天失败:', e); }
+            finally {
+                activeReload = null;
+                done();
+                if (pendingReload && !reloadTimer) reloadTimer = setTimeout(tryReload, 300);
+            }
+        })();
     } else {
         if (globalThis.toastr) globalThis.toastr.info('小手机改了这个聊天，请刷新酒馆页面，否则酒馆下次保存会把小手机的改动盖掉');
         done();
@@ -281,6 +465,9 @@ try {
             if (d && d.type === 'update-persona' && d.id) { updatePersona(d); return; }
             if (d && d.type === 'persona-updated') { refreshPersonaAvatar(d.avatarId); return; }
             if (!d || d.type !== 'chat-saved' || !d.avatar || !d.file) return;
+            // 其他聊天的通知不能覆盖当前聊天已排队的重载和保存编号。
+            const cur = currentChat();
+            if (!cur || cur.avatar !== d.avatar || cur.file !== d.file) return;
             const same = pendingReload && pendingReload.avatar === d.avatar && pendingReload.file === d.file;
             if (!same) pendingReload = { avatar: d.avatar, file: d.file, saves: [] };
             if (d.saveId) pendingReload.saves.push({ saveId: d.saveId, time: d.time });
@@ -298,3 +485,5 @@ try {
 
 // 启动
 addPhoneMenuButton();
+installPhoneMemoryLifecycleBridge();
+phoneMemoryLoadTask = initializePhoneMemoryFeature();
