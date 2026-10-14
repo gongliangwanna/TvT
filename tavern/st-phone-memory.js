@@ -95,6 +95,18 @@ const VECTOR_REASONS = {
     BROWSER_NETWORK_ERROR: '无法连接，请检查地址、网络，或接口是否允许浏览器跨域；HTTPS 酒馆不能连接 HTTP 接口',
     BROWSER_UPSTREAM_ERROR: '向量接口返回错误，请检查 API Key、模型和接口地址',
 };
+const MODEL_FETCH_REASONS = {
+    INVALID_CONFIG: '请先填写有效的接口地址。',
+    KEY_REQUIRED: '请先输入 API Key，或选择此接口无需 API Key。',
+    MODELS_EMPTY: '未找到可识别的嵌入模型，可以手动输入模型名称。',
+    UNSUPPORTED: '当前接口不支持拉取模型，可以手动输入模型名称。',
+    TIMEOUT: '拉取模型超时，请重试。',
+    CANCELLED: '模型拉取已取消。',
+    STALE: '账号或接口已改变，请重新拉取模型。',
+    INVALID_RESPONSE: '接口返回的模型列表无效。',
+    BROWSER_UPSTREAM_ERROR: '拉取模型失败，请检查接口地址、API Key 和模型列表权限。',
+    NO_CAPACITY: '接口仍有请求未结束，请稍后再拉取。',
+};
 
 // 酒馆公开的账号模块提供实时账号信息；未知账号不共用凭据或缓存。
 let accountModule = null;
@@ -222,6 +234,12 @@ export function createPhoneMemoryAdapter(host = {}) {
     async function testVectorConnection() {
         const result = await vectors.testConnection();
         renderVectorStatus(); return result;
+    }
+    async function fetchVectorModels(changes = {}) {
+        if (disposed) return { ok: false, reason: 'CANCELLED', models: [] };
+        if (typeof vectors.fetchModels !== 'function') return { ok: false, reason: 'UNSUPPORTED', models: [] };
+        try { return await vectors.fetchModels({ ...vectorSettings(), ...changes }); }
+        catch (error) { return { ok: false, reason: error?.reason || 'BROWSER_NETWORK_ERROR', models: [] }; }
     }
     async function clearVectorCache() {
         const chatId = chatIdentity(getContext());
@@ -749,7 +767,7 @@ export function createPhoneMemoryAdapter(host = {}) {
     const MEMORY_ICON_SVG = `<svg class="uwu-memory-svg-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="2.5" width="12.5" height="19" rx="2.8"/><path d="M9.2 18.2h3.1"/><path d="M8 7.2h5.5"/><path d="M8 10.6h3.5"/><circle cx="17.2" cy="14.2" r="3.3" fill="var(--SmartThemeBlurTintColor,#222)"/><path d="M19.6 16.6L21.5 18.5"/></svg>`;
     function createMemoryIcon(doc) {
         const wrap = doc.createElement('div');
-        wrap.className = 'fa-fw extensionsMenuExtensionButton uwu-memory-icon-wrap';
+        wrap.className = 'fa-fw fa-solid extensionsMenuExtensionButton uwu-memory-icon-wrap';
         wrap.setAttribute?.('aria-hidden', 'true');
         wrap.innerHTML = MEMORY_ICON_SVG;
         return wrap;
@@ -858,12 +876,14 @@ export function createPhoneMemoryAdapter(host = {}) {
                 box-shadow:0 20px 60px rgba(0,0,0,.48);font:inherit;line-height:1.5;text-align:left;
             }
             #uwu-phone-vector-dialog::backdrop, .uwu-memory-dialog::backdrop { background:rgba(0,0,0,.55);backdrop-filter:blur(4px); }
-            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings,#uwu-phone-vector-menu) * { box-sizing:border-box; }
+            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) * { box-sizing:border-box; }
+            #uwu-phone-vector-menu { align-items:center !important;flex-wrap:nowrap; }
             #uwu-phone-vector-menu .uwu-memory-icon-wrap {
                 display:inline-flex;align-items:center;justify-content:center;
-                width:18px;height:18px;color:inherit;flex:0 0 18px;
+                color:inherit;flex:0 0 auto;align-self:center;
             }
-            #uwu-phone-vector-menu .uwu-memory-svg-icon { width:16px;height:16px;display:block; }
+            #uwu-phone-vector-menu .uwu-memory-svg-icon { width:1em;height:1em;display:block; }
+            #uwu-phone-vector-menu .uwu-memory-menu-label { display:block;align-self:center; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-header {
                 position:sticky;top:0;z-index:2;display:flex;align-items:center !important;
                 justify-content:space-between;gap:16px;padding:16px 20px;
@@ -885,6 +905,12 @@ export function createPhoneMemoryAdapter(host = {}) {
             #uwu-phone-vector-dialog .uwu-memory-grid-2 {
                 display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px;align-items:start;
             }
+            #uwu-phone-vector-dialog .uwu-memory-model-group {
+                display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch;
+            }
+            #uwu-phone-vector-dialog .uwu-memory-model-group .menu_button { min-height:38px; }
+            #uwu-phone-vector-dialog .uwu-memory-model-status { margin:0;font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
+            #uwu-phone-vector-dialog :is(.uwu-memory-model-options,.uwu-memory-model-status)[hidden] { display:none !important; }
             #uwu-phone-vector-dialog .uwu-memory-field { display:flex;flex-direction:column;gap:6px;min-width:0;margin:10px 0; }
             #uwu-phone-vector-dialog .uwu-memory-grid-2 .uwu-memory-field { margin:0; }
             #uwu-phone-vector-dialog .uwu-memory-field-title { font-size:12.5px;font-weight:500;opacity:.88; }
@@ -933,6 +959,10 @@ export function createPhoneMemoryAdapter(host = {}) {
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) .menu_button:hover:not(:disabled) {
                 background:color-mix(in srgb,var(--SmartThemeBodyColor,#eee) 11%,transparent);
                 border-color:var(--uwu-memory-accent,var(--SmartThemeQuoteColor,#8ab4f8));
+            }
+            #uwu-phone-vector-dialog .uwu-memory-key-actions .menu_button {
+                font-family:inherit !important;font-size:12.5px !important;font-weight:500 !important;
+                font-style:normal !important;line-height:1.35 !important;letter-spacing:normal !important;text-transform:none !important;
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) .menu_button:disabled { opacity:.5;cursor:wait; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) :is(button,input,select,summary):focus-visible {
@@ -1004,6 +1034,7 @@ export function createPhoneMemoryAdapter(host = {}) {
                 #uwu-phone-vector-dialog .uwu-memory-key-group { grid-template-columns:1fr 1fr; }
                 #uwu-phone-vector-dialog .uwu-memory-key-group .text_pole { grid-column:1 / -1; }
                 :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) .menu_button { padding:8px;font-size:12px; }
+                #uwu-phone-vector-dialog .uwu-memory-key-actions .menu_button { font-size:12px !important; }
             }
         `;
         (doc.head || doc.body).append(style);
@@ -1014,16 +1045,18 @@ export function createPhoneMemoryAdapter(host = {}) {
         mountVectorDialog();
         const menu = doc.getElementById('extensionsMenu');
         if (menu && !doc.getElementById('uwu-phone-vector-menu')) {
+            const container = doc.createElement('div'); container.id = 'uwu-phone-vector-menu-container';
+            container.className = 'extension_container interactable';
             const entry = doc.createElement('div'); entry.id = 'uwu-phone-vector-menu';
-            entry.className = 'list-group-item flex-container flexGap5'; entry.tabIndex = 0;
+            entry.className = 'list-group-item flex-container flexGap5 interactable'; entry.tabIndex = 0;
             const icon = createMemoryIcon(doc);
-            const label = doc.createElement('span'); label.textContent = '小手机剧情召回';
+            const label = doc.createElement('span'); label.className = 'uwu-memory-menu-label'; label.textContent = '小手机剧情召回';
             entry.append(icon, label); entry.title = '设置手机剧情的查找与召回'; entry.setAttribute?.('role', 'button');
             entry.addEventListener('click', showVectorSettings);
             entry.addEventListener('keydown', event => {
                 if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showVectorSettings(); }
             });
-            menu.append(entry);
+            container.append(entry); menu.append(container);
         }
     }
     function mountVectorDialog() {
@@ -1088,15 +1121,43 @@ export function createPhoneMemoryAdapter(host = {}) {
         };
         const topRow = doc.createElement('div'); topRow.className = 'uwu-memory-grid-2'; connection.append(topRow);
         const provider = addSelect('provider', '接口类型', [['openai', 'OpenAI 兼容'], ['ollama', 'Ollama'], ['gemini', 'Gemini']], topRow);
-        addField('model', '嵌入模型', 'text', config.model, topRow).placeholder = '填写 Embedding 模型名称';
+        const modelField = doc.createElement('div'); modelField.className = 'uwu-memory-field'; topRow.append(modelField);
+        const modelCaption = doc.createElement('label'); modelCaption.className = 'uwu-memory-field-title';
+        modelCaption.htmlFor = 'uwu-phone-vector-model'; modelCaption.textContent = '嵌入模型';
+        const modelGroup = doc.createElement('div'); modelGroup.className = 'uwu-memory-model-group';
+        const model = doc.createElement('input'); model.id = 'uwu-phone-vector-model'; model.type = 'text';
+        model.className = 'text_pole'; model.value = config.model; model.autocomplete = 'off';
+        model.setAttribute?.('aria-label', '嵌入模型'); controls.model = model; modelGroup.append(model);
+        const modelOptions = doc.createElement('select'); modelOptions.id = 'uwu-phone-vector-model-options';
+        modelOptions.className = 'text_pole uwu-memory-model-options'; modelOptions.hidden = true;
+        modelOptions.title = '选择嵌入模型'; modelOptions.setAttribute?.('aria-label', '选择嵌入模型');
+        controls.modelOptions = modelOptions;
+        const modelStatus = doc.createElement('p'); modelStatus.id = 'uwu-phone-vector-model-status';
+        modelStatus.className = 'uwu-memory-model-status'; modelStatus.hidden = true; modelStatus.setAttribute?.('role', 'status');
+        modelField.append(modelCaption, modelGroup, modelOptions, modelStatus);
         const url = addField('url', '接口地址'); url.placeholder = 'https://你的接口/v1';
         url.autocomplete = 'off';
         const key = addField('credential', 'API Key', 'password', ''); key.autocomplete = 'new-password';
-        const keyButtons = doc.createElement('div'); keyButtons.className = 'uwu-memory-actions'; connection.append(keyButtons);
-        const reveal = doc.createElement('button'); reveal.id = 'uwu-phone-vector-reveal-key'; reveal.className = 'menu_button'; reveal.textContent = '显示输入的 Key';
+        const keyButtons = doc.createElement('div'); keyButtons.className = 'uwu-memory-actions uwu-memory-key-actions'; connection.append(keyButtons);
+        const reveal = doc.createElement('button'); reveal.type = 'button'; reveal.id = 'uwu-phone-vector-reveal-key'; reveal.className = 'menu_button'; reveal.textContent = '显示输入的 Key';
         reveal.addEventListener('click', () => { key.type = key.type === 'password' ? 'text' : 'password'; reveal.textContent = key.type === 'password' ? '显示输入的 Key' : '隐藏输入的 Key'; });
         keyButtons.append(reveal);
-        addField('allowAnonymous', '此接口无需 API Key（仅用于开放服务）', 'checkbox');
+        const allowAnonymous = addField('allowAnonymous', '此接口无需 API Key（仅用于开放服务）', 'checkbox');
+        let modelListEpoch = 0, modelListAbort = null, modelListOwner = null;
+        const modelContext = () => JSON.stringify([userScope(), provider.value, url.value.trim(), allowAnonymous.checked, key.value.trim()]);
+        const clearModelOptions = () => {
+            modelListEpoch++; modelListAbort?.abort(); modelListAbort = null; modelListOwner = null;
+            modelOptions.textContent = ''; modelOptions.hidden = true;
+            modelStatus.textContent = ''; modelStatus.hidden = true;
+        };
+        controls.clearModelOptions = clearModelOptions;
+        for (const control of [url, key]) control.addEventListener('input', clearModelOptions);
+        for (const control of [provider, url, key, allowAnonymous]) control.addEventListener('change', clearModelOptions);
+        dialog.addEventListener('close', () => { if (!dialog.open) clearModelOptions(); });
+        modelOptions.addEventListener('change', () => {
+            if (modelListOwner !== modelContext()) { clearModelOptions(); return; }
+            if (modelOptions.value) { model.value = modelOptions.value; model.focus?.(); }
+        });
         const updateProviderHint = () => {
             url.placeholder = provider.value === 'ollama' ? 'http://127.0.0.1:11434' : provider.value === 'gemini'
                 ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://你的接口/v1';
@@ -1138,7 +1199,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         };
         const actionButtons = [];
         const action = (title, id, callback, target = buttons, extraClass = '') => {
-            const btn = doc.createElement('button'); btn.className = `menu_button ${extraClass}`.trim(); btn.id = id; btn.textContent = title;
+            const btn = doc.createElement('button'); btn.type = 'button'; btn.className = `menu_button ${extraClass}`.trim(); btn.id = id; btn.textContent = title;
             btn.addEventListener('click', async () => {
                 if (vectorUiBusy) return;
                 vectorUiBusy = true; for (const button of actionButtons) button.disabled = true;
@@ -1155,6 +1216,33 @@ export function createPhoneMemoryAdapter(host = {}) {
             });
             actionButtons.push(btn); target.append(btn); return btn;
         };
+        const fetchModels = action('拉取', 'uwu-phone-vector-fetch-models', async () => {
+            clearModelOptions();
+            const epoch = modelListEpoch, owner = modelContext(), controller = new AbortController();
+            modelListAbort = controller;
+            const isCurrent = () => !disposed && dialog.open && modelListEpoch === epoch && modelContext() === owner;
+            modelStatus.textContent = '正在拉取嵌入模型…'; modelStatus.hidden = false; fetchModels.textContent = '拉取中';
+            try {
+                const result = await fetchVectorModels({ provider: provider.value, url: url.value,
+                    allowAnonymous: allowAnonymous.checked, key: key.value.trim(), signal: controller.signal, isCurrent });
+                if (!isCurrent()) { if (modelListEpoch === epoch) clearModelOptions(); return; }
+                if (!result.ok || !result.models?.length) {
+                    modelStatus.textContent = MODEL_FETCH_REASONS[result.reason] || VECTOR_REASONS[result.reason]
+                        || '拉取失败，请检查接口地址、Key 和网络。';
+                    return;
+                }
+                const placeholder = doc.createElement('option'); placeholder.value = ''; placeholder.textContent = '选择嵌入模型';
+                modelOptions.append(placeholder);
+                for (const name of result.models) {
+                    const option = doc.createElement('option'); option.value = name; option.textContent = name; modelOptions.append(option);
+                }
+                modelListOwner = owner; modelOptions.value = ''; modelOptions.hidden = false;
+                modelStatus.textContent = `已拉取 ${result.models.length} 个嵌入模型。`;
+            } finally {
+                if (modelListAbort === controller) modelListAbort = null;
+                fetchModels.textContent = '拉取';
+            }
+        }, modelGroup);
         action('保存设置', 'uwu-phone-vector-save', async () => {
             if (await saveForm()) { await vectors.refreshStatus(); renderVectorStatus(); }
         }, primaryButtons, 'uwu-memory-primary');
@@ -1177,6 +1265,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         getPreview();
         const toggle = getDocument().getElementById('uwu-phone-memory-enabled');
         if (toggle) toggle.checked = settings().enabled !== false;
+        if (!dialog.open) vectorControls.clearModelOptions();
         if (!dialog.open && !vectorUiBusy) {
             const config = vectorSettings();
             for (const [name, value] of Object.entries(config)) {
@@ -1231,16 +1320,17 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (!compatible(ctx)) { updatePreview({ reason: 'UNSUPPORTED' }); warn('UNSUPPORTED'); }
     }
     function dispose() {
+        vectorControls?.clearModelOptions?.();
         invalidate(); disposed = true;
         if (indexTimer !== null) { clearTimeout(indexTimer); indexTimer = null; }
         for (const [events, type, fn] of bindings) (events.removeListener || events.off)?.call(events, type, fn);
         bindings.length = 0;
-        for (const id of ['uwu-phone-memory-preview-dialog', 'uwu-phone-memory-settings', 'uwu-phone-vector-dialog', 'uwu-phone-vector-menu', 'uwu-phone-memory-ui-style']) getDocument()?.getElementById?.(id)?.remove();
+        for (const id of ['uwu-phone-memory-preview-dialog', 'uwu-phone-memory-settings', 'uwu-phone-vector-dialog', 'uwu-phone-vector-menu-container', 'uwu-phone-vector-menu', 'uwu-phone-memory-ui-style']) getDocument()?.getElementById?.(id)?.remove();
     }
     return { initialize, startGeneration: start, interceptor, invalidate, setEnabled, getPreview, selectManual, availableSources, dispose,
         getVectorSettings: () => clone(vectorSettings()), setVectorSettings,
         getVectorState: () => clone(vectors.getState()), refreshVectorStatus: () => vectors.refreshStatus(),
-        saveVectorKey, testVectorConnection, prepareVectorIndex, clearVectorCache, showVectorSettings };
+        saveVectorKey, testVectorConnection, fetchVectorModels, prepareVectorIndex, clearVectorCache, showVectorSettings };
 }
 
 let defaultAdapter = null;
