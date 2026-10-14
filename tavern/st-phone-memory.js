@@ -764,7 +764,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         previewOwner = { scope: manual.scope, chatId };
         updatePreview({ stage: 'manual', reason: 'MANUAL' }); return true;
     }
-    const MEMORY_ICON_SVG = `<svg class="uwu-memory-svg-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="2.5" width="12.5" height="19" rx="2.8"/><path d="M9.2 18.2h3.1"/><path d="M8 7.2h5.5"/><path d="M8 10.6h3.5"/><circle cx="17.2" cy="14.2" r="3.3" fill="var(--SmartThemeBlurTintColor,#222)"/><path d="M19.6 16.6L21.5 18.5"/></svg>`;
+    const MEMORY_ICON_SVG = `<svg class="uwu-memory-svg-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="2.5" width="12.5" height="19" rx="2.8"/><path d="M9.2 18.2h3.1"/><path d="M8 7.2h5.5"/><path d="M8 10.6h3.5"/><circle cx="17.2" cy="14.2" r="3.3" fill="var(--SmartThemeBlurTintColor,#222)"/><path d="M19.6 16.6L21.5 18.5"/></svg>`;
     function createMemoryIcon(doc) {
         const wrap = doc.createElement('div');
         wrap.className = 'fa-fw fa-solid extensionsMenuExtensionButton uwu-memory-icon-wrap';
@@ -882,7 +882,7 @@ export function createPhoneMemoryAdapter(host = {}) {
                 display:inline-flex;align-items:center;justify-content:center;
                 color:inherit;flex:0 0 auto;align-self:center;
             }
-            #uwu-phone-vector-menu .uwu-memory-svg-icon { width:24px;height:24px;flex:0 0 24px;display:block; }
+            #uwu-phone-vector-menu .uwu-memory-svg-icon { width:18px;height:18px;flex:0 0 18px;display:block; }
             #uwu-phone-vector-menu .uwu-memory-menu-label { display:block;align-self:center; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-header {
                 position:sticky;top:0;z-index:2;display:flex;align-items:center !important;
@@ -1117,10 +1117,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         const provider = addSelect('provider', '接口类型', [['openai', 'OpenAI 兼容'], ['ollama', 'Ollama'], ['gemini', 'Gemini']]);
         const url = addField('url', '接口地址'); url.autocomplete = 'off';
         const key = addField('credential', 'API Key', 'password', ''); key.autocomplete = 'new-password';
-        const keyButtons = doc.createElement('div'); keyButtons.className = 'uwu-memory-actions uwu-memory-key-actions'; connection.append(keyButtons);
-        const reveal = doc.createElement('button'); reveal.type = 'button'; reveal.id = 'uwu-phone-vector-reveal-key'; reveal.className = 'menu_button'; reveal.textContent = '显示输入的 Key';
-        reveal.addEventListener('click', () => { key.type = key.type === 'password' ? 'text' : 'password'; reveal.textContent = key.type === 'password' ? '显示输入的 Key' : '隐藏输入的 Key'; });
-        keyButtons.append(reveal);
+        const allowAnonymous = addField('allowAnonymous', '此接口无需 API Key（仅用于开放服务）', 'checkbox');
         const modelField = doc.createElement('div'); modelField.className = 'uwu-memory-field'; connection.append(modelField);
         const modelCaption = doc.createElement('label'); modelCaption.className = 'uwu-memory-field-title';
         modelCaption.htmlFor = 'uwu-phone-vector-model'; modelCaption.textContent = '嵌入模型';
@@ -1135,7 +1132,10 @@ export function createPhoneMemoryAdapter(host = {}) {
         const modelStatus = doc.createElement('p'); modelStatus.id = 'uwu-phone-vector-model-status';
         modelStatus.className = 'uwu-memory-model-status'; modelStatus.hidden = true; modelStatus.setAttribute?.('role', 'status');
         modelField.append(modelCaption, modelGroup, modelOptions, modelStatus);
-        const allowAnonymous = addField('allowAnonymous', '此接口无需 API Key（仅用于开放服务）', 'checkbox');
+        const keyButtons = doc.createElement('div'); keyButtons.className = 'uwu-memory-actions uwu-memory-key-actions'; connection.append(keyButtons);
+        const reveal = doc.createElement('button'); reveal.type = 'button'; reveal.id = 'uwu-phone-vector-reveal-key'; reveal.className = 'menu_button'; reveal.textContent = '显示输入的 Key';
+        reveal.addEventListener('click', () => { key.type = key.type === 'password' ? 'text' : 'password'; reveal.textContent = key.type === 'password' ? '显示输入的 Key' : '隐藏输入的 Key'; });
+        keyButtons.append(reveal);
         let modelListEpoch = 0, modelListAbort = null, modelListOwner = null;
         const modelContext = () => JSON.stringify([userScope(), provider.value, url.value.trim(), allowAnonymous.checked, key.value.trim()]);
         const clearModelOptions = () => {
