@@ -78,6 +78,8 @@ function mapContent(content, fn, ownedRanges = []) {
 const clone = value => JSON.parse(JSON.stringify(value));
 const VECTOR_DEFAULTS = Object.freeze({ enabled: false, transport: 'browser', provider: 'openai', url: '', model: '',
     dimensions: 0, threshold: 0.72, margin: 0.06, allowAnonymous: false, splitVersion: 'phone-units-v1' });
+// Only this Toastr icon is removed; theme images and gradients remain intact.
+const NATIVE_SUCCESS_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAADsSURBVEhLY2AYBfQMgf///3P8+/evAIgvA/FsIF+BavYDDWMBGroaSMMBiE8VC7AZDrIFaMFnii3AZTjUgsUUWUDA8OdAH6iQbQEhw4HyGsPEcKBXBIC4ARhex4G4BsjmweU1soIFaGg/WtoFZRIZdEvIMhxkCCjXIVsATV6gFGACs4Rsw0EGgIIH3QJYJgHSARQZDrWAB+jawzgs+Q2UO49D7jnRSRGoEFRILcdmEMWGI0cm0JJ2QpYA1RDvcmzJEWhABhD/pqrL0S0CWuABKgnRki9lLseS7g2AlqwHWQSKH4oKLrILpRGhEQCw2LiRUIa4lwAAAABJRU5ErkJggg==';
 const VECTOR_REASONS = {
     DISABLED: '向量检索未启用，使用关键词', NO_SOURCE: '当前没有已推送的手机来源',
     INVALID_CONFIG: '请填写有效的接口地址和嵌入模型',
@@ -989,7 +991,7 @@ export function createPhoneMemoryAdapter(host = {}) {
             }
             #uwu-phone-vector-credential::placeholder { color:#999;opacity:1; }
             #toast-container > .toast-success.uwu-memory-save-success {
-                background-image:none !important;padding-left:10px;
+                padding-left:10px;
             }
             #uwu-phone-vector-dialog .uwu-memory-key-group {
                 display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--uwu-memory-item-gap);align-items:center;
@@ -1359,6 +1361,13 @@ export function createPhoneMemoryAdapter(host = {}) {
         // Existing containers ignore toastr's target; keep native notices above the modal.
         const container = doc.getElementById('toast-container');
         if (container && container.parentNode !== dialog) dialog.append(container);
+        const toast = saveSuccessToast?.[0];
+        const background = toast && doc.defaultView?.getComputedStyle(toast).backgroundImage;
+        const iconLayer = `url("${NATIVE_SUCCESS_ICON}")`;
+        if (background?.includes(iconLayer)) {
+            // Keep the layer's position so theme background-size/position lists still align.
+            toast.style.setProperty('background-image', background.replaceAll(iconLayer, 'none'), 'important');
+        }
     }
     function showVectorSettings() {
         if (disposed) return;
