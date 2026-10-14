@@ -764,7 +764,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         previewOwner = { scope: manual.scope, chatId };
         updatePreview({ stage: 'manual', reason: 'MANUAL' }); return true;
     }
-    const MEMORY_ICON_SVG = `<svg class="uwu-memory-svg-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="2.5" width="12.5" height="19" rx="2.8"/><path d="M9.2 18.2h3.1"/><path d="M8 7.2h5.5"/><path d="M8 10.6h3.5"/><circle cx="17.2" cy="14.2" r="3.3" fill="var(--SmartThemeBlurTintColor,#222)"/><path d="M19.6 16.6L21.5 18.5"/></svg>`;
+    const MEMORY_ICON_SVG = `<svg class="uwu-memory-svg-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="2.5" width="12.5" height="19" rx="2.8"/><path d="M9.2 18.2h3.1"/><path d="M8 7.2h5.5"/><path d="M8 10.6h3.5"/><circle cx="17.2" cy="14.2" r="3.3" fill="var(--SmartThemeBlurTintColor,#222)"/><path d="M19.6 16.6L21.5 18.5"/></svg>`;
     function createMemoryIcon(doc) {
         const wrap = doc.createElement('div');
         wrap.className = 'fa-fw fa-solid extensionsMenuExtensionButton uwu-memory-icon-wrap';
@@ -882,7 +882,7 @@ export function createPhoneMemoryAdapter(host = {}) {
                 display:inline-flex;align-items:center;justify-content:center;
                 color:inherit;flex:0 0 auto;align-self:center;
             }
-            #uwu-phone-vector-menu .uwu-memory-svg-icon { width:1em;height:1em;display:block; }
+            #uwu-phone-vector-menu .uwu-memory-svg-icon { width:24px;height:24px;flex:0 0 24px;display:block; }
             #uwu-phone-vector-menu .uwu-memory-menu-label { display:block;align-self:center; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-header {
                 position:sticky;top:0;z-index:2;display:flex;align-items:center !important;
@@ -902,17 +902,13 @@ export function createPhoneMemoryAdapter(host = {}) {
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) h4 {
                 margin:0 0 12px;font-size:13px;font-weight:600;letter-spacing:.02em;opacity:.9;
             }
-            #uwu-phone-vector-dialog .uwu-memory-grid-2 {
-                display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px;align-items:start;
-            }
             #uwu-phone-vector-dialog .uwu-memory-model-group {
                 display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch;
             }
-            #uwu-phone-vector-dialog .uwu-memory-model-group .menu_button { min-height:38px; }
+            #uwu-phone-vector-dialog .uwu-memory-model-group > :is(.text_pole,.menu_button) { height:38px;min-height:38px; }
             #uwu-phone-vector-dialog .uwu-memory-model-status { margin:0;font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
             #uwu-phone-vector-dialog :is(.uwu-memory-model-options,.uwu-memory-model-status)[hidden] { display:none !important; }
             #uwu-phone-vector-dialog .uwu-memory-field { display:flex;flex-direction:column;gap:6px;min-width:0;margin:10px 0; }
-            #uwu-phone-vector-dialog .uwu-memory-grid-2 .uwu-memory-field { margin:0; }
             #uwu-phone-vector-dialog .uwu-memory-field-title { font-size:12.5px;font-weight:500;opacity:.88; }
             #uwu-phone-vector-dialog .uwu-memory-field .text_pole {
                 display:block;width:100%;min-width:0;min-height:38px;margin:0;padding:7px 11px;
@@ -1029,7 +1025,6 @@ export function createPhoneMemoryAdapter(host = {}) {
                 :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-panel { padding:12px 14px;gap:12px; }
                 :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-card { padding:13px 14px; }
                 :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-footer { padding:10px 14px; }
-                #uwu-phone-vector-dialog .uwu-memory-grid-2,
                 #uwu-phone-vector-dialog .uwu-memory-parameters { grid-template-columns:1fr;gap:8px; }
                 #uwu-phone-vector-dialog .uwu-memory-key-group { grid-template-columns:1fr 1fr; }
                 #uwu-phone-vector-dialog .uwu-memory-key-group .text_pole { grid-column:1 / -1; }
@@ -1119,9 +1114,14 @@ export function createPhoneMemoryAdapter(host = {}) {
             parent.append(row); controls[name] = input;
             return input;
         };
-        const topRow = doc.createElement('div'); topRow.className = 'uwu-memory-grid-2'; connection.append(topRow);
-        const provider = addSelect('provider', '接口类型', [['openai', 'OpenAI 兼容'], ['ollama', 'Ollama'], ['gemini', 'Gemini']], topRow);
-        const modelField = doc.createElement('div'); modelField.className = 'uwu-memory-field'; topRow.append(modelField);
+        const provider = addSelect('provider', '接口类型', [['openai', 'OpenAI 兼容'], ['ollama', 'Ollama'], ['gemini', 'Gemini']]);
+        const url = addField('url', '接口地址'); url.autocomplete = 'off';
+        const key = addField('credential', 'API Key', 'password', ''); key.autocomplete = 'new-password';
+        const keyButtons = doc.createElement('div'); keyButtons.className = 'uwu-memory-actions uwu-memory-key-actions'; connection.append(keyButtons);
+        const reveal = doc.createElement('button'); reveal.type = 'button'; reveal.id = 'uwu-phone-vector-reveal-key'; reveal.className = 'menu_button'; reveal.textContent = '显示输入的 Key';
+        reveal.addEventListener('click', () => { key.type = key.type === 'password' ? 'text' : 'password'; reveal.textContent = key.type === 'password' ? '显示输入的 Key' : '隐藏输入的 Key'; });
+        keyButtons.append(reveal);
+        const modelField = doc.createElement('div'); modelField.className = 'uwu-memory-field'; connection.append(modelField);
         const modelCaption = doc.createElement('label'); modelCaption.className = 'uwu-memory-field-title';
         modelCaption.htmlFor = 'uwu-phone-vector-model'; modelCaption.textContent = '嵌入模型';
         const modelGroup = doc.createElement('div'); modelGroup.className = 'uwu-memory-model-group';
@@ -1135,13 +1135,6 @@ export function createPhoneMemoryAdapter(host = {}) {
         const modelStatus = doc.createElement('p'); modelStatus.id = 'uwu-phone-vector-model-status';
         modelStatus.className = 'uwu-memory-model-status'; modelStatus.hidden = true; modelStatus.setAttribute?.('role', 'status');
         modelField.append(modelCaption, modelGroup, modelOptions, modelStatus);
-        const url = addField('url', '接口地址'); url.placeholder = 'https://你的接口/v1';
-        url.autocomplete = 'off';
-        const key = addField('credential', 'API Key', 'password', ''); key.autocomplete = 'new-password';
-        const keyButtons = doc.createElement('div'); keyButtons.className = 'uwu-memory-actions uwu-memory-key-actions'; connection.append(keyButtons);
-        const reveal = doc.createElement('button'); reveal.type = 'button'; reveal.id = 'uwu-phone-vector-reveal-key'; reveal.className = 'menu_button'; reveal.textContent = '显示输入的 Key';
-        reveal.addEventListener('click', () => { key.type = key.type === 'password' ? 'text' : 'password'; reveal.textContent = key.type === 'password' ? '显示输入的 Key' : '隐藏输入的 Key'; });
-        keyButtons.append(reveal);
         const allowAnonymous = addField('allowAnonymous', '此接口无需 API Key（仅用于开放服务）', 'checkbox');
         let modelListEpoch = 0, modelListAbort = null, modelListOwner = null;
         const modelContext = () => JSON.stringify([userScope(), provider.value, url.value.trim(), allowAnonymous.checked, key.value.trim()]);
@@ -1158,11 +1151,6 @@ export function createPhoneMemoryAdapter(host = {}) {
             if (modelListOwner !== modelContext()) { clearModelOptions(); return; }
             if (modelOptions.value) { model.value = modelOptions.value; model.focus?.(); }
         });
-        const updateProviderHint = () => {
-            url.placeholder = provider.value === 'ollama' ? 'http://127.0.0.1:11434' : provider.value === 'gemini'
-                ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://你的接口/v1';
-        };
-        controls.updateProviderHint = updateProviderHint; provider.addEventListener('change', updateProviderHint); updateProviderHint();
         const retrieval = card('召回设置');
         const enabled = addField('enabled', '启用向量辅助查找', 'checkbox'); retrieval.append(enabled.parentNode);
         const consent = doc.createElement('p'); consent.className = 'uwu-memory-help';
@@ -1275,7 +1263,6 @@ export function createPhoneMemoryAdapter(host = {}) {
             }
             vectorControls.credential.value = ''; vectorControls.credential.type = 'password';
             getDocument().getElementById('uwu-phone-vector-reveal-key').textContent = '显示输入的 Key';
-            vectorControls.updateProviderHint();
         }
         if (!dialog.open) dialog.showModal();
         return vectors.refreshStatus().then(() => renderVectorStatus()).catch(() => renderVectorStatus());

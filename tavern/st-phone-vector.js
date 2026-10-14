@@ -12,10 +12,12 @@ export const PHONE_VECTOR_REASONS = Object.freeze({
     ACCOUNT_UNKNOWN: '无法确认当前酒馆账号，暂停向量请求', KEY_STORAGE_ERROR: '无法读取或保存当前账号的向量密钥',
     BROWSER_NETWORK_ERROR: '浏览器无法访问向量接口，请检查地址、网络和接口跨域设置',
     BROWSER_UPSTREAM_ERROR: '向量接口返回错误，请检查接口配置和服务状态',
+    MODELS_OK: '已拉取可用的嵌入模型', MODELS_EMPTY: '接口未返回可识别的嵌入模型，可手动输入模型名称',
 });
 
 const MAX_ENTRIES = 512, MAX_BYTES = 16 * 1024 * 1024, MAX_TEXT = 16000, MAX_DIMENSIONS = 16384;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_MODEL_LIST = 4096, MAX_MODEL_PAGES = 16;
 const SPLIT_VERSION = 'phone-units-v1';
 const fault = reason => Object.assign(new Error(reason), { reason });
 
@@ -58,6 +60,60 @@ export function phoneBrowserCredentialProfile({ provider = 'openai', url } = {})
     const endpoint = new URL(browserEndpoint(provider, url));
     if (provider === 'gemini') endpoint.pathname = endpoint.pathname.replace(/\/models\/[^/]+:embedContent$/, '/models/:embedContent');
     return provider + ':' + endpoint.href;
+}
+
+// Discovery accepts a base URL, an embedding endpoint, or its model-list endpoint.
+// Its credential identity remains that of the corresponding embedding endpoint.
+function modelDiscoveryProfile(settings) {
+    const provider = settings?.provider || 'openai';
+    let address;
+    try { address = new URL(String(settings?.url || '').trim()); } catch { throw fault('INVALID_CONFIG'); }
+    if (!['openai', 'ollama', 'gemini'].includes(provider) || address.href.length > 2048
+        || !['http:', 'https:'].includes(address.protocol) || address.username || address.password || address.search || address.hash) throw fault('INVALID_CONFIG');
+    let path = address.pathname.replace(/\/+$/, '');
+    if (provider === 'openai') path = path.replace(/\/models$/, '/embeddings');
+    if (provider === 'ollama') path = path.replace(/\/api\/(?:tags|show)$/, '/api/embed');
+    if (provider === 'gemini') path = path.replace(/\/models$/, '');
+    address.pathname = path;
+    const url = browserEndpoint(provider, address.href);
+    if (url.length > 2048) throw fault('INVALID_CONFIG');
+    const list = new URL(url);
+    if (provider === 'openai') list.pathname = list.pathname.replace(/\/embeddings$/, '/models');
+    if (provider === 'ollama') list.pathname = list.pathname.replace(/\/api\/embed$/, '/api/tags');
+    if (provider === 'gemini') list.pathname = list.pathname.replace(/\/models\/[^/]+:embedContent$/, '/models');
+    return { provider, url, listUrl: list.href };
+}
+
+function modelName(value, provider) {
+    if (typeof value !== 'string' || !value.trim() || value.length > 256 || /[\u0000-\u001f\u007f]/.test(value)) return '';
+    const name = value.trim();
+    if (provider === 'gemini' && !/^(?:models\/)?[A-Za-z0-9._-]+$/.test(name)) return '';
+    return provider === 'gemini' ? name.replace(/^models\//, '') : name;
+}
+
+function embeddingName(name) {
+    const id = name.toLowerCase();
+    // Rerankers and image/audio/generation models also appear in compatible lists.
+    if (/(?:rerank|cross[-_]?encoder|(?:^|[/_.:-])(?:chat|gpt|llama|whisper|tts|clip|siglip|image|audio|speech|video|vision|diffusion|completion|moderation)(?:$|[/_.:-]))/.test(id)) return false;
+    return /(?:^|[/_.:-])(?:embed|embeddings?)(?:$|[/_.:-])/.test(id)
+        || /(?:^|\/)(?:embeddinggemma|bge-(?:m3|(?:small|base|large)-(?:en|zh)(?:-v\d+(?:\.\d+)*|(?:$|[:._-]))|multilingual-gemma2)|all-minilm(?:-l\d+-v\d+)?|multilingual-e5-(?:small|base|large)|e5-(?:small|base|large)(?:-v\d+)?)(?:$|[:._-])/.test(id);
+}
+
+function compatibleEmbeddingModel(item, name) {
+    if (!item || typeof item !== 'object' || /rerank|cross[-_]?encoder/i.test(name)) return false;
+    const marker = value => typeof value === 'string'
+        && /^(?:embeddings?|embed|embedContent|text-embedding|feature-extraction|(?:\/v\d+)?\/embeddings)$/i.test(value);
+    const signals = ['capabilities', 'supportedGenerationMethods', 'supported_endpoints', 'endpoints']
+        .filter(field => Object.hasOwn(item, field)).map(field => item[field]);
+    const kinds = ['type', 'mode', 'task'].map(field => item[field]).filter(value => typeof value === 'string');
+    if (kinds.some(value => /rerank|cross[-_]?encoder|image|audio|speech|vision|video|diffusion/i.test(value))) return false;
+    const input = item.input_modalities || item.architecture?.input_modalities;
+    if (Array.isArray(input) && input.length && !input.includes('text')) return false;
+    if (signals.some(value => Array.isArray(value) && value.some(marker)) || kinds.some(marker)
+        || item.capabilities?.embedding === true || item.capabilities?.embeddings === true) return true;
+    // Explicit capability metadata is authoritative; names only fill missing metadata.
+    if (signals.length || kinds.length) return false;
+    return embeddingName(name);
 }
 
 async function browserJson(response, signal) {
@@ -255,9 +311,18 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
             scope: account, initialScope: scope, statusVersion, descriptors: new WeakMap(),
             previewOrder: mode === '' ? ++previewOrder : null };
     }
+    function modelsContext(options) {
+        const raw = getSettings(), draft = { ...raw, ...options }, account = browserScope();
+        return { epoch, mode: 'models', config: modelDiscoveryProfile(draft),
+            profile: JSON.stringify(raw), account, scope: account, initialScope: scope, statusVersion,
+            allowAnonymous: draft.allowAnonymous === true, signal: options.signal,
+            isCurrent: typeof options.isCurrent === 'function' ? options.isCurrent : () => true };
+    }
     function valid(ctx, requireScope = true) {
         if (ctx.epoch !== epoch || ctx.signal?.aborted) return false;
         try {
+            if (ctx.mode === 'models') return JSON.stringify(getSettings()) === ctx.profile
+                && liveBrowserAccount(ctx) && browserRevisionCurrent(ctx) && ctx.isCurrent() !== false;
             const actual = ctx.mode === 'status' || ctx.mode === 'maintenance' ? JSON.stringify(getSettings()) : JSON.stringify(profileFrom(getSettings(), ctx.mode === 'test'));
             return actual === ctx.profile && (getSettings()?.allowAnonymous === true) === ctx.allowAnonymous
                 && liveBrowserAccount(ctx)
@@ -532,6 +597,99 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
             assertCurrent(ctx); report('CONNECTION_OK'); return { ok: true, dimensions: vectors[0].length, ...state() };
         } catch (error) { const failure = handle(error, ctx); return { ok: false, ...state(), reason: failure.reason }; }
     }
+    /** Read-only discovery: accepts unsaved UI values and never writes a key or index. */
+    async function fetchModels(options = {}) {
+        try {
+            const ctx = modelsContext(options);
+            if (options.key != null && (typeof options.key !== 'string' || options.key.length > 4096 || /[\r\n\0]/.test(options.key))) throw fault('INVALID_CONFIG');
+            const draftKey = typeof options.key === 'string' ? options.key.trim() : '';
+            const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1, Math.min(20000, options.timeoutMs)) : 15000;
+            const models = await schedule(async signal => {
+                const check = () => { assertCurrent(ctx, false); if (signal.aborted) throw fault('CANCELLED'); };
+                check();
+                let key = draftKey;
+                if (!key) {
+                    const saved = await browserCredential(ctx, signal);
+                    check();
+                    const matches = saved.credentialProfile === phoneBrowserCredentialProfile(ctx.config);
+                    key = matches ? saved.key : '';
+                    if (saved.key && !matches && (!ctx.allowAnonymous || ctx.config.provider === 'gemini')) throw fault('KEY_ENDPOINT_MISMATCH');
+                }
+                if (!key && (!ctx.allowAnonymous || ctx.config.provider === 'gemini')) throw fault('KEY_REQUIRED');
+                const headers = { Accept: 'application/json' };
+                if (key) headers[ctx.config.provider === 'gemini' ? 'x-goog-api-key' : 'Authorization'] = ctx.config.provider === 'gemini' ? key : 'Bearer ' + key;
+                async function call(url, body) {
+                    check();
+                    let response;
+                    try {
+                        response = await fetch(url, { method: body ? 'POST' : 'GET', mode: 'cors', credentials: 'omit',
+                            referrerPolicy: 'no-referrer', headers: body ? { ...headers, 'Content-Type': 'application/json' } : headers,
+                            ...(body ? { body: JSON.stringify(body) } : {}), signal, redirect: 'error' });
+                    } catch { throw fault(signal.aborted ? 'CANCELLED' : 'BROWSER_NETWORK_ERROR'); }
+                    check();
+                    if (!response?.ok) {
+                        // Do not read provider errors: they can echo keys or request URLs.
+                        await response?.body?.cancel?.().catch(() => {});
+                        throw fault(response?.status === 401 || response?.status === 403 ? 'KEY_REQUIRED' : 'BROWSER_UPSTREAM_ERROR');
+                    }
+                    const data = await browserJson(response, signal);
+                    check();
+                    if (!data || typeof data !== 'object' || Array.isArray(data)) throw fault('INVALID_RESPONSE');
+                    return data;
+                }
+                const found = new Set();
+                if (ctx.config.provider === 'openai') {
+                    const data = await call(ctx.config.listUrl);
+                    if (!Array.isArray(data.data) || data.data.length > MAX_MODEL_LIST) throw fault('INVALID_RESPONSE');
+                    for (const item of data.data) {
+                        const name = modelName(item?.id, 'openai');
+                        if (name && compatibleEmbeddingModel(item, name)) found.add(name);
+                    }
+                } else if (ctx.config.provider === 'gemini') {
+                    const seen = new Set(); let token = '', total = 0;
+                    for (let page = 0; page < MAX_MODEL_PAGES; page++) {
+                        const address = new URL(ctx.config.listUrl); address.searchParams.set('pageSize', '1000');
+                        if (token) address.searchParams.set('pageToken', token);
+                        const data = await call(address.href);
+                        if (!Array.isArray(data.models) || (total += data.models.length) > MAX_MODEL_LIST) throw fault('INVALID_RESPONSE');
+                        for (const item of data.models) {
+                            const name = modelName(item?.name, 'gemini');
+                            if (name && Array.isArray(item?.supportedGenerationMethods) && item.supportedGenerationMethods.includes('embedContent')) found.add(name);
+                        }
+                        if (data.nextPageToken == null || data.nextPageToken === '') break;
+                        if (typeof data.nextPageToken !== 'string' || data.nextPageToken.length > 2048
+                            || /[\u0000-\u001f\u007f]/.test(data.nextPageToken) || seen.has(data.nextPageToken) || page + 1 === MAX_MODEL_PAGES) throw fault('INVALID_RESPONSE');
+                        token = data.nextPageToken; seen.add(token);
+                    }
+                } else {
+                    const data = await call(ctx.config.listUrl);
+                    if (!Array.isArray(data.models) || data.models.length > MAX_MODEL_LIST) throw fault('INVALID_RESPONSE');
+                    const names = new Set(data.models.map(item => modelName(item?.name || item?.model, 'ollama')).filter(Boolean));
+                    const showUrl = ctx.config.listUrl.replace(/\/tags$/, '/show');
+                    for (const name of names) {
+                        if (/rerank|cross[-_]?encoder/i.test(name)) continue;
+                        let detail;
+                        try { detail = await call(showUrl, { model: name, verbose: false }); }
+                        catch (error) {
+                            // A removed or corrupt local model must not hide models whose
+                            // capabilities were confirmed. Failed show calls never use a
+                            // name fallback, and shared auth/network failures still abort.
+                            if (error?.reason === 'BROWSER_UPSTREAM_ERROR' || error?.reason === 'INVALID_RESPONSE') continue;
+                            throw error;
+                        }
+                        if (Array.isArray(detail.capabilities) ? detail.capabilities.includes('embedding')
+                            : detail.capabilities == null && embeddingName(name)) found.add(name);
+                    }
+                }
+                check();
+                return [...found].sort((a, b) => a.localeCompare(b));
+            }, { timeoutMs, signal: ctx.signal, priority: 20, fallback: 'BROWSER_NETWORK_ERROR' });
+            assertCurrent(ctx, false);
+            return { ok: true, reason: models.length ? 'MODELS_OK' : 'MODELS_EMPTY', models };
+        } catch (error) {
+            return { ok: false, reason: Object.hasOwn(PHONE_VECTOR_REASONS, error?.reason) ? error.reason : 'BROWSER_NETWORK_ERROR', models: [] };
+        }
+    }
     function sync(scan, options = {}) {
         let ctx;
         try { ctx = context(options); }
@@ -699,5 +857,5 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         } catch (error) { handle(error, ctx); }
         return state();
     }
-    return Object.freeze({ refreshStatus, saveKey, testConnection, sync, search, cancel, clearCache, getState: state });
+    return Object.freeze({ refreshStatus, saveKey, testConnection, fetchModels, sync, search, cancel, clearCache, getState: state });
 }
