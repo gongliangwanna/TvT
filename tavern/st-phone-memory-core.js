@@ -79,11 +79,35 @@ export function isTypedSystemMessage(message) {
 }
 
 /** Phone bodies cannot support a query; ordinary text outside their wrappers remains usable. */
+function stripInternalBlocks(value) {
+    const removals = [], stack = [];
+    let start = -1;
+    for (const match of value.matchAll(/<\/?(think|thinking|analysis|reasoning|uwu_phone_memory|phone_chat)\b[^>]*>/gi)) {
+        const name = match[1].toLowerCase(), closing = match[0].startsWith('</');
+        if (!closing) {
+            if (/\/\s*>$/.test(match[0])) { if (!stack.length) removals.push({ start: match.index, end: match.index + match[0].length }); continue; }
+            if (!stack.length) start = match.index;
+            stack.push(name);
+        } else if (stack.length) {
+            const position = stack.lastIndexOf(name);
+            if (position < 0) continue;
+            stack.length = position;
+            if (!stack.length) removals.push({ start, end: match.index + match[0].length });
+        } else removals.push({ start: match.index, end: match.index + match[0].length });
+    }
+    // Streaming or interrupted reasoning is still internal, even without its closing tag.
+    if (stack.length) removals.push({ start, end: value.length });
+    for (const span of removals.reverse()) value = value.slice(0, span.start) + value.slice(span.end);
+    return value;
+}
+
 export function ordinaryText(message) {
     if (!message || message.is_system || isTypedSystemMessage(message) || message.extra?.bbs_omit || message.extra?.isSmallSys || message.extra?.uwu_internal) return '';
     const text = stripPhoneBlocks(message.mes ?? message.content ?? '');
-    return text.replace(/<(?:think|thinking|analysis|reasoning|uwu_phone_memory|phone_chat)\b[^>]*>[\s\S]*?<\/(?:think|thinking|analysis|reasoning|uwu_phone_memory|phone_chat)>/gi, '').trim();
+    return stripInternalBlocks(text).trim();
 }
+
+const arrayEvery = (array, predicate) => Array.isArray(array) && Array.from(array).every(predicate);
 
 export function tokenize(text, options = {}) {
     const value = String(text ?? '').toLowerCase();
@@ -104,7 +128,8 @@ export function tokenize(text, options = {}) {
 
 function lineSegments(body, extra) {
     const ids = extra?.uwu_msg_ids, lens = extra?.uwu_line_lens;
-    if (Array.isArray(ids) && Array.isArray(lens) && ids.length === lens.length && lens.every(n => Number.isInteger(n) && n >= 0)) {
+    if (Array.isArray(ids) && Array.isArray(lens) && ids.length === lens.length
+        && arrayEvery(ids, id => id != null) && arrayEvery(lens, n => Number.isInteger(n) && n >= 0)) {
         const filled = lens.filter(Boolean);
         const characters = filled.reduce((sum, n) => sum + n, 0);
         for (const separator of ['\n', '\r\n']) {
@@ -336,11 +361,14 @@ export function classifyQuery(query, { roleNames = [] } = {}) {
     // recall wording is not a request from the current user. A quote-only input stays usable.
     const quoted = demandUnquoted !== demandText.trim();
     const recallPattern = /之前|以前|上次|那次|当时|说过|说的|提过|约好|约定|还记得|记不记得|原来|当初|答应|承诺/;
-    const quotationTask = quoted && (/(?:改写|润色|翻译|朗读|校对|断句|改得|标点)/.test(demandUnquoted)
+    // A clearly introduced text-editing payload is still quoted material when
+    // users delimit it with a colon or a newline instead of quotation marks.
+    const explicitTextTask = /^(?:(?:请你?|麻烦你?|帮我|帮忙)\s*)*(?:翻译|改写|润色|朗读|校对|断句)(?:一下)?(?:下面|以下|这(?:个)?(?:句(?:子|话)?|段(?:话|文字)?|文本)|文本|句子|原文|[：:])/u.test(demandUnquoted);
+    const quotationTask = explicitTextTask || (quoted && (/(?:改写|润色|翻译|朗读|校对|断句|改得|标点)/.test(demandUnquoted)
         || (/(?:解释|分析|总结|概括|解读|评价|点评)/.test(demandUnquoted)
             && /这(?:句|段)|台词|引文|原文/.test(demandUnquoted))
         || (/(?:小说|文章|故事|剧本|原文)(?:里|中)/.test(demandUnquoted)
-            && /你觉得|怎么评价|什么意思|表达什么/.test(demandUnquoted) && !recallPattern.test(demandUnquoted)));
+            && /你觉得|怎么评价|什么意思|表达什么/.test(demandUnquoted) && !recallPattern.test(demandUnquoted))));
     const activeSpeech = !quotationTask && /^(?:(?:我|我们)(?:开口|轻声|低声|接着|继续|又)?(?:问你|问道|说道|说：|说:)|我想问你|请问|想问一下|问你一下)/.test(demandUnquoted);
     const requestText = activeSpeech || !/[\p{L}\p{N}]/u.test(demandUnquoted) ? demandText : demandUnquoted;
     const explicitRecall = recallPattern.test(requestText);
@@ -365,17 +393,21 @@ function validRef(ref, scan) {
         || ref.start < 0 || ref.end > source.body.length || ref.end <= ref.start) return null;
     const text = source.body.slice(ref.start, ref.end);
     if (fingerprint(text) !== ref.textFingerprint) return null;
-    if (ref.msgIds?.length && !ref.msgIds.every(id => source.msgIds.includes(id))) return null;
+    if (ref.msgIds?.length && !arrayEvery(ref.msgIds, id => id != null && source.msgIds.includes(id))) return null;
     // Legacy references with no IDs must have one and only one full-text location.
     if (!ref.msgIds?.length && source.body.indexOf(text) !== source.body.lastIndexOf(text)) return null;
     return { source, text };
 }
 
 export function validateSelection(selected, scan) {
-    return (selected || []).filter(unit => {
-        const valid = validRef(unit.ref, scan);
+    if (!scan || !Array.isArray(scan.sources)) return [];
+    return (Array.isArray(selected) ? selected : []).filter(unit => {
+        const valid = validRef(unit?.ref, scan);
         if (!valid || valid.text !== unit.text) return false;
-        return !unit.fragments || unit.fragments.every(fragment => valid.source.body.slice(fragment.start, fragment.end) === fragment.text);
+        return unit.fragments == null || arrayEvery(unit.fragments, fragment => fragment
+            && Number.isInteger(fragment.start) && Number.isInteger(fragment.end)
+            && fragment.start >= unit.ref.start && fragment.end <= unit.ref.end && fragment.end > fragment.start
+            && typeof fragment.text === 'string' && valid.source.body.slice(fragment.start, fragment.end) === fragment.text);
     });
 }
 
@@ -441,6 +473,7 @@ function receiptUserStillMatches(receipt, chat, scan) {
 
 export function collectValidReceipts(chat, scan, { cutoff = scan.cutoff } = {}) {
     const result = [];
+    cutoff = Math.max(0, Math.min(Array.isArray(chat) ? chat.length : 0, Number.isInteger(cutoff) ? cutoff : 0));
     for (let floor = 0; floor < Math.min(chat?.length || 0, cutoff); floor++) {
         const message = chat[floor];
         if (!isCompletedReply(message)) continue;
@@ -449,7 +482,8 @@ export function collectValidReceipts(chat, scan, { cutoff = scan.cutoff } = {}) 
         const receipt = raw?.version === 1 ? raw : raw?.receipts?.[String(message.swipe_id ?? 0)];
         if (!receipt || receipt.version !== 1 || receipt.chatId !== scan.chatId || receipt.replyFloor !== floor
             || receipt.swipeId !== (message.swipe_id ?? 0) || receipt.replyFingerprint !== fingerprint(message.mes)
-            || !Array.isArray(receipt.sources) || !receipt.sources.length || !receipt.sources.every(ref => validRef(ref, scan))
+            || !Array.isArray(receipt.sources) || !receipt.sources.length || !arrayEvery(receipt.sources, ref =>
+                validRef(ref, scan) && ref.floor <= receipt.userFloor)
             || !receiptUserStillMatches(receipt, chat, scan)) continue;
         result.push(receipt);
     }
@@ -466,6 +500,7 @@ function userTurns(chat, from, to) {
 }
 
 export function restoreTopicRefs(chat, scan, { cutoff = scan.cutoff } = {}) {
+    cutoff = Math.max(0, Math.min(Array.isArray(chat) ? chat.length : 0, Number.isInteger(cutoff) ? cutoff : 0));
     const receipts = collectValidReceipts(chat, scan, { cutoff });
     const latest = receipts.at(-1);
     if (!latest || !Number.isInteger(latest.userFloor) || !userSupportText(chat[latest.userFloor])) return [];
@@ -486,9 +521,9 @@ export function restoreTopicRefs(chat, scan, { cutoff = scan.cutoff } = {}) {
 }
 
 function topicsForCurrent(topicRefs, scan, chat, userFloor) {
-    return (topicRefs || []).filter(topic => validRef(topic.ref, scan)).filter(topic => {
+    return (Array.isArray(topicRefs) ? topicRefs : []).filter(topic => validRef(topic?.ref, scan)).filter(topic => {
         const support = topic.supportedAt ?? topic.userFloor;
-        return Number.isInteger(support) && support <= userFloor && userTurns(chat || [], support, userFloor - 1) < 2;
+        return Number.isInteger(support) && support >= 0 && support <= userFloor && userTurns(chat || [], support, userFloor - 1) < 2;
     }).slice(0, 2);
 }
 
@@ -773,7 +808,9 @@ function sentenceRanges(text) {
 /** A long utterance may contribute complete, independent sentences. Conditions, negatives,
  * quotations and anaphoric answers stay with their relation or are omitted altogether. */
 export function excerptUnit(unit, { query = '', maxChars = 600 } = {}) {
+    if (!unit || typeof unit.text !== 'string' || !unit.text.trim()) return null;
     if (unit.text.length <= maxChars) return unit;
+    if (!unit.ref || !Number.isInteger(unit.ref.start)) return null;
     // A document-level embedding cannot identify which sentence carries its
     // meaning. Weak incidental bigrams must not pick an arbitrary sentence from
     // a semantic-only match; retain the complete unit or omit it at this limit.
@@ -784,7 +821,8 @@ export function excerptUnit(unit, { query = '', maxChars = 600 } = {}) {
         if (!hit.score) continue;
         let lo = hit.index, hi = hit.index;
         const dependent = text => /如果|只有|除非|否则|的话|才|但是|不过|并非|不能|不要|不可以|不是|没(?:有|能)|只是|仅仅|其实|实际|现实|举例|开玩笑|并未|从未|并无|并不|绝不|不曾|无此|那(?:里|个|家|件)|这(?:里|个|家|件)|就(?:这样|去|到)|他|她|它/.test(text)
-            || /\b(?:if|unless|otherwise|provided|but|however|not|never|no|that|this|there|here|it|he|she|they)\b|\b[a-z]+n['’]t\b/i.test(text);
+            || /取消|作废|失效|撤回|不再|更正|纠正|改(?:成|为|到|在|约)|变更|调整/.test(text)
+            || /\b(?:if|unless|otherwise|provided|but|however|not|never|no|that|this|there|here|it|he|she|they|cancel(?:led|ed|lation)?|reschedul(?:e|ed|ing)|revok(?:e|ed)|withdrawn|amend(?:ed|ment)?|correct(?:ed|ion)|changed|instead)\b|\b[a-z]+n['’]t\b/i.test(text);
         if (dependent(hit.text)) { lo = Math.max(0, lo - 1); hi = Math.min(ranges.length - 1, hi + 1); }
         // A grouped question and answer remain a relation after budgeting. Its
         // final question can omit earlier independent chatter, but never its answer.
@@ -822,7 +860,14 @@ export function buildMemoryBlock(selected, { operationId = 'preview' } = {}) {
 
 export async function fitBudget(selected, { countTokens, maxUnitChars = 600, maxChars = 1800, maxTokens = 1200, operationId = 'preview', query = '' } = {}) {
     if (typeof countTokens !== 'function') return { selected: [], text: '', chars: 0, tokens: null, reason: 'TOKENIZER' };
-    let kept = (selected || []).slice(0, 2).map(unit => excerptUnit(unit, { query, maxChars: maxUnitChars })).filter(Boolean);
+    if (![maxUnitChars, maxChars, maxTokens].every(value => Number.isFinite(value) && value >= 1)) {
+        return { selected: [], text: '', chars: 0, tokens: 0, reason: 'BUDGET' };
+    }
+    maxUnitChars = Math.min(MEMORY_LIMITS.maxUnitChars, Math.floor(maxUnitChars));
+    maxChars = Math.min(MEMORY_LIMITS.maxChars, Math.floor(maxChars));
+    maxTokens = Math.min(MEMORY_LIMITS.maxTokens, Math.floor(maxTokens));
+    let kept = (Array.isArray(selected) ? selected : []).filter(unit => unit && typeof unit.text === 'string' && unit.text.trim())
+        .slice(0, MEMORY_LIMITS.maxUnits).map(unit => excerptUnit(unit, { query, maxChars: maxUnitChars })).filter(Boolean);
     while (kept.length) {
         const text = buildMemoryBlock(kept, { operationId });
         if (text.length > maxChars) { kept.pop(); continue; }

@@ -20,6 +20,8 @@ const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_MODEL_LIST = 4096, MAX_MODEL_PAGES = 16;
 const SPLIT_VERSION = 'phone-units-v1';
 const fault = reason => Object.assign(new Error(reason), { reason });
+const validBrowserKey = value => typeof value === 'string' && value.length <= 4096
+    && !/[\u0000-\u001f\u007f-\u009f\u0100-\uffff]/.test(value);
 
 function profileFrom(settings, allowDisabled = false) {
     if (!allowDisabled && !settings?.enabled) throw fault('DISABLED');
@@ -52,6 +54,7 @@ function browserEndpoint(provider, value, model = 'uwu-placeholder') {
         pathname += '/models/' + encodeURIComponent(modelId) + ':embedContent';
     }
     endpoint.pathname = pathname;
+    if (endpoint.href.length > 2048) throw fault('INVALID_CONFIG');
     return endpoint.href;
 }
 
@@ -149,28 +152,39 @@ async function browserJson(response, signal) {
 }
 
 /** No coercion: strings, NaN, Infinity, zero vectors and mixed dimensions are invalid. */
+function vectorScale(vector) {
+    if (!Array.isArray(vector) || !vector.length || vector.length > MAX_DIMENSIONS) throw fault('INVALID_RESPONSE');
+    let scale = 0;
+    // Iteration visits array holes too; .some/.map silently skip them.
+    for (const value of vector) {
+        if (typeof value !== 'number' || !Number.isFinite(value)) throw fault('INVALID_RESPONSE');
+        scale = Math.max(scale, Math.abs(value));
+    }
+    if (!scale) throw fault('INVALID_RESPONSE');
+    return scale;
+}
+
 export function validatePhoneVectors(vectors, count, dimensions = 0) {
-    if (!Array.isArray(vectors) || vectors.length !== count || !count) throw fault('INVALID_RESPONSE');
+    if (!Array.isArray(vectors) || vectors.length !== count || !Number.isInteger(count) || count <= 0
+        || !Number.isInteger(dimensions) || dimensions < 0 || dimensions > MAX_DIMENSIONS) throw fault('INVALID_RESPONSE');
     let size = dimensions;
-    const result = vectors.map(vector => {
-        if (!Array.isArray(vector) || !vector.length || vector.length > MAX_DIMENSIONS
-            || vector.some(value => typeof value !== 'number' || !Number.isFinite(value))) throw fault('INVALID_RESPONSE');
+    const result = Array.from(vectors, vector => {
+        vectorScale(vector);
         if (!size) size = vector.length;
         if (vector.length !== size) throw fault('DIMENSION_MISMATCH');
-        const magnitude = Math.hypot(...vector);
-        if (!Number.isFinite(magnitude) || magnitude === 0) throw fault('INVALID_RESPONSE');
         return [...vector];
     });
     return result;
 }
 
 export function cosinePhoneVectors(left, right) {
+    const leftScale = vectorScale(left), rightScale = vectorScale(right);
     if (left.length !== right.length) throw fault('DIMENSION_MISMATCH');
-    // Normalise first to avoid overflowing dot products for large finite coordinates.
-    const a = Math.hypot(...left), b = Math.hypot(...right);
-    if (!Number.isFinite(a) || !Number.isFinite(b) || !a || !b) throw fault('INVALID_RESPONSE');
+    // Scale before calculating the norm, so finite coordinates cannot overflow
+    // it or lose their relative magnitudes through subnormal rounding.
+    const a = Math.hypot(...left.map(value => value / leftScale)), b = Math.hypot(...right.map(value => value / rightScale));
     let score = 0;
-    for (let i = 0; i < left.length; i++) score += (left[i] / a) * (right[i] / b);
+    for (let i = 0; i < left.length; i++) score += (left[i] / leftScale / a) * (right[i] / rightScale / b);
     if (!Number.isFinite(score)) throw fault('INVALID_RESPONSE');
     return Math.max(-1, Math.min(1, score));
 }
@@ -224,9 +238,11 @@ function indexedCache(indexedDB) {
 
 function snapshotScan(scan) {
     if (!scan || typeof scan.chatId !== 'string' || !scan.chatId || !Array.isArray(scan.sources) || !Array.isArray(scan.units)) throw fault('NO_SOURCE');
-    const sources = new Map(scan.sources.map(source => [source.key, source]));
+    const sources = new Map(scan.sources.filter(source => source && typeof source.key === 'string' && source.key)
+        .map(source => [source.key, source]));
     const units = []; let oversized = 0;
     for (const unit of scan.units) {
+        if (!unit || typeof unit !== 'object') continue;
         const source = sources.get(unit.sourceKey);
         if (typeof unit.text === 'string' && unit.text.length > MAX_TEXT) { oversized++; continue; }
         if (!source || typeof source.body !== 'string' || typeof unit.text !== 'string' || !unit.text.trim()
@@ -252,7 +268,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
     let cacheMode = cache?.mode || 'indexeddb', cacheWarning = '', loaded, syncing = null, pendingSync = null, active = 0, indexActive = false, reason = 'DISABLED';
     let currentProfile = '', currentChat = '', currentTotal = 0, currentContext, currentSnapshot, previewOrder = 0;
     let persistenceTail = Promise.resolve();
-    const records = new Map(), controllers = new Set(), operationControllers = new Set(), queue = [];
+    const records = new Map(), discardedRecords = new Map(), controllers = new Set(), operationControllers = new Set(), queue = [];
     const persistence = cache || indexedCache(indexedDB);
 
     function browserScope() {
@@ -272,8 +288,8 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         if (signal?.aborted) throw fault('CANCELLED');
         assertCurrent(ctx, false);
         if (value == null) return { key: '', credentialProfile: '' };
-        if (typeof value.key !== 'string' || typeof value.credentialProfile !== 'string'
-            || value.key.length > 4096 || /[\r\n\0]/.test(value.key) || value.credentialProfile.length > 2304) throw fault('KEY_STORAGE_ERROR');
+        if (!validBrowserKey(value.key) || typeof value.credentialProfile !== 'string'
+            || value.credentialProfile.length > 2304) throw fault('KEY_STORAGE_ERROR');
         return { key: value.key.trim(), credentialProfile: value.credentialProfile };
     }
     function liveBrowserAccount(ctx) {
@@ -402,7 +418,13 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         if (!loaded) loaded = (async () => {
             try {
                 const list = await cacheDeadline(() => persistence.loadAll());
+                const observedDimensions = new Map();
                 for (const record of Array.isArray(list) ? list : []) {
+                    // Invalid vectors still occupy the durable cache. Remember only
+                    // their ownership so an explicit scoped clear can remove them.
+                    if (record && typeof record.key === 'string' && typeof record.scope === 'string' && typeof record.chatId === 'string') {
+                        discardedRecords.set(record.key, { key: record.key, scope: record.scope, chatId: record.chatId });
+                    }
                     if (!record || typeof record.key !== 'string' || typeof record.scope !== 'string' || typeof record.profile !== 'string'
                         || typeof record.chatId !== 'string' || typeof record.id !== 'string' || typeof record.text !== 'string'
                         || typeof record.sourceVersion !== 'string' || record.text.length > MAX_TEXT) continue;
@@ -410,9 +432,13 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                         const dimensions = JSON.parse(record.profile)?.dimensions;
                         if (!Number.isInteger(dimensions) || dimensions < 0 || dimensions > MAX_DIMENSIONS) continue;
                         const [vector] = validatePhoneVectors([record.vector], 1, dimensions);
+                        const cohort = JSON.stringify([record.scope, record.profile]);
+                        if (observedDimensions.has(cohort) && observedDimensions.get(cohort) !== vector.length) continue;
+                        observedDimensions.set(cohort, vector.length);
                         // The cache adapter may return live record objects. Keep
                         // the validated index independent of later cache edits.
                         records.set(record.key, { ...record, vector });
+                        discardedRecords.delete(record.key);
                     } catch { /* corrupt index is rebuildable */ }
                 }
             } catch { cacheMode = 'memory'; cacheWarning = 'CACHE_MEMORY'; report(reason); }
@@ -574,7 +600,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         let ctx;
         try {
             ctx = context({}, 'maintenance'); await refresh(ctx);
-            if (!clear && (typeof key !== 'string' || !key.trim() || key.length > 4096 || /[\r\n\0]/.test(key))) throw fault('INVALID_CONFIG');
+            if (!clear && (!validBrowserKey(key) || !key.trim())) throw fault('INVALID_CONFIG');
             const credentialProfile = clear ? '' : phoneBrowserCredentialProfile(getSettings());
             await schedule(async signal => {
                 assertCurrent(ctx);
@@ -601,7 +627,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
     async function fetchModels(options = {}) {
         try {
             const ctx = modelsContext(options);
-            if (options.key != null && (typeof options.key !== 'string' || options.key.length > 4096 || /[\r\n\0]/.test(options.key))) throw fault('INVALID_CONFIG');
+            if (options.key != null && !validBrowserKey(options.key)) throw fault('INVALID_CONFIG');
             const draftKey = typeof options.key === 'string' ? options.key.trim() : '';
             const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1, Math.min(20000, options.timeoutMs)) : 15000;
             const models = await schedule(async signal => {
@@ -758,6 +784,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                     const record = { ...descriptor, vector: vectors[0], used: Date.now() };
                     if (bytes(record) > MAX_BYTES) { skippedLarge = true; continue; }
                     records.set(record.key, record);
+                    discardedRecords.delete(record.key);
                     try {
                         await persistent('put', record); assertCurrent(ctx);
                         await prune(afterResponse.keys, ctx); assertCurrent(ctx);
@@ -839,11 +866,11 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                 finish({ candidates: [], reason: 'TIMEOUT' }); controller.abort();
             }, timeoutMs);
             const startedEpoch = epoch;
-            const startedSettings = JSON.stringify(getSettings());
+            let startedSettings;
             const startedScope = scope;
             if (options.signal?.aborted) { externalAbort(); return; }
             const workerOptions = { ...options, signal: controller.signal, timeoutMs };
-            try { workerContext = context(workerOptions); }
+            try { startedSettings = JSON.stringify(getSettings()); workerContext = context(workerOptions); }
             catch (error) { finish(handle(error)); return; }
             searchWork(scan, query, workerOptions, workerContext).then(finish, () => finish({ candidates: [], reason: 'NETWORK_ERROR' }));
         });
@@ -853,6 +880,13 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         try {
             ctx = context({}, 'maintenance'); await refresh(ctx); await ensureLoaded(); assertCurrent(ctx);
             await remove(record => record.scope === ctx.scope && (chatId == null || record.chatId === chatId), ctx);
+            for (const [key, record] of [...discardedRecords]) {
+                assertCurrent(ctx);
+                if (record.scope !== ctx.scope || (chatId != null && record.chatId !== chatId)
+                    || discardedRecords.get(key) !== record) continue;
+                discardedRecords.delete(key); await persistent('delete', key);
+                assertCurrent(ctx);
+            }
             assertCurrent(ctx); report('NOT_READY');
         } catch (error) { handle(error, ctx); }
         return state();

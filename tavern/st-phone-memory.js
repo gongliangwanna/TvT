@@ -120,6 +120,8 @@ export function createPhoneMemoryAdapter(host = {}) {
     let previewOwner = null;
     const bindings = [], warnings = new Set(), knownBlocks = new Map();
     const fallbackSettings = { enabled: true };
+    const tokenizerTimeoutMs = Number.isFinite(host.tokenizerTimeoutMs)
+        ? Math.max(1, Math.min(15000, host.tokenizerTimeoutMs)) : 3000;
     let indexTimer = null, vectorControls = null, vectorUiBusy = false;
     const contextCall = (name, ...args) => {
         const ctx = getContext();
@@ -129,8 +131,11 @@ export function createPhoneMemoryAdapter(host = {}) {
     function settings() {
         const ctx = getContext();
         const container = host.extensionSettings || ctx?.extensionSettings;
-        if (!container) return fallbackSettings;
-        if (!container[MEMORY_SLOT]) container[MEMORY_SLOT] = { enabled: true };
+        if (!container || typeof container !== 'object' || Array.isArray(container)) return fallbackSettings;
+        const stored = container[MEMORY_SLOT];
+        if (!stored || typeof stored !== 'object' || Array.isArray(stored)) container[MEMORY_SLOT] = { enabled: true };
+        // 旧配置可只有向量设置；缺失开关时与界面使用同一个默认值。
+        if (typeof container[MEMORY_SLOT].enabled !== 'boolean') container[MEMORY_SLOT].enabled = true;
         return container[MEMORY_SLOT];
     }
     function vectorSettings() {
@@ -169,6 +174,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         onStatus: state => renderVectorStatus(state),
     });
     function renderVectorStatus(state = vectors.getState()) {
+        if (disposed) return;
         const status = getDocument()?.getElementById?.('uwu-phone-vector-status');
         if (!status) return;
         status.textContent = `${VECTOR_REASONS[state.reason] || state.reason || '向量尚未准备'}。${Number(state.cached) || 0}/${Number(state.total) || 0} 段已缓存。`
@@ -200,6 +206,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         renderVectorStatus(); return vectors.getState();
     }
     function setVectorSettings(changes) {
+        if (disposed) throw Object.assign(new Error('CANCELLED'), { reason: 'CANCELLED' });
         const next = { ...vectorSettings(), ...changes };
         const supplied = String(next.url || '').trim();
         if (supplied) {
@@ -227,11 +234,13 @@ export function createPhoneMemoryAdapter(host = {}) {
         return clone(next);
     }
     async function saveVectorKey(key, { clear = false } = {}) {
+        if (disposed) return { ok: false, reason: 'CANCELLED' };
         invalidate('VECTOR_CONFIG');
         const result = await vectors.saveKey(String(key || ''), { clear });
         scheduleVectorIndex(); renderVectorStatus(); return result;
     }
     async function testVectorConnection() {
+        if (disposed) return { ok: false, reason: 'CANCELLED' };
         const result = await vectors.testConnection();
         renderVectorStatus(); return result;
     }
@@ -242,6 +251,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         catch (error) { return { ok: false, reason: error?.reason || 'BROWSER_NETWORK_ERROR', models: [] }; }
     }
     async function clearVectorCache() {
+        if (disposed) return { ok: false, reason: 'CANCELLED' };
         const chatId = chatIdentity(getContext());
         if (!chatId) {
             const status = getDocument()?.getElementById?.('uwu-phone-vector-status');
@@ -253,6 +263,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         renderVectorStatus();
     }
     function warn(reason, detail) {
+        if (disposed) return;
         const key = `${reason}:${detail || ''}`;
         if (warnings.has(key)) return;
         warnings.add(key);
@@ -260,9 +271,11 @@ export function createPhoneMemoryAdapter(host = {}) {
         (host.notify || globalThis.toastr?.warning)?.(REASONS[reason] || reason, '小手机剧情补充');
     }
     function clearSlot() {
+        if (disposed) return;
         contextCall('setExtensionPrompt', MEMORY_SLOT, '', 1, 1, false, 0, () => false);
     }
     function updatePreview(changes) {
+        if (disposed) return;
         preview = { ...preview, ...changes };
         const status = getDocument()?.getElementById?.('uwu-phone-memory-status');
         if (status) status.textContent = REASONS[preview.reason] || preview.reason;
@@ -275,9 +288,10 @@ export function createPhoneMemoryAdapter(host = {}) {
         return clone({ ...preview, explanation: REASONS[preview.reason] || preview.reason });
     }
     function invalidate(reason = 'SOURCE_CHANGED', { reindex = true } = {}) {
+        if (disposed) return;
         sequence++;
         vectors.cancel();
-        if (active) { active.invalid = true; active.abortCleanup?.(); }
+        if (active) { active.invalid = true; active.vectorAbort?.abort(); active.abortCleanup?.(); }
         active = null; assemblyOwner = null;
         topicRefs = []; topicChat = null; topicScope = null; manual = null;
         previewOwner = { scope: userScope(), chatId: chatIdentity(getContext()) };
@@ -292,6 +306,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         }
     }
     function setEnabled(enabled) {
+        if (disposed) return;
         const wasEnabled = settings().enabled !== false;
         settings().enabled = !!enabled;
         if (!enabled) invalidate('DISABLED');
@@ -312,13 +327,15 @@ export function createPhoneMemoryAdapter(host = {}) {
             && typeof (host.getTokenCountAsync || ctx?.getTokenCountAsync) === 'function';
     }
     function start(type, options = {}, dryRun = false) {
+        if (disposed) return;
         getPreview();
         clearSlot();
         const ctx = getContext();
+        const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
         const scope = userScope();
         const mode = String(type || '').toLowerCase();
-        const lastFloor = (ctx?.chat?.length ?? 0) - 1;
-        const last = ctx?.chat?.[lastFloor];
+        const lastFloor = chat.length - 1;
+        const last = chat[lastFloor];
         const eligible = !dryRun && NORMAL_TYPES.has(mode) && !options?.quiet_prompt
             && !options?.quietToLoud && !options?.quietImage && !options?.depth && !options?.internal;
         if (!eligible && active?.eligible && !active.invalid && active.scope === scope) {
@@ -331,12 +348,12 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (active) { active.invalid = true; active.vectorAbort?.abort(); active.abortCleanup?.(); }
         const initialTarget = ['regenerate', 'swipe', 'continue'].includes(mode) && core.isCompletedReply(last)
             ? lastFloor : null;
-        const startLength = ctx?.chat?.length ?? 0, startCutoff = initialTarget ?? startLength;
+        const startLength = chat.length, startCutoff = initialTarget ?? startLength;
         active = { id: `m${Date.now().toString(36)}_${++sequence}_${Math.random().toString(36).slice(2, 10)}`,
             serial: sequence, chatId: chatIdentity(ctx), scope, mode, options, eligible,
             // 自动隐藏的角色楼仍是目标；真正的系统/内部楼和手机推送不能成为主回复目标。
             initialTarget, startLength, startCutoff,
-            startPrefix: prefixSnapshot(ctx?.chat || [], startCutoff, true),
+            startPrefix: prefixSnapshot(chat, startCutoff, true),
             startTargetVersion: initialTarget === null ? null : replyStartSnapshot(last, initialTarget),
             selected: [], sent: false, replySeen: false, invalid: false, vectorAbort: new AbortController(),
             vectorProfile: vectorProfileSnapshot() };
@@ -395,7 +412,7 @@ export function createPhoneMemoryAdapter(host = {}) {
     }
     function currentValid(op, allowReply = false) {
         const ctx = getContext();
-        if (!op || active !== op || op.invalid || !settings().enabled || chatIdentity(ctx) !== op.chatId
+        if (disposed || !op || active !== op || op.invalid || !settings().enabled || chatIdentity(ctx) !== op.chatId
             || userScope() !== op.scope) return false;
         if (op.vectorProfile !== vectorProfileSnapshot()) return false;
         if (!Array.isArray(ctx.chat) || prefixSnapshot(ctx.chat, op.cutoff) !== op.prefix) return false;
@@ -409,7 +426,26 @@ export function createPhoneMemoryAdapter(host = {}) {
         }
         return true;
     }
+    function countOperationTokens(op, text) {
+        // 宿主 tokenizer 可能一直不返回。超时或取消后让主生成继续，迟到结果只属于旧调用。
+        return new Promise((resolve, reject) => {
+            const signal = op.vectorAbort.signal;
+            let settled = false, timer;
+            const finish = (error, value) => {
+                if (settled) return;
+                settled = true; clearTimeout(timer); signal.removeEventListener('abort', onAbort);
+                if (error) reject(error); else resolve(value);
+            };
+            const onAbort = () => finish(Object.assign(new Error('CANCELLED'), { reason: 'CANCELLED' }));
+            signal.addEventListener('abort', onAbort, { once: true });
+            if (signal.aborted) { onAbort(); return; }
+            timer = setTimeout(() => finish(new Error('TOKENIZER_TIMEOUT')), tokenizerTimeoutMs);
+            Promise.resolve().then(() => { if (!settled) return contextCall('getTokenCountAsync', text); })
+                .then(value => finish(null, value), error => finish(error));
+        });
+    }
     async function interceptor(_coreChat, contextSize, _abort, type) {
+        if (disposed) return;
         clearSlot();
         const op = active, ctx = getContext();
         if (!op || !op.eligible || op.mode !== String(type || '').toLowerCase()) {
@@ -497,7 +533,7 @@ export function createPhoneMemoryAdapter(host = {}) {
                     selected: [], query: op.query, chars: 0, tokens: 0 }); return;
             }
             const budget = await core.fitBudget(decision.selected, {
-                countTokens: text => contextCall('getTokenCountAsync', text),
+                countTokens: text => countOperationTokens(op, text),
                 maxTokens: Math.min(1200, Number.isFinite(contextSize) ? Math.max(0, contextSize) : 1200),
                 operationId: op.id, query: op.query });
             if (!currentValid(op)) return;
@@ -573,7 +609,7 @@ export function createPhoneMemoryAdapter(host = {}) {
             replace = fn => {
                 for (let i = actual.length - 1; i >= 0; i--) {
                     const m = actual[i];
-                    if (!m || !('content' in m)) continue;
+                    if (!m || typeof m !== 'object' || !('content' in m)) continue;
                     const previous = contentTexts(m.content).join('');
                     m.content = mapContent(m.content, fn, knownRanges(previous));
                     // 只有本扩展移除后变空的纯消息才删除；别的空消息不归本扩展处理。
@@ -624,12 +660,13 @@ export function createPhoneMemoryAdapter(host = {}) {
         const covered = core.filterCovered(valid, texts.map(withoutKnown));
         const kept = covered.selected;
         let next = kept.length ? core.buildMemoryBlock(kept, { operationId: op.id }) : '';
-        let tokens = 0;
+        let tokens = 0, removalReason = valid.length ? 'COVERED' : 'SOURCE_CHANGED';
         try {
-            if (next) tokens = await contextCall('getTokenCountAsync', next);
+            if (next) tokens = await countOperationTokens(op, next);
             if (next && (!Number.isFinite(tokens) || tokens < 0)) throw new Error('invalid token count');
         } catch (error) {
-            next = ''; warn('TOKENIZER_ERROR');
+            next = ''; removalReason = 'TOKENIZER_ERROR';
+            if (currentValid(op)) warn('TOKENIZER_ERROR');
         }
         if (!currentValid(op) || active !== op) { replace(withoutKnown); return; }
         // 另一份最终数据可能在 token 等待期间已确认主请求发送。
@@ -646,7 +683,9 @@ export function createPhoneMemoryAdapter(host = {}) {
             return;
         }
         // 组装后不增字符或token，严格不重新选段。
-        if (next.length > op.block.length || tokens > op.tokens || next.length > 1800 || tokens > 1200) next = '';
+        if (next.length > op.block.length || tokens > op.tokens || next.length > 1800 || tokens > 1200) {
+            next = ''; removalReason = 'BUDGET';
+        }
         const previous = op.block;
         replace(text => text.split(previous).join(next));
         op.block = next; op.selected = next ? kept : []; op.tokens = next ? tokens : 0;
@@ -656,7 +695,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         op.sent = sending && !!next;
         if (!next) clearSlot();
         updatePreview({ stage: next ? (sending ? 'retained' : 'assembled') : 'removed',
-            reason: next ? op.decision.kind : valid.length ? 'COVERED' : 'SOURCE_CHANGED',
+            reason: next ? op.decision.kind : removalReason,
             selected: op.selected.map(s => ({ ref: s.ref, text: s.text })),
             chars: next.length, tokens: op.tokens });
     }
@@ -757,6 +796,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         return chatId ? core.scanSources(ctx.chat, { chatId }).units.map(s => ({ ref: s.ref, text: s.text })) : [];
     }
     function selectManual(refs) {
+        if (disposed) return false;
         getPreview();
         const ctx = getContext(), chatId = chatIdentity(ctx);
         if (!chatId || !settings().enabled || !Array.isArray(refs)) return false;
@@ -776,7 +816,9 @@ export function createPhoneMemoryAdapter(host = {}) {
         const doc = getDocument();
         if (!doc?.body || disposed) return;
         const existing = doc.getElementById('uwu-phone-memory-preview-dialog');
-        if (existing) { if (!existing.open) existing.showModal(); return; }
+        if (existing?.open) return;
+        // 原生 close 事件在下一帧才派发；不要重开即将被旧 close 回调移除的节点。
+        existing?.remove();
         mountMemoryStyles(doc);
         getPreview();
         const dialog = doc.createElement('dialog');
@@ -1266,6 +1308,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         doc.body.append(dialog); renderVectorStatus();
     }
     function showVectorSettings() {
+        if (disposed) return;
         mountVectorDialog();
         const dialog = getDocument()?.getElementById('uwu-phone-vector-dialog');
         if (!dialog || !vectorControls) return;
@@ -1326,6 +1369,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (!compatible(ctx)) { updatePreview({ reason: 'UNSUPPORTED' }); warn('UNSUPPORTED'); }
     }
     function dispose() {
+        if (disposed) return;
         vectorControls?.clearModelOptions?.();
         invalidate(); disposed = true;
         if (indexTimer !== null) { clearTimeout(indexTimer); indexTimer = null; }
@@ -1335,7 +1379,8 @@ export function createPhoneMemoryAdapter(host = {}) {
     }
     return { initialize, startGeneration: start, interceptor, invalidate, setEnabled, getPreview, selectManual, availableSources, dispose,
         getVectorSettings: () => clone(vectorSettings()), setVectorSettings,
-        getVectorState: () => clone(vectors.getState()), refreshVectorStatus: () => vectors.refreshStatus(),
+        getVectorState: () => clone(vectors.getState()),
+        refreshVectorStatus: () => disposed ? Promise.resolve({ reason: 'CANCELLED' }) : vectors.refreshStatus(),
         saveVectorKey, testVectorConnection, fetchVectorModels, prepareVectorIndex, clearVectorCache, showVectorSettings };
 }
 

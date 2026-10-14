@@ -8,14 +8,48 @@
 // yuan 更新后如果某个钩子挂不上，“酒馆互联”页面顶部会出现“挂载失败”的提示（控制台也有），照着提示修这个文件即可。
 (function () {
     const TAG = '[酒馆外挂]';
+    let hooksClosed = false;
+    let chatWatcherTimer = null;
+    const pendingHookTimers = new Set();
+    const hookObservers = new Set();
+    function scheduleHookTimer(callback, delay) {
+        if (hooksClosed) return null;
+        const timer = setTimeout(() => {
+            pendingHookTimers.delete(timer);
+            if (hooksClosed) return;
+            try { Promise.resolve(callback()).catch(e => console.warn(`${TAG} 延迟操作失败：`, e)); }
+            catch (e) { console.warn(`${TAG} 延迟操作失败：`, e); }
+        }, delay);
+        pendingHookTimers.add(timer);
+        return timer;
+    }
+    function cancelHookTimer(timer) {
+        clearTimeout(timer);
+        pendingHookTimers.delete(timer);
+    }
+    function captureBindingTarget(charId) {
+        try {
+            const binding = window.TavernSync?.findBindingForChar(charId);
+            return binding ? { binding, charId, avatar: binding.stCharAvatar, file: binding.stChatFile } : null;
+        } catch (e) { console.warn(`${TAG} 读取延迟操作的酒馆绑定失败：`, e); return null; }
+    }
+    function bindingTargetIsCurrent(target) {
+        try {
+            return !hooksClosed && target && window.TavernSync?.findBindingForChar(target.charId) === target.binding
+                && target.binding.uwuCharId === target.charId && target.binding.stCharAvatar === target.avatar
+                && target.binding.stChatFile === target.file;
+        } catch (e) { console.warn(`${TAG} 核对延迟操作的酒馆绑定失败：`, e); return false; }
+    }
     // 文件版本：界面上已不显示，排查时可以临时显示出来（见 tavern_sync.js 的 SYNC_VERSION）
     const HOOKS_VERSION = '2026-09-22 f';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是小手机更新后改了结构，需要调整 tavern/tavern_hooks.js。`;
         // 记到“酒馆互联”页面顶部的问题记录里（手机上看控制台不方便）
-        if (window.TavernSync && typeof window.TavernSync.reportIssue === 'function') window.TavernSync.reportIssue(text);
-        else console.error(`${TAG} ${text}`);
+        try {
+            if (window.TavernSync && typeof window.TavernSync.reportIssue === 'function') window.TavernSync.reportIssue(text);
+            else console.error(`${TAG} ${text}`);
+        } catch (e) { console.error(`${TAG} ${text}`, e); }
     }
 
     // ========== 1. “酒馆互联”页面 ==========
@@ -64,9 +98,12 @@
 
     // 让外挂加的按钮始终排在最后：yuan 以后如果用代码往同一处再加按钮，就把我们的挪回末尾
     function keepLast(container, item) {
-        new MutationObserver(() => {
+        const observer = new MutationObserver(() => {
+            if (hooksClosed) return;
             if (item.parentNode === container && container.lastElementChild !== item) container.appendChild(item);
-        }).observe(container, { childList: true });
+        });
+        hookObservers.add(observer);
+        observer.observe(container, { childList: true });
     }
 
     // ========== 3. 聊天页“+”面板里的“推送酒馆”按钮 ==========
@@ -215,11 +252,16 @@
         const binding = window.TavernSync.findBindingForChar(char.id);
         if (binding && removedReplies.length) {
             binding.keptIds = [...(Array.isArray(binding.keptIds) ? binding.keptIds : []), ...removedReplies.map(m => m.id)].slice(-500);
-            if (typeof saveData === 'function') saveData();
+            // 保护已在内存中生效。保存失败不能让快照丢失，也不能留下未处理的 Promise 拒绝。
+            if (typeof saveData === 'function') {
+                try { Promise.resolve(saveData()).catch(e => console.warn(`${TAG} 保存重新生成保护记录失败：`, e)); }
+                catch (e) { console.warn(`${TAG} 保存重新生成保护记录失败：`, e); }
+            }
         }
         return {
             char,
             binding,
+            bindingTarget: binding ? [binding.uwuCharId, binding.stCharAvatar, binding.stChatFile] : null,
             anchorTime: Number.isFinite(anchorTime) ? anchorTime : null,
             removedFloors: removed.filter(m => m.fromTavern),
             removedReplies,
@@ -230,28 +272,34 @@
     // AI 回完之后：新回复放回原位置；酒馆里的旧回复原地换成新回复；酒馆楼层放回来
     async function finishRegenerate(regen) {
         const { char, binding } = regen;
-        const newReplies = char.history.filter(m => m && !regen.idsBefore.has(m.id) && !m.fromTavern);
+        const newReplies = (Array.isArray(char.history) ? char.history : [])
+            .filter(m => m && !regen.idsBefore.has(m.id) && !m.fromTavern && m.role !== 'user');
 
         if (regen.removedFloors.length && regen.anchorTime != null) {
             newReplies.forEach((m, i) => { m.timestamp = regen.anchorTime + i + 1; });
         }
         const oldIds = regen.removedReplies.map(m => m.id);
-        if (binding && oldIds.length && !newReplies.length) {
-            // 这次没生成出新回复（出错、断网）：旧回复在小手机里已经被 yuan 删掉了，而且 yuan 恢复旧版本时
-            // 会给消息换新编号，这几条不会再回来。不再保护它们，下次把删除推送到酒馆时一起删掉，两边保持一致
-            const oldSet = new Set(oldIds);
-            binding.keptIds = (binding.keptIds || []).filter(id => !oldSet.has(id));
-        }
-        if (binding && oldIds.length && newReplies.length && !window.TavernSync.mayBeInTavern(binding, oldIds)) {
-            // 旧回复从没推到过酒馆（小手机自己的推送记录里查不到）：不用去酒馆替换，也就不会因为连不上酒馆报错。
-            // 新回复当成普通的未推送消息，开了自动推送就照常推过去
-            const oldSet = new Set(oldIds);
-            binding.keptIds = (binding.keptIds || []).filter(id => !oldSet.has(id));
-        } else if (binding && oldIds.length && newReplies.length) {
-            const oldSet = new Set(oldIds);
-            const dropKept = () => { binding.keptIds = (binding.keptIds || []).filter(id => !oldSet.has(id)); };
-            try {
+        const oldSet = new Set(oldIds);
+        const dropKept = () => {
+            if (binding) binding.keptIds = (Array.isArray(binding.keptIds) ? binding.keptIds : []).filter(id => !oldSet.has(id));
+        };
+        const targetStillCurrent = () => !hooksClosed && binding && window.TavernSync?.findBindingForChar(char.id) === binding
+            && regen.bindingTarget.every((value, index) => value === [binding.uwuCharId, binding.stCharAvatar, binding.stChatFile][index]);
+        try {
+            // 等待 AI 时换绑/解绑了，不可拿旧回复去替换新聊天里的同编号消息。
+            if (binding && !targetStillCurrent()) { dropKept(); return; }
+            if (binding && oldIds.length && !newReplies.length) {
+                // 这次没生成出新回复（出错、断网）：旧回复在小手机里已经被 yuan 删掉了，而且 yuan 恢复旧版本时
+                // 会给消息换新编号，这几条不会再回来。不再保护它们，下次把删除推送到酒馆时一起删掉，两边保持一致
+                dropKept();
+            }
+            if (binding && oldIds.length && newReplies.length && !window.TavernSync.mayBeInTavern(binding, oldIds)) {
+                // 旧回复从没推到过酒馆（小手机自己的推送记录里查不到）：不用去酒馆替换，也就不会因为连不上酒馆报错。
+                // 新回复当成普通的未推送消息，开了自动推送就照常推过去
+                dropKept();
+            } else if (binding && oldIds.length && newReplies.length) {
                 const r = await window.TavernSync.replaceRegeneratedInTavern(binding, oldIds, newReplies);
+                if (!targetStillCurrent()) { dropKept(); return; }
                 if (r.replaced) {
                     // 新回复已经在酒馆里了（替换进去的），不要再推一次
                     newReplies.forEach(m => { m.skipTavernPush = true; });
@@ -262,21 +310,25 @@
                     binding.lastPushedMsgId = before.length ? before[before.length - 1].id : null;
                 }
                 dropKept();   // 旧回复在酒馆里已经被换掉（或本来就没有），不用再保护
-            } catch (e) {
+            }
+        } catch (e) {
+            if (targetStillCurrent() && oldIds.length && newReplies.length) {
                 // 替换失败（比如连不上酒馆）：退回“不推送新回复、酒馆保留旧回复”，免得酒馆里出现重复或错位
-                window.TavernSync.reportIssue('重新生成后替换酒馆里的旧回复失败：' + e.message + '。酒馆里保留了旧回复，可以去酒馆手动修改');
                 newReplies.forEach(m => { m.skipTavernPush = true; });
                 if (oldSet.has(binding.lastPushedMsgId)) binding.lastPushedMsgId = newReplies[newReplies.length - 1].id;
+                window.TavernSync.reportIssue('重新生成后替换酒馆里的旧回复失败：' + e.message + '。酒馆里保留了旧回复，可以去酒馆手动修改');
+            } else dropKept();
+        } finally {
+            // 查询推送记录、网络替换或问题上报失败时，仍必须先恢复手机里的酒馆卡片。
+            if (regen.removedFloors.length) {
+                // 生成期间如果自动同步过（切出去又切回来），同一楼会被重新导入一份，放回时去掉那份（见 putBackFloors）
+                window.TavernSync.putBackFloors(char, regen.removedFloors);
             }
-        }
-        if (regen.removedFloors.length) {
-            // 生成期间如果自动同步过（切出去又切回来），同一楼会被重新导入一份，放回时去掉那份（见 putBackFloors）
-            window.TavernSync.putBackFloors(char, regen.removedFloors);
-        }
-        stripTavernFromVersions(char);   // 别让酒馆楼层被存进“旧版本”里
-        if (typeof saveData === 'function') await saveData();
-        if (typeof renderMessages === 'function' && currentChatId === char.id) {
-            try { renderMessages(false, true); } catch (e) { /* 画不出来不影响数据 */ }
+            stripTavernFromVersions(char);   // 别让酒馆楼层被存进“旧版本”里
+            if (!hooksClosed && typeof saveData === 'function') await saveData();
+            if (!hooksClosed && typeof renderMessages === 'function' && currentChatType === 'private' && currentChatId === char.id) {
+                try { renderMessages(false, true); } catch (e) { /* 画不出来不影响数据 */ }
+            }
         }
     }
 
@@ -290,9 +342,9 @@
         window.getAiReply = async function (chatId, chatType) {
             // 记住本轮用户发的图片。主聊天模型可能直接看图回答，却没有把描述存进消息。
             let imageIds = [];
-            if (chatType === 'private' && window.TavernSync?.findBindingForChar(chatId)) {
+            try { if (chatType === 'private' && window.TavernSync?.findBindingForChar(chatId)) {
                 const chat = db.characters.find(c => c.id === chatId);
-                const history = chat?.history || [];
+                const history = Array.isArray(chat?.history) ? chat.history : [];
                 let lastReply = -1;
                 for (let i = history.length - 1; i >= 0; i--) {
                     if (history[i]?.role === 'assistant' || history[i]?.role === 'char') { lastReply = i; break; }
@@ -301,7 +353,7 @@
                     .filter(m => m?.role === 'user' && Array.isArray(m.parts)
                         && m.parts.some(p => p?.type === 'image' && !p.description))
                     .map(m => m.id);
-            }
+            } } catch (e) { console.warn(`${TAG} 记录本轮待识图消息失败：`, e); }
             let regen = null;
             try { if (window.TavernSync) regen = beginRegenerate(chatId, chatType); }
             catch (e) { fail('处理重新生成出错：' + e.message); }
@@ -315,14 +367,18 @@
                     catch (e) { fail('重新生成后整理酒馆楼层出错：' + e.message); }
                 }
             }
-            if (result === true && chatType === 'private' && window.TavernSync) {
+            if (!hooksClosed && result === true && chatType === 'private' && window.TavernSync) {
                 if (imageIds.length) {
-                    const binding = window.TavernSync.findBindingForChar(chatId);
-                    if (window.TavernSync.pushImageDescriptionsFor(binding)) {
-                        window.TavernSync._startImageDescriptions({ ...binding }, imageIds);
-                    }
+                    try {
+                        const binding = window.TavernSync.findBindingForChar(chatId);
+                        if (binding && window.TavernSync.pushImageDescriptionsFor(binding)) {
+                            Promise.resolve(window.TavernSync._startImageDescriptions({ ...binding }, imageIds))
+                                .catch(e => console.warn(`${TAG} 图片描述准备失败：`, e));
+                        }
+                    } catch (e) { console.warn(`${TAG} 图片描述准备失败：`, e); }
                 }
-                window.TavernSync.autoPushIfNeeded(chatId).catch(e => console.warn(`${TAG} 自动推送失败：`, e));
+                try { Promise.resolve(window.TavernSync.autoPushIfNeeded(chatId)).catch(e => console.warn(`${TAG} 自动推送失败：`, e)); }
+                catch (e) { console.warn(`${TAG} 自动推送失败：`, e); }
             }
             return result;
         };
@@ -335,15 +391,17 @@
     // 每个角色各记各的：发完消息 3 秒内切到别的角色，前一个角色这次推送不会被取消
     const sendPushTimers = new Map();
     function schedulePushAfterSend(chatId, tries) {
-        clearTimeout(sendPushTimers.get(chatId));
-        sendPushTimers.set(chatId, setTimeout(() => {
+        cancelHookTimer(sendPushTimers.get(chatId));
+        sendPushTimers.set(chatId, scheduleHookTimer(() => {
             sendPushTimers.delete(chatId);
             const generating = (typeof isGenerating !== 'undefined') && isGenerating;
             if (generating) {
-                if (tries < 20) schedulePushAfterSend(chatId, tries + 1);   // AI 还在回，最多再等 1 分钟
+                // 慢生成超过一分钟后失败时也不能丢掉之前发送的用户消息；真正关闭页面会取消定时器。
+                schedulePushAfterSend(chatId, tries + 1);
                 return;
             }
-            if (window.TavernSync) window.TavernSync.autoPushIfNeeded(chatId).catch(() => {});
+            try { if (window.TavernSync) Promise.resolve(window.TavernSync.autoPushIfNeeded(chatId)).catch(() => {}); }
+            catch (e) { console.warn(`${TAG} 发消息后自动推送失败：`, e); }
         }, 3000));
     }
 
@@ -353,12 +411,20 @@
         }
         const originalSend = window.sendMessage;
         window.sendMessage = async function () {
+            let chat = null, before = null;
+            try {
+                if (typeof currentChatType !== 'undefined' && currentChatType === 'private' && typeof currentChatId !== 'undefined') {
+                    chat = db.characters.find(c => c?.id === currentChatId);
+                    if (chat) before = new Set(Array.isArray(chat.history) ? chat.history : []);
+                }
+            } catch (e) { /* 没有有效的私聊，不安排推送 */ }
             const result = await originalSend.apply(this, arguments);
             try {
-                const chatId = (typeof currentChatType !== 'undefined' && currentChatType === 'private'
-                    && typeof currentChatId !== 'undefined') ? currentChatId : null;
-                if (chatId && window.TavernSync && window.TavernSync.findBindingForChar(chatId)) {
-                    schedulePushAfterSend(chatId, 0);
+                // 原发送会等待保存。期间切聊天时仍应推发送时的角色；空输入/取消发送不触发推送。
+                const sent = chat && before && Array.isArray(chat.history)
+                    && chat.history.some(m => m && m.role === 'user' && !m.fromTavern && !before.has(m));
+                if (!hooksClosed && sent && db.characters.includes(chat) && window.TavernSync?.findBindingForChar(chat.id)) {
+                    schedulePushAfterSend(chat.id, 0);
                 }
             } catch (e) { fail('发消息后自动推送出错：' + e.message); }
             return result;
@@ -376,7 +442,8 @@
         let lastChatId = null;
         let knownIds = null;
         let deletionTimer = null;
-        setInterval(() => {
+        chatWatcherTimer = setInterval(() => {
+            if (hooksClosed) return;
             try { ensureGrouped(); } catch (e) { /* 分组失败不影响同步 */ }
             // 一次性清掉旧版“绑定世界书/跟随”留下的数据（那功能已删掉）
             if (window.TavernSync) { try { window.TavernSync.cleanupLegacyWorldMemory(); } catch (e) { /* 清理失败不影响别的 */ } }
@@ -400,8 +467,8 @@
             if (knownIds) {
                 for (const id of knownIds) {
                     if (!ids.has(id)) {
-                        clearTimeout(deletionTimer);
-                        deletionTimer = setTimeout(() => TS.autoDeletionSyncIfNeeded(chatId).catch(() => {}), 1500);
+                        cancelHookTimer(deletionTimer);
+                        deletionTimer = scheduleHookTimer(() => TS.autoDeletionSyncIfNeeded(chatId), 1500);
                         break;
                     }
                 }
@@ -560,7 +627,7 @@
     let verifiedOnce = false;
     function verifyHidden(el) {
         if (verifiedOnce || !el) return;
-        setTimeout(() => {
+        scheduleHookTimer(() => {
             try {
                 if (verifiedOnce) return;
                 const visible = !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
@@ -662,14 +729,16 @@
         if (!area) return fail('找不到聊天消息区 #message-area，酒馆剧情不会整组折叠');
         observedArea = area;
         groupObserver = new MutationObserver((records) => {
+            if (hooksClosed) return;
             // 只是我们自己插入/删除组头组尾引起的变化 → 不理会，否则会“分组 → 触发 → 再分组”无限循环
             const ours = (n) => n.nodeType === 1 && n.classList.contains('tavern-group-bar');
             if (records.every(r => [...r.addedNodes, ...r.removedNodes].every(ours))) return;
             if (regroupScheduled) return;
             regroupScheduled = true;
             // 等 yuan 这一轮把消息都画完再分组
-            Promise.resolve().then(() => { regroupScheduled = false; regroupTavernFloors(); });
+            Promise.resolve().then(() => { regroupScheduled = false; if (!hooksClosed) regroupTavernFloors(); });
         });
+        hookObservers.add(groupObserver);
         groupObserver.observe(area, { childList: true });
         regroupTavernFloors();
     }
@@ -741,21 +810,25 @@
                     ? db.characters.find(c => c.id === currentChatId) : null;
                 before = char && Array.isArray(char.history) ? char.history.filter(m => m && m.fromTavern) : [];
             } catch (e) { char = null; }
-            const result = await originalRestore(userMsgId, versionIndex);
-            if (char && before.length && window.TavernSync) {
-                try {
-                    const contents = new Set(before.map(m => m.content));
-                    // 1. 删掉恢复进来的假副本（没有酒馆标记，但内容和某条酒馆楼层一模一样）
-                    char.history = char.history.filter(m => !(m && !m.fromTavern && m.role === 'system' && contents.has(m.content)));
-                    // 2. 把真正的酒馆卡片放回来（恢复旧版本时它们被一起删掉了），再按时间排好
-                    const present = new Set(char.history.map(m => m && m.id));
-                    const missing = before.filter(m => !present.has(m.id));
-                    window.TavernSync.putBackFloors(char, missing);
-                    window.TavernSync.placeTavernFloors(char);
-                    stripTavernFromVersions(char);
-                    if (typeof saveData === 'function') await saveData();
-                    if (typeof renderMessages === 'function' && currentChatId === char.id) renderMessages(false, true);
-                } catch (e) { fail('切换消息版本后整理酒馆剧情出错：' + e.message); }
+            let result;
+            try { result = await originalRestore(userMsgId, versionIndex); }
+            finally {
+                // 原恢复可能已删除卡片、随后保存失败；失败同样要把卡片放回去。
+                if (char && before.length && window.TavernSync) {
+                    try {
+                        const contents = new Set(before.map(m => m.content));
+                        // 1. 删掉恢复进来的假副本（没有酒馆标记，但内容和某条酒馆楼层一模一样）
+                        char.history = char.history.filter(m => !(m && !m.fromTavern && m.role === 'system' && contents.has(m.content)));
+                        // 2. 把真正的酒馆卡片放回来（恢复旧版本时它们被一起删掉了），再按时间排好
+                        const present = new Set(char.history.map(m => m && m.id));
+                        const missing = before.filter(m => !present.has(m.id));
+                        window.TavernSync.putBackFloors(char, missing);
+                        window.TavernSync.placeTavernFloors(char);
+                        stripTavernFromVersions(char);
+                        if (typeof saveData === 'function') await saveData();
+                        if (typeof renderMessages === 'function' && currentChatType === 'private' && currentChatId === char.id) renderMessages(false, true);
+                    } catch (e) { fail('切换消息版本后整理酒馆剧情出错：' + e.message); }
+                }
             }
             return result;
         };
@@ -805,24 +878,27 @@
         }
         const originalSaveEdit = window.saveMessageEdit;
         window.saveMessageEdit = async function () {
-            let target = null, oldContent = null, charId = null;
+            let target = null, oldContent = null, char = null, bindingTarget = null;
             try {
                 const id = (typeof editingMessageId !== 'undefined') ? editingMessageId : null;
                 if (id && typeof currentChatType !== 'undefined' && currentChatType === 'private') {
-                    const char = db.characters.find(c => c.id === currentChatId);
+                    char = db.characters.find(c => c?.id === currentChatId);
                     const msg = char && Array.isArray(char.history) ? char.history.find(m => m && m.id === id) : null;
-                    if (msg && msg.fromTavern) { target = msg; oldContent = msg.content; charId = char.id; }
+                    if (msg && msg.fromTavern) {
+                        target = msg; oldContent = msg.content; bindingTarget = captureBindingTarget(char.id);
+                    }
                 }
             } catch (e) { target = null; }
 
             const result = await originalSaveEdit.apply(this, arguments);
 
             try {
-                if (target && target.content !== oldContent) {
-                    const binding = window.TavernSync && window.TavernSync.findBindingForChar(charId);
-                    if (!binding) {
-                        showToast('这个角色没有绑定酒馆，改动只留在小手机里');
+                if (!hooksClosed && target && target.content !== oldContent && db.characters.includes(char)
+                    && Array.isArray(char.history) && char.history.includes(target)) {
+                    if (!bindingTargetIsCurrent(bindingTarget)) {
+                        showToast(bindingTarget ? '酒馆绑定已变化，改动只留在小手机里' : '这个角色没有绑定酒馆，改动只留在小手机里');
                     } else {
+                        const binding = bindingTarget.binding;
                         const r = await window.TavernSync.writeBackFloorEdit(binding, target, oldContent);
                         showToast(r.ok
                             ? (r.what === 'summary' ? `已改好酒馆第 ${r.floor} 楼的摘要` : `已写回酒馆第 ${r.floor} 楼`)
@@ -842,26 +918,31 @@
     function callMsgSnapshot(chat) {
         const map = new Map();
         if (chat && Array.isArray(chat.history)) {
-            chat.history.forEach(m => { if (m && m.callRecordId) map.set(m.id, m.content); });
+            chat.history.forEach(m => {
+                if (m && m.callRecordId) map.set(m.id, { message: m, callRecordId: m.callRecordId, content: m.content });
+            });
         }
         return map;
     }
 
-    async function syncCallSummaryToTavern(chat, before) {
-        if (!chat || !window.TavernSync) return;
-        const binding = window.TavernSync.findBindingForChar(chat.id);
-        if (!binding) return;
-        for (const m of (chat.history || [])) {
-            if (!m || !m.callRecordId || !before.has(m.id)) continue;
-            const oldContent = before.get(m.id);
-            if (m.content === oldContent) continue;
+    async function syncCallSummaryToTavern(chat, before, bindingTarget) {
+        if (!chat || !bindingTargetIsCurrent(bindingTarget) || !db.characters.includes(chat) || !Array.isArray(chat.history)) return false;
+        let retry = false;
+        for (const m of chat.history) {
+            const snapshot = before.get(m?.id);
+            if (!snapshot || snapshot.message !== m || m.callRecordId !== snapshot.callRecordId || m.content === snapshot.content) continue;
+            if (!bindingTargetIsCurrent(bindingTarget) || !db.characters.includes(chat) || !chat.history.includes(m)) return false;
             try {
-                const r = await window.TavernSync.updatePushedMessage(binding, m, oldContent);
-                if (r.updated) showToast('通话总结已补进酒馆');
+                const r = await window.TavernSync.updatePushedMessage(bindingTarget.binding, m, snapshot.content);
+                before.delete(m.id); // 已处理的记录不随其他失败记录再次写回。
+                if (r.updated && bindingTargetIsCurrent(bindingTarget)) showToast('通话总结已补进酒馆');
             } catch (e) {
-                window.TavernSync.reportIssue('把通话总结补进酒馆失败：' + e.message, 'push');
+                retry = true;
+                try { window.TavernSync.reportIssue('把通话总结补进酒馆失败：' + e.message, 'push'); }
+                catch (error) { console.warn(`${TAG} 通话总结问题记录失败：`, error); }
             }
         }
+        return retry;
     }
 
     function hookCallSummary() {
@@ -871,17 +952,22 @@
         const originalCallSummary = window.generateCallSummary;
         window.generateCallSummary = async function (chat) {
             const before = callMsgSnapshot(chat);
+            const bindingTarget = chat ? captureBindingTarget(chat.id) : null;
             const summary = await originalCallSummary.apply(this, arguments);
-            if (summary && chat && chat.id) {
+            if (summary && chat && chat.id && before.size && bindingTargetIsCurrent(bindingTarget)) {
                 // yuan 拿到总结后才写进那条消息，多看几次，等它写完
                 let tries = 0;
-                const check = () => {
+                const check = async () => {
+                    if (!bindingTargetIsCurrent(bindingTarget) || !db.characters.includes(chat) || !Array.isArray(chat.history)) return;
                     tries++;
-                    const changed = (chat.history || []).some(m => m && m.callRecordId && before.has(m.id) && m.content !== before.get(m.id));
-                    if (changed) { syncCallSummaryToTavern(chat, before).catch(() => {}); return; }
-                    if (tries < 8) setTimeout(check, 700);
+                    const changed = chat.history.some(m => {
+                        const snapshot = before.get(m?.id);
+                        return snapshot && snapshot.message === m && m.callRecordId === snapshot.callRecordId && m.content !== snapshot.content;
+                    });
+                    if (changed && !await syncCallSummaryToTavern(chat, before, bindingTarget)) return;
+                    if (tries < 8) scheduleHookTimer(check, 700);
                 };
-                setTimeout(check, 700);
+                scheduleHookTimer(check, 700);
             }
             return summary;
         };
@@ -901,10 +987,10 @@
     addScreen();
     addMenuItem();
     addChatPushButton();
-    document.addEventListener('DOMContentLoaded', () => {
+    function applyHooks() {
         // 保险：万一补丁被加载两次（或启动事件触发了两次），不要把钩子套两层，
         // 否则一次操作会被执行两遍（例如改一条酒馆剧情会往酒馆写两次）
-        if (window.__tavernHooksApplied) return;
+        if (hooksClosed || window.__tavernHooksApplied) return;
         window.__tavernHooksApplied = true;
         registerSettingKey();
         hookShowPanel();
@@ -920,5 +1006,18 @@
         hookChatList();
         hookMessageEdit();
         hookCallSummary();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyHooks, { once: true });
+    else applyHooks();
+    if (typeof window.addEventListener === 'function') window.addEventListener('pagehide', event => {
+        // 往返缓存中的页面会恢复同一套脚本；真正卸载才丢弃后台回调和观察器。
+        if (event.persisted || hooksClosed) return;
+        hooksClosed = true;
+        for (const timer of pendingHookTimers) clearTimeout(timer);
+        pendingHookTimers.clear(); sendPushTimers.clear();
+        if (typeof clearInterval === 'function') clearInterval(chatWatcherTimer);
+        for (const observer of hookObservers) observer.disconnect();
+        hookObservers.clear();
+        document.removeEventListener?.('DOMContentLoaded', applyHooks);
     });
 })();
