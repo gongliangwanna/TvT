@@ -122,7 +122,7 @@ export function createPhoneMemoryAdapter(host = {}) {
     const fallbackSettings = { enabled: true };
     const tokenizerTimeoutMs = Number.isFinite(host.tokenizerTimeoutMs)
         ? Math.max(1, Math.min(15000, host.tokenizerTimeoutMs)) : 3000;
-    let indexTimer = null, vectorControls = null, vectorUiBusy = false, saveSuccessTimer = null;
+    let indexTimer = null, vectorControls = null, vectorUiBusy = false, saveSuccessToast = null;
     const contextCall = (name, ...args) => {
         const ctx = getContext();
         const fn = host[name] || ctx?.[name];
@@ -988,39 +988,8 @@ export function createPhoneMemoryAdapter(host = {}) {
                 border-color:var(--uwu-memory-accent,var(--SmartThemeQuoteColor,#8ab4f8));outline:none;
             }
             #uwu-phone-vector-credential::placeholder { color:#999;opacity:1; }
-            #uwu-phone-vector-dialog #uwu-phone-vector-save-result {
-                position:fixed;z-index:10;inset:50% auto auto 50%;
-                display:flex;align-items:center;gap:12px;width:max-content;max-width:calc(100vw - 40px);
-                margin:0;padding:16px 22px;border-radius:16px;
-                border:1px solid color-mix(in srgb,#75c99a 40%,var(--SmartThemeBorderColor,#555));
-                background:color-mix(in srgb,var(--SmartThemeBlurTintColor,#222) 94%,#75c99a);
-                color:var(--SmartThemeBodyColor,#eee);box-shadow:0 12px 36px rgba(0,0,0,.25);
-                pointer-events:none;transform:translate(-50%,-50%);
-                animation:uwu-memory-save-in .18s ease-out both;
-            }
-            #uwu-phone-vector-save-result .uwu-memory-save-icon {
-                position:relative;display:block;flex:0 0 30px;width:30px;height:30px;border-radius:50%;
-                background:color-mix(in srgb,#75c99a 18%,transparent);color:#75c99a;
-            }
-            #uwu-phone-vector-save-result .uwu-memory-save-icon::after {
-                content:'';position:absolute;left:11px;top:7px;width:7px;height:12px;
-                border:solid currentColor;border-width:0 2px 2px 0;transform:rotate(45deg);
-            }
-            #uwu-phone-vector-save-result-title { font:inherit;font-size:14px;font-weight:600;white-space:nowrap; }
-            #uwu-phone-vector-dialog #uwu-phone-vector-save-result.uwu-memory-save-leaving {
-                animation:uwu-memory-save-out .18s ease-in forwards;
-            }
-            @keyframes uwu-memory-save-in {
-                from { opacity:0;transform:translate(-50%,-50%) translateY(6px); }
-                to { opacity:1;transform:translate(-50%,-50%) translateY(0); }
-            }
-            @keyframes uwu-memory-save-out {
-                from { opacity:1;transform:translate(-50%,-50%) translateY(0); }
-                to { opacity:0;transform:translate(-50%,-50%) translateY(-4px); }
-            }
-            @media(prefers-reduced-motion:reduce) {
-                #uwu-phone-vector-dialog #uwu-phone-vector-save-result { animation:none; }
-                #uwu-phone-vector-dialog #uwu-phone-vector-save-result.uwu-memory-save-leaving { animation:none;opacity:0; }
+            #toast-container > .toast-success.uwu-memory-save-success {
+                background-image:none !important;padding-left:10px;
             }
             #uwu-phone-vector-dialog .uwu-memory-key-group {
                 display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--uwu-memory-item-gap);align-items:center;
@@ -1365,23 +1334,31 @@ export function createPhoneMemoryAdapter(host = {}) {
         doc.body.append(dialog); renderVectorStatus();
     }
     function clearVectorSaveSuccess() {
-        if (saveSuccessTimer !== null) { clearTimeout(saveSuccessTimer); saveSuccessTimer = null; }
-        getDocument()?.getElementById('uwu-phone-vector-save-result')?.remove();
+        if (saveSuccessToast) (host.toastr || globalThis.toastr)?.clear?.(saveSuccessToast, { force: true });
+        saveSuccessToast = null;
+        const doc = getDocument(), container = doc?.getElementById('toast-container');
+        // The shared native container must survive closing or disposing our dialog.
+        if (container && container.parentNode === doc.getElementById('uwu-phone-vector-dialog')) {
+            const layer = Array.from(doc.querySelectorAll?.('dialog[open]:not([closing])') || [])
+                .filter(dialog => dialog.id !== 'uwu-phone-vector-dialog').pop() || doc.body;
+            layer.append(container);
+        }
     }
     function showVectorSaveSuccess() {
         const doc = getDocument();
         const dialog = doc?.getElementById('uwu-phone-vector-dialog');
         if (disposed || !dialog?.open) return;
+        const toastr = host.toastr || globalThis.toastr;
+        if (typeof toastr?.success !== 'function') return;
         clearVectorSaveSuccess();
-        const toast = doc.createElement('div'); toast.id = 'uwu-phone-vector-save-result';
-        toast.setAttribute?.('role', 'status'); toast.setAttribute?.('aria-live', 'polite'); toast.setAttribute?.('aria-atomic', 'true');
-        const icon = doc.createElement('span'); icon.className = 'uwu-memory-save-icon'; icon.setAttribute?.('aria-hidden', 'true');
-        const title = doc.createElement('span'); title.id = 'uwu-phone-vector-save-result-title'; title.textContent = '保存成功';
-        toast.append(icon, title); dialog.append(toast);
-        saveSuccessTimer = setTimeout(() => {
-            toast.className = 'uwu-memory-save-leaving';
-            saveSuccessTimer = setTimeout(() => { toast.remove(); saveSuccessTimer = null; }, 180);
-        }, 2000);
+        saveSuccessToast = toastr.success('保存成功', '', {
+            timeOut: 2000, extendedTimeOut: 0, closeOnHover: false, closeButton: false,
+            progressBar: false, preventDuplicates: false, target: dialog,
+        });
+        saveSuccessToast?.addClass?.('uwu-memory-save-success');
+        // Existing containers ignore toastr's target; keep native notices above the modal.
+        const container = doc.getElementById('toast-container');
+        if (container && container.parentNode !== dialog) dialog.append(container);
     }
     function showVectorSettings() {
         if (disposed) return;
@@ -1452,7 +1429,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (indexTimer !== null) { clearTimeout(indexTimer); indexTimer = null; }
         for (const [events, type, fn] of bindings) (events.removeListener || events.off)?.call(events, type, fn);
         bindings.length = 0;
-        for (const id of ['uwu-phone-memory-preview-dialog', 'uwu-phone-memory-settings', 'uwu-phone-vector-save-result', 'uwu-phone-vector-dialog', 'uwu-phone-vector-menu-container', 'uwu-phone-vector-menu', 'uwu-phone-memory-ui-style']) getDocument()?.getElementById?.(id)?.remove();
+        for (const id of ['uwu-phone-memory-preview-dialog', 'uwu-phone-memory-settings', 'uwu-phone-vector-dialog', 'uwu-phone-vector-menu-container', 'uwu-phone-vector-menu', 'uwu-phone-memory-ui-style']) getDocument()?.getElementById?.(id)?.remove();
     }
     return { initialize, startGeneration: start, interceptor, invalidate, setEnabled, getPreview, selectManual, availableSources, dispose,
         getVectorSettings: () => clone(vectorSettings()), setVectorSettings,
