@@ -12,6 +12,52 @@
     let chatWatcherTimer = null;
     const pendingHookTimers = new Set();
     const hookObservers = new Set();
+    const activeAiReplyCounts = new Map();
+    const deferredAiPushes = new Map();
+    const automaticSyncJobs = new Map();
+    function aiReplyKey(chatId, chatType) { return String(chatType) + ':' + String(chatId); }
+    function chatIsGenerating(chatId) {
+        return activeAiReplyCounts.has(aiReplyKey(chatId, 'private'))
+            || (!activeAiReplyCounts.size && (typeof isGenerating !== 'undefined') && isGenerating);
+    }
+    function startAutomaticSync(kind, char, bindingTarget) {
+        const key = aiReplyKey(char.id, kind);
+        const previous = automaticSyncJobs.get(key);
+        if (previous) cancelHookTimer(previous.timer);
+        const job = { key, kind, char, bindingTarget, attempts: 0, timer: null };
+        automaticSyncJobs.set(key, job);
+        return runAutomaticSync(job);
+    }
+    function runAutomaticSync(job) {
+        const current = () => automaticSyncJobs.get(job.key) === job && bindingTargetIsCurrent(job.bindingTarget)
+            && db.characters.includes(job.char);
+        const finish = () => { if (automaticSyncJobs.get(job.key) === job) automaticSyncJobs.delete(job.key); };
+        if (!current()) { finish(); return Promise.resolve(); }
+        if (job.kind === 'push' && chatIsGenerating(job.char.id)) {
+            job.timer = scheduleHookTimer(() => runAutomaticSync(job), 1500); return Promise.resolve();
+        }
+        const failed = () => {
+            if (current() && job.attempts < 3) job.timer = scheduleHookTimer(() => runAutomaticSync(job), 1500 * job.attempts);
+            else finish();
+        };
+        const methods = { push: 'autoPushIfNeeded', pull: 'autoPullIfNeeded', delete: 'autoDeletionSyncIfNeeded' };
+        job.attempts++;
+        let operation;
+        try { operation = window.TavernSync[methods[job.kind]](job.char.id); }
+        catch (e) { operation = Promise.reject(e); }
+        return Promise.resolve(operation).then(result => {
+            // undefined 兼容旧外挂；新接口只有明确 ok:false 才重试，skipped/0条仍是成功。
+            if (result?.ok === false) failed(); else finish();
+        }, error => { console.warn(`${TAG} 自动${job.kind}失败：`, error); failed(); });
+    }
+    function flushDeferredAiPush(generationKey) {
+        const pending = deferredAiPushes.get(generationKey);
+        if (!pending || activeAiReplyCounts.has(generationKey)) return;
+        deferredAiPushes.delete(generationKey);
+        if (!bindingTargetIsCurrent(pending.bindingTarget) || !db.characters.includes(pending.char)) return;
+        cancelHookTimer(sendPushTimers.get(pending.char.id)); sendPushTimers.delete(pending.char.id);
+        startAutomaticSync('push', pending.char, pending.bindingTarget);
+    }
     function scheduleHookTimer(callback, delay) {
         if (hooksClosed) return null;
         const timer = setTimeout(() => {
@@ -340,6 +386,9 @@
         }
         const originalGetAiReply = window.getAiReply;
         window.getAiReply = async function (chatId, chatType) {
+            const bindingTarget = chatType === 'private' ? captureBindingTarget(chatId) : null;
+            let generationChar = null;
+            try { generationChar = db.characters.find(c => c?.id === chatId); } catch (e) { /* 保留宿主原调用 */ }
             // 记住本轮用户发的图片。主聊天模型可能直接看图回答，却没有把描述存进消息。
             let imageIds = [];
             try { if (chatType === 'private' && window.TavernSync?.findBindingForChar(chatId)) {
@@ -358,16 +407,30 @@
             try { if (window.TavernSync) regen = beginRegenerate(chatId, chatType); }
             catch (e) { fail('处理重新生成出错：' + e.message); }
             let result;
+            const generationKey = aiReplyKey(chatId, chatType);
+            activeAiReplyCounts.set(generationKey, (activeAiReplyCounts.get(generationKey) || 0) + 1);
             try {
                 result = await originalGetAiReply.apply(this, arguments);
+                if (result === true && chatType === 'private' && bindingTargetIsCurrent(bindingTarget)
+                    && generationChar && db.characters.includes(generationChar)) {
+                    deferredAiPushes.set(generationKey, { char: generationChar, bindingTarget });
+                }
             } finally {
                 // 不管回复成功与否，都要把酒馆楼层放回来
-                if (regen) {
-                    try { await finishRegenerate(regen); }
-                    catch (e) { fail('重新生成后整理酒馆楼层出错：' + e.message); }
+                try {
+                    if (regen) {
+                        try { await finishRegenerate(regen); }
+                        catch (e) { fail('重新生成后整理酒馆楼层出错：' + e.message); }
+                    }
+                } finally {
+                    const count = (activeAiReplyCounts.get(generationKey) || 1) - 1;
+                    if (count > 0) activeAiReplyCounts.set(generationKey, count);
+                    else activeAiReplyCounts.delete(generationKey);
+                    flushDeferredAiPush(generationKey);
                 }
             }
-            if (!hooksClosed && result === true && chatType === 'private' && window.TavernSync) {
+            if (result === true && chatType === 'private' && bindingTargetIsCurrent(bindingTarget)
+                && generationChar && db.characters.includes(generationChar)) {
                 if (imageIds.length) {
                     try {
                         const binding = window.TavernSync.findBindingForChar(chatId);
@@ -377,8 +440,7 @@
                         }
                     } catch (e) { console.warn(`${TAG} 图片描述准备失败：`, e); }
                 }
-                try { Promise.resolve(window.TavernSync.autoPushIfNeeded(chatId)).catch(e => console.warn(`${TAG} 自动推送失败：`, e)); }
-                catch (e) { console.warn(`${TAG} 自动推送失败：`, e); }
+                // 自动推送在 finally 里合并触发：最后一项生成失败也不能丢掉较早成功的回复。
             }
             return result;
         };
@@ -390,18 +452,18 @@
     // AI 正在回复时不推——免得把还没发完的半截回复推过去，等回复结束那次自动推送会一起推。
     // 每个角色各记各的：发完消息 3 秒内切到别的角色，前一个角色这次推送不会被取消
     const sendPushTimers = new Map();
-    function schedulePushAfterSend(chatId, tries) {
+    function schedulePushAfterSend(chatId, tries, bindingTarget, chat) {
         cancelHookTimer(sendPushTimers.get(chatId));
         sendPushTimers.set(chatId, scheduleHookTimer(() => {
             sendPushTimers.delete(chatId);
-            const generating = (typeof isGenerating !== 'undefined') && isGenerating;
+            if (!bindingTargetIsCurrent(bindingTarget) || !db.characters.includes(chat)) return;
+            const generating = chatIsGenerating(chatId);
             if (generating) {
                 // 慢生成超过一分钟后失败时也不能丢掉之前发送的用户消息；真正关闭页面会取消定时器。
-                schedulePushAfterSend(chatId, tries + 1);
+                schedulePushAfterSend(chatId, tries + 1, bindingTarget, chat);
                 return;
             }
-            try { if (window.TavernSync) Promise.resolve(window.TavernSync.autoPushIfNeeded(chatId)).catch(() => {}); }
-            catch (e) { console.warn(`${TAG} 发消息后自动推送失败：`, e); }
+            return startAutomaticSync('push', chat, bindingTarget);
         }, 3000));
     }
 
@@ -411,11 +473,12 @@
         }
         const originalSend = window.sendMessage;
         window.sendMessage = async function () {
-            let chat = null, before = null;
+            let chat = null, before = null, bindingTarget = null;
             try {
                 if (typeof currentChatType !== 'undefined' && currentChatType === 'private' && typeof currentChatId !== 'undefined') {
                     chat = db.characters.find(c => c?.id === currentChatId);
                     if (chat) before = new Set(Array.isArray(chat.history) ? chat.history : []);
+                    if (chat) bindingTarget = captureBindingTarget(chat.id);
                 }
             } catch (e) { /* 没有有效的私聊，不安排推送 */ }
             const result = await originalSend.apply(this, arguments);
@@ -423,8 +486,8 @@
                 // 原发送会等待保存。期间切聊天时仍应推发送时的角色；空输入/取消发送不触发推送。
                 const sent = chat && before && Array.isArray(chat.history)
                     && chat.history.some(m => m && m.role === 'user' && !m.fromTavern && !before.has(m));
-                if (!hooksClosed && sent && db.characters.includes(chat) && window.TavernSync?.findBindingForChar(chat.id)) {
-                    schedulePushAfterSend(chat.id, 0);
+                if (sent && db.characters.includes(chat) && bindingTargetIsCurrent(bindingTarget)) {
+                    schedulePushAfterSend(chat.id, 0, bindingTarget, chat);
                 }
             } catch (e) { fail('发消息后自动推送出错：' + e.message); }
             return result;
@@ -440,6 +503,7 @@
     // 酒馆剧情卡片可以像普通消息一样长按删除，删掉后 AI 就读不到了，下次同步会重新出现。
     function startChatWatcher() {
         let lastChatId = null;
+        let observedChar = null, observedTarget = null;
         let knownIds = null;
         let deletionTimer = null;
         chatWatcherTimer = setInterval(() => {
@@ -452,14 +516,19 @@
             const chatId = (typeof currentChatType !== 'undefined' && currentChatType === 'private'
                 && typeof currentChatId !== 'undefined') ? currentChatId : null;
 
-            if (chatId !== lastChatId) {
+            const char = db.characters.find(c => c?.id === chatId);
+            const bindingTarget = chatId != null ? captureBindingTarget(chatId) : null;
+            const targetChanged = observedTarget?.binding !== bindingTarget?.binding || observedTarget?.avatar !== bindingTarget?.avatar
+                || observedTarget?.file !== bindingTarget?.file;
+            if (chatId !== lastChatId || char !== observedChar || targetChanged) {
                 lastChatId = chatId;
+                observedChar = char; observedTarget = bindingTarget;
                 knownIds = null;
-                if (chatId) TS.autoPullIfNeeded(chatId).catch(() => {});
+                if (char && bindingTargetIsCurrent(bindingTarget)) {
+                    startAutomaticSync('pull', char, bindingTarget);
+                }
             }
-            if (!chatId || !TS.findBindingForChar(chatId)) { knownIds = null; return; }
-
-            const char = db.characters.find(c => c.id === chatId);
+            if (chatId == null || !bindingTargetIsCurrent(bindingTarget)) { knownIds = null; return; }
             if (!char || !Array.isArray(char.history)) return;
             // 只看小手机自己的消息：酒馆剧情卡片不会推到酒馆，它们没了（精简、同步删楼、你长按删掉）不用去酒馆删什么，
             // 算进来只会白白连一次酒馆
@@ -468,7 +537,9 @@
                 for (const id of knownIds) {
                     if (!ids.has(id)) {
                         cancelHookTimer(deletionTimer);
-                        deletionTimer = scheduleHookTimer(() => TS.autoDeletionSyncIfNeeded(chatId), 1500);
+                        deletionTimer = scheduleHookTimer(() => {
+                            if (bindingTargetIsCurrent(bindingTarget) && db.characters.includes(char)) return startAutomaticSync('delete', char, bindingTarget);
+                        }, 1500);
                         break;
                     }
                 }
@@ -1014,7 +1085,7 @@
         if (event.persisted || hooksClosed) return;
         hooksClosed = true;
         for (const timer of pendingHookTimers) clearTimeout(timer);
-        pendingHookTimers.clear(); sendPushTimers.clear();
+        pendingHookTimers.clear(); sendPushTimers.clear(); activeAiReplyCounts.clear(); deferredAiPushes.clear(); automaticSyncJobs.clear();
         if (typeof clearInterval === 'function') clearInterval(chatWatcherTimer);
         for (const observer of hookObservers) observer.disconnect();
         hookObservers.clear();

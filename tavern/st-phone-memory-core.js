@@ -58,7 +58,8 @@ export function stripPhoneBlocks(text) {
 }
 
 export function getLastPhoneBlock(text) {
-    const value = String(text ?? '');
+    if (typeof text !== 'string') return null;
+    const value = text;
     // The pushed wrapper is the final outer block. Literal nested tag examples stay
     // inside its full original message instead of becoming a new authoritative source.
     const parsed = phoneBlockSpans(value), block = parsed.blocks.at(-1);
@@ -103,8 +104,17 @@ function stripInternalBlocks(value) {
 
 export function ordinaryText(message) {
     if (!message || message.is_system || isTypedSystemMessage(message) || message.extra?.bbs_omit || message.extra?.isSmallSys || message.extra?.uwu_internal) return '';
-    const text = stripPhoneBlocks(message.mes ?? message.content ?? '');
+    const text = stripPhoneBlocks(contentText(message.mes ?? message.content));
     return stripInternalBlocks(text).trim();
+}
+
+function contentText(value) {
+    if (typeof value === 'string') return value;
+    if (!Array.isArray(value)) return '';
+    // Media/tool/reasoning payloads can carry a text property as metadata. Only
+    // visible text parts support a user query, reply or actual-request coverage.
+    return value.map(part => typeof part === 'string' ? part
+        : ['text', 'input_text', 'output_text'].includes(part?.type) && typeof part.text === 'string' ? part.text : '').join('');
 }
 
 const arrayEvery = (array, predicate) => Array.isArray(array) && Array.from(array).every(predicate);
@@ -394,6 +404,13 @@ function validRef(ref, scan) {
     const text = source.body.slice(ref.start, ref.end);
     if (fingerprint(text) !== ref.textFingerprint) return null;
     if (ref.msgIds?.length && !arrayEvery(ref.msgIds, id => id != null && source.msgIds.includes(id))) return null;
+    if (ref.msgIds?.length && source.exactMessageBoundaries) {
+        // An excerpt may retain its complete question/answer group's IDs, but
+        // cannot claim another utterance elsewhere in the same pushed block.
+        const allowedIds = scan.units.filter(unit => unit.sourceKey === source.key && unit.start < ref.end && ref.start < unit.end)
+            .flatMap(unit => Array.isArray(unit.msgIds) ? unit.msgIds : []);
+        if (!ref.msgIds.every(id => allowedIds.includes(id))) return null;
+    }
     // Legacy references with no IDs must have one and only one full-text location.
     if (!ref.msgIds?.length && source.body.indexOf(text) !== source.body.lastIndexOf(text)) return null;
     return { source, text };
@@ -429,7 +446,8 @@ function overlappingUnits(a, b) {
 }
 
 export function filterCovered(selected, actualTexts) {
-    const texts = (Array.isArray(actualTexts) ? actualTexts : [actualTexts]).map(value => normalizeWhitespace(typeof value === 'string' ? value : value?.content ?? value?.mes ?? '')).filter(Boolean);
+    const texts = (Array.isArray(actualTexts) ? actualTexts : [actualTexts]).map(value => normalizeWhitespace(
+        contentText(typeof value === 'string' ? value : value?.content ?? value?.mes))).filter(Boolean);
     const kept = [], removed = [];
     for (const unit of selected || []) {
         const normalized = normalizeWhitespace(unit.text);
@@ -481,7 +499,8 @@ export function collectValidReceipts(chat, scan, { cutoff = scan.cutoff } = {}) 
         // A swipe can hold its own receipt. Only the active version is considered.
         const receipt = raw?.version === 1 ? raw : raw?.receipts?.[String(message.swipe_id ?? 0)];
         if (!receipt || receipt.version !== 1 || receipt.chatId !== scan.chatId || receipt.replyFloor !== floor
-            || receipt.swipeId !== (message.swipe_id ?? 0) || receipt.replyFingerprint !== fingerprint(message.mes)
+            || receipt.swipeId !== (message.swipe_id ?? 0)
+            || receipt.replyFingerprint !== fingerprint(contentText(message.mes ?? message.content))
             || !Array.isArray(receipt.sources) || !receipt.sources.length || !arrayEvery(receipt.sources, ref =>
                 validRef(ref, scan) && ref.floor <= receipt.userFloor)
             || !receiptUserStillMatches(receipt, chat, scan)) continue;
@@ -603,7 +622,11 @@ export function semanticQueryHasContent(classification, roleNames = []) {
 
 function hybridCandidates(scan, lexical, semanticCandidates, classification, roleNames, threshold, margin, named) {
     if (!semanticQueryHasContent(classification, roleNames)) return null;
-    const byId = new Map(scan.units.map(unit => [unit.id, unit])), scores = new Map();
+    const byId = new Map(), duplicateIds = new Set(), scores = new Map();
+    for (const unit of scan.units) {
+        if (byId.has(unit.id)) { duplicateIds.add(unit.id); byId.delete(unit.id); }
+        else if (!duplicateIds.has(unit.id)) byId.set(unit.id, unit);
+    }
     for (const hit of Array.isArray(semanticCandidates) ? semanticCandidates : []) {
         const unit = byId.get(hit?.id), score = hit?.score;
         if (!unit || typeof score !== 'number' || !Number.isFinite(score) || score < threshold || score > 1 || score < -1
@@ -616,7 +639,7 @@ function hybridCandidates(scan, lexical, semanticCandidates, classification, rol
     const semantic = [...scores].map(([id, score]) => ({ ...byId.get(id), semanticScore: score }))
         .filter(matchesNamed).sort((a, b) => b.semanticScore - a.semanticScore || b.floor - a.floor || b.start - a.start);
     if (!semantic.length) return null;
-    lexical = lexical.filter(matchesNamed);
+    lexical = lexical.filter(unit => byId.has(unit.id) && matchesNamed(unit));
     const keywordById = new Map(lexical.map((unit, index) => [unit.id, { ...unit, keywordRank: index + 1 }]));
     const semanticById = new Map(semantic.map((unit, index) => [unit.id, { ...unit, semanticRank: index + 1 }]));
     const merged = [...new Set([...keywordById.keys(), ...semanticById.keys()])].map(id => {

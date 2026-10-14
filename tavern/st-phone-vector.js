@@ -140,7 +140,7 @@ async function browserJson(response, signal) {
             const contents = new Uint8Array(bytes);
             let offset = 0;
             for (const chunk of chunks) { contents.set(chunk, offset); offset += chunk.byteLength; }
-            try { return JSON.parse(new TextDecoder().decode(contents)); } catch { throw fault('INVALID_RESPONSE'); }
+            try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(contents)); } catch { throw fault('INVALID_RESPONSE'); }
         } finally { await reader.cancel().catch(() => {}); }
     }
     // Real fetch responses support streams; this path also supports injected transports.
@@ -205,7 +205,7 @@ function cacheDeadline(operation) {
 /** Injectable cache contract: loadAll(), put(record), delete(key); all may return promises. */
 export function createPhoneVectorMemoryCache() {
     const records = new Map();
-    return { mode: 'memory', loadAll: async () => [...records.values()], put: async record => { records.set(record.key, structuredClone(record)); },
+    return { mode: 'memory', loadAll: async () => structuredClone([...records.values()]), put: async record => { records.set(record.key, structuredClone(record)); },
         delete: async key => { records.delete(key); } };
 }
 
@@ -216,7 +216,11 @@ function indexedCache(indexedDB) {
             if (!indexedDB?.open) { reject(fault('CACHE_MEMORY')); return; }
             const request = indexedDB.open('UWUPhoneVectorV1', 1);
             request.onupgradeneeded = () => { if (!request.result.objectStoreNames.contains('vectors')) request.result.createObjectStore('vectors', { keyPath: 'key' }); };
-            request.onsuccess = () => { request.result.onversionchange = () => request.result.close(); resolve(request.result); };
+            request.onsuccess = () => {
+                const db = request.result, connection = opening;
+                db.onversionchange = () => { db.close(); if (opening === connection) opening = null; };
+                resolve(db);
+            };
             request.onerror = () => reject(request.error || fault('CACHE_MEMORY'));
             request.onblocked = () => reject(fault('CACHE_MEMORY'));
         });
@@ -240,21 +244,30 @@ function snapshotScan(scan) {
     if (!scan || typeof scan.chatId !== 'string' || !scan.chatId || !Array.isArray(scan.sources) || !Array.isArray(scan.units)) throw fault('NO_SOURCE');
     const sources = new Map(scan.sources.filter(source => source && typeof source.key === 'string' && source.key)
         .map(source => [source.key, source]));
-    const units = []; let oversized = 0;
+    const units = [], idCounts = new Map(); let oversized = 0;
     for (const unit of scan.units) {
         if (!unit || typeof unit !== 'object') continue;
         const source = sources.get(unit.sourceKey);
-        if (typeof unit.text === 'string' && unit.text.length > MAX_TEXT) { oversized++; continue; }
         if (!source || typeof source.body !== 'string' || typeof unit.text !== 'string' || !unit.text.trim()
-            || typeof unit.id !== 'string' || !Number.isInteger(unit.start) || !Number.isInteger(unit.end)
-            || unit.start < 0 || unit.end <= unit.start || source.body.slice(unit.start, unit.end) !== unit.text
+            || typeof unit.id !== 'string' || !unit.id || !Number.isInteger(unit.start) || !Number.isInteger(unit.end)
+            || unit.start < 0 || unit.end > source.body.length || unit.end <= unit.start || source.body.slice(unit.start, unit.end) !== unit.text
             || unit.ref?.chatId !== scan.chatId || unit.ref.sourceKey !== source.key
-            || unit.ref.blockFingerprint !== source.blockFingerprint) continue;
+            || unit.ref.blockFingerprint !== source.blockFingerprint
+            || (unit.ref.start !== undefined && unit.ref.start !== unit.start)
+            || (unit.ref.end !== undefined && unit.ref.end !== unit.end)
+            || (unit.ref.floor !== undefined && unit.ref.floor !== source.floor)
+            || (unit.ref.textFingerprint !== undefined && unit.ref.textFingerprint !== hash(unit.text))) continue;
+        if (unit.ref.msgIds !== undefined && (!Array.isArray(unit.ref.msgIds)
+            || Array.from(unit.ref.msgIds).some(id => id == null || !Array.isArray(source.msgIds) || !source.msgIds.includes(id)
+                || (Array.isArray(unit.msgIds) && !unit.msgIds.includes(id))))) continue;
+        idCounts.set(unit.id, (idCounts.get(unit.id) || 0) + 1);
+        if (unit.text.length > MAX_TEXT) { oversized++; continue; }
         const sourceText = typeof source.block?.text === 'string' ? source.block.text : source.body;
         const sourceVersion = JSON.stringify({ text: sourceText, body: source.body, floor: source.floor, summary: !!source.summary, msgIds: source.msgIds || [] });
         units.push({ id: unit.id, text: unit.text, sourceVersion, start: unit.start, end: unit.end });
     }
-    return { chatId: scan.chatId, signature: JSON.stringify(units), units, oversized };
+    const uniqueUnits = units.filter(unit => idCounts.get(unit.id) === 1);
+    return { chatId: scan.chatId, signature: JSON.stringify(uniqueUnits), units: uniqueUnits, oversized };
 }
 
 /**
@@ -406,9 +419,12 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
     }
     async function persistent(method, value) {
         if (cacheWarning && method !== 'delete') return;
+        // Cache adapters may retain or mutate the value handed to them. The
+        // verified page index must never share that outgoing record or vector.
+        const payload = method === 'put' ? structuredClone(value) : value;
         // A timed-out write may still commit. Keep later removals ordered behind
         // it, including after the page has fallen back to its memory cache.
-        const operation = persistenceTail.then(() => persistence[method](value));
+        const operation = persistenceTail.then(() => persistence[method](payload));
         persistenceTail = operation.catch(() => {});
         if (cacheWarning) return;
         try { await cacheDeadline(() => operation); }
@@ -437,7 +453,8 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                         observedDimensions.set(cohort, vector.length);
                         // The cache adapter may return live record objects. Keep
                         // the validated index independent of later cache edits.
-                        records.set(record.key, { ...record, vector });
+                        const used = typeof record.used === 'number' && Number.isFinite(record.used) && record.used >= 0 ? record.used : 0;
+                        records.set(record.key, { ...record, vector, used });
                         discardedRecords.delete(record.key);
                     } catch { /* corrupt index is rebuildable */ }
                 }
@@ -499,8 +516,8 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         ctx.scope = ctx.account; ctx.statusVersion = statusVersion;
         return { available: true, scope, hasKey, credentialProfile: browserKeyProfile };
     }
-    async function prepare(scan, options, timeoutMs = 3000, suppliedContext) {
-        const ctx = suppliedContext || context(options), snapshot = snapshotScan(scan);
+    async function prepare(scan, options, timeoutMs = 3000, suppliedContext, suppliedSnapshot) {
+        const ctx = suppliedContext || context(options), snapshot = suppliedSnapshot || snapshotScan(scan);
         if (!snapshot.units.length) throw fault(snapshot.oversized ? 'SOURCE_TOO_LARGE' : 'NO_SOURCE');
         await refresh(ctx, timeoutMs);
         if (!hasKey && (!ctx.allowAnonymous || ctx.config.provider === 'gemini')) throw fault('KEY_REQUIRED');
@@ -717,23 +734,23 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         }
     }
     function sync(scan, options = {}) {
-        let ctx;
-        try { ctx = context(options); }
+        let ctx, snapshot;
+        try { ctx = context(options); snapshot = snapshotScan(scan); }
         catch (error) { const failure = handle(error); return Promise.resolve({ ok: false, ...state(), reason: failure.reason }); }
-        return syncWithContext(scan, options, ctx);
+        return syncWithContext(scan, options, ctx, snapshot);
     }
-    function syncWithContext(scan, options, capturedContext) {
+    function syncWithContext(scan, options, capturedContext, capturedSnapshot) {
         // One latest pending snapshot survives a refresh while the old loop finishes.
         // Bind queued work when submitted: a later account or profile must not adopt
         // a scan captured by an earlier operation, including A -> B -> A switches.
         if (syncing) return new Promise(resolve => {
             if (pendingSync) pendingSync.resolve({ ok: false, ...state(), reason: 'STALE' });
-            pendingSync = { scan, options, resolve, ctx: capturedContext };
+            pendingSync = { scan, options, resolve, ctx: capturedContext, snapshot: capturedSnapshot };
         });
         syncing = (async () => {
             let ctx;
             try {
-                ctx = capturedContext; const prepared = await prepare(scan, options, 3000, ctx);
+                ctx = capturedContext; const prepared = await prepare(scan, options, 3000, ctx, capturedSnapshot);
                 const snapshot = prepared.snapshot;
                 const allowed = new Map(snapshot.units.map(unit => [unit.id, unit]));
                 // A scan can have a generation cutoff: only purge stale versions of present
@@ -807,7 +824,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         })().finally(() => {
             syncing = null;
             const next = pendingSync; pendingSync = null;
-            if (next) syncWithContext(next.scan, next.options, next.ctx).then(next.resolve);
+            if (next) syncWithContext(next.scan, next.options, next.ctx, next.snapshot).then(next.resolve);
         });
         return syncing;
     }

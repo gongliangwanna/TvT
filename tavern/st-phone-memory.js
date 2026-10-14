@@ -4,6 +4,7 @@ import { createPhoneVectorService, phoneBrowserCredentialProfile } from './st-ph
 
 export const MEMORY_SLOT = 'uwu_phone_memory';
 const NORMAL_TYPES = new Set(['', 'normal', 'regenerate', 'swipe', 'continue']);
+const TEXT_CONTENT_TYPES = new Set(['text', 'input_text', 'output_text']);
 const REASONS = {
     ...core.REASON_TEXT,
     NO_NEED: '当前没有涉及手机剧情', NONE: '当前没有涉及手机剧情',
@@ -24,8 +25,9 @@ const REASONS = {
 function ordinaryText(message) {
     return core.ordinaryText(message);
 }
+const isGroupChat = ctx => ctx?.groupId === 0 || !!ctx?.groupId;
 function chatIdentity(ctx) {
-    if (!ctx || ctx.groupId || !Array.isArray(ctx.chat)) return null;
+    if (!ctx || isGroupChat(ctx) || !Array.isArray(ctx.chat)) return null;
     const ch = ctx.characters?.[ctx.characterId];
     const id = ctx.getCurrentChatId?.() ?? ch?.chat;
     if (id === null || id === undefined || id === '') return null;
@@ -35,7 +37,7 @@ function prefixSnapshot(chat, cutoff, allowGreetingMacros = false) {
     // 原文和版本直接比对，不依赖短哈希判断请求归属。
     // 自动隐藏只是提示可见性变化；不把同一原文的隐藏标记当成来源删除。
     return JSON.stringify(chat.slice(0, cutoff).map((m, floor) => [
-        allowGreetingMacros && floor === 0 && !m?.is_user && !m?.extra?.from_uwu ? null : m?.mes, m?.is_user,
+        allowGreetingMacros && floor === 0 && !m?.is_user && !m?.extra?.from_uwu ? null : messageText(m), m?.is_user,
         m?.swipe_id ?? 0, m?.extra?.from_uwu, m?.extra?.bbs_omit,
         m?.extra?.uwu_msg_ids, m?.extra?.uwu_line_lens, m?.extra?.uwu_summary,
         m?.extra?.uwu_created, m?.extra?.uwu_internal, m?.extra?.isSmallSys, m?.name,
@@ -43,12 +45,14 @@ function prefixSnapshot(chat, cutoff, allowGreetingMacros = false) {
 }
 function replyStartSnapshot(message, floor) {
     // 宿主会展开首楼招呼宏；目标时间字段也会在正常 Continue 中更新。
-    return JSON.stringify([floor === 0 && !message?.extra?.from_uwu ? null : message?.mes, message?.swipe_id ?? 0]);
+    return JSON.stringify([floor === 0 && !message?.extra?.from_uwu ? null : messageText(message), message?.swipe_id ?? 0]);
 }
+function messageText(message) { return contentTexts(message?.mes ?? message?.content).join(''); }
+function messageVersion(message) { return JSON.stringify([messageText(message), message?.swipe_id ?? 0]); }
 function contentTexts(content) {
     if (typeof content === 'string') return [content];
     if (Array.isArray(content)) return content.flatMap(part => typeof part === 'string'
-        ? [part] : typeof part?.text === 'string' ? [part.text] : []);
+        ? [part] : TEXT_CONTENT_TYPES.has(part?.type) && typeof part.text === 'string' ? [part.text] : []);
     return [];
 }
 function mapContent(content, fn, ownedRanges = []) {
@@ -71,7 +75,7 @@ function mapContent(content, fn, ownedRanges = []) {
             return result + joined.slice(cursor, end);
         };
         return content.map(part => typeof part === 'string' ? transform(part)
-            : typeof part?.text === 'string' ? { ...part, text: transform(part.text) } : part);
+            : TEXT_CONTENT_TYPES.has(part?.type) && typeof part.text === 'string' ? { ...part, text: transform(part.text) } : part);
     }
     return content;
 }
@@ -112,6 +116,7 @@ const MODEL_FETCH_REASONS = {
 
 // 酒馆公开的账号模块提供实时账号信息；未知账号不共用凭据或缓存。
 let accountModule = null;
+let adapterSerial = 0;
 
 /** 使用同一创建入口运行真实宿主和测试宿主，测试不绕过生成生命周期。 */
 export function createPhoneMemoryAdapter(host = {}) {
@@ -119,7 +124,12 @@ export function createPhoneMemoryAdapter(host = {}) {
     const getDocument = () => host.document === undefined ? globalThis.document : host.document;
     let active = null, sequence = 0, topicRefs = [], topicChat = null, topicScope = null, manual = null, assemblyOwner = null;
     let initialized = false, disposed = false, preview = { stage: 'idle', reason: 'NO_NEED', selected: [], chars: 0, tokens: 0 };
+    let boundEvents = null, boundTypes = null;
     let previewOwner = null;
+    // 独有前缀与递增编号可识别任意久以前的自有块，不必无限保存整段原文。
+    const operationOwner = `m${Date.now().toString(36)}_${++adapterSerial}_${Math.random().toString(36).slice(2, 10)}_`;
+    let operationSequence = 0;
+    const publishedOperations = new Set();
     const bindings = [], warnings = new Set(), knownBlocks = new Map();
     const fallbackSettings = { enabled: true };
     const tokenizerTimeoutMs = Number.isFinite(host.tokenizerTimeoutMs)
@@ -366,7 +376,9 @@ export function createPhoneMemoryAdapter(host = {}) {
         const initialTarget = ['regenerate', 'swipe', 'continue'].includes(mode) && core.isCompletedReply(last)
             ? lastFloor : null;
         const startLength = chat.length, startCutoff = initialTarget ?? startLength;
-        active = { id: `m${Date.now().toString(36)}_${++sequence}_${Math.random().toString(36).slice(2, 10)}`,
+        sequence++;
+        active = { id: `${operationOwner}${++operationSequence}`,
+            operationNumber: operationSequence,
             serial: sequence, chatId: chatIdentity(ctx), scope, mode, options, eligible,
             // 自动隐藏的角色楼仍是目标；真正的系统/内部楼和手机推送不能成为主回复目标。
             initialTarget, startLength, startCutoff,
@@ -438,8 +450,7 @@ export function createPhoneMemoryAdapter(host = {}) {
             if (ctx.chat.length !== expected) return false;
             if (Number.isInteger(op.initialTarget) && ctx.chat[op.replyFloor]
                 && !core.isCompletedReply(ctx.chat[op.replyFloor])) return false;
-            if (op.targetVersion !== null && JSON.stringify([ctx.chat[op.replyFloor]?.mes,
-                ctx.chat[op.replyFloor]?.swipe_id ?? 0]) !== op.targetVersion) return false;
+            if (op.targetVersion !== null && messageVersion(ctx.chat[op.replyFloor]) !== op.targetVersion) return false;
         }
         return true;
     }
@@ -472,7 +483,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         }
         assemblyOwner = op.id;
         if (!settings().enabled) { updatePreview({ stage: 'empty', reason: 'DISABLED' }); return; }
-        if (ctx?.groupId) { updatePreview({ stage: 'empty', reason: 'GROUP' }); return; }
+        if (isGroupChat(ctx)) { updatePreview({ stage: 'empty', reason: 'GROUP' }); return; }
         if (!op.chatId || op.chatId !== chatIdentity(ctx)) {
             updatePreview({ stage: 'empty', reason: 'TARGET_UNKNOWN' }); return;
         }
@@ -496,7 +507,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (!target) { updatePreview({ stage: 'empty', reason: 'TARGET_UNKNOWN' }); return; }
         Object.assign(op, target, { baseLength: ctx.chat.length, prefix: prefixSnapshot(ctx.chat, target.cutoff),
             targetVersion: ['swipe', 'continue'].includes(op.mode)
-                ? JSON.stringify([ctx.chat[target.replyFloor]?.mes, ctx.chat[target.replyFloor]?.swipe_id ?? 0]) : null });
+                ? messageVersion(ctx.chat[target.replyFloor]) : null });
         try {
             const scan = core.scanSources(ctx.chat, { chatId: op.chatId, cutoff: op.cutoff });
             if (scan.issues?.length) warn('ERROR', '有损坏的手机来源已跳过');
@@ -566,6 +577,8 @@ export function createPhoneMemoryAdapter(host = {}) {
                 return;
             }
             op.selected = budget.selected; op.block = budget.text; op.tokens = budget.tokens;
+            // 只记实际生成过补充块的编号；内部任务编号不授权删除任何正文。
+            publishedOperations.add(op.operationNumber);
             knownBlocks.set(op.id, op.block);
             // 防止无限积累；旧块仅用于从其他回调数据里清掉本扩展的残留。
             if (knownBlocks.size > 8) knownBlocks.delete(knownBlocks.keys().next().value);
@@ -586,16 +599,14 @@ export function createPhoneMemoryAdapter(host = {}) {
         // 槽内容经过宿主宏展开后可能与预选字符串不同；仍能按本次独有边界移除。
         // 历史里的同形标记已由核心转义，永远不按泛化标签删除其他资料。
         const ranges = [];
-        for (const id of knownBlocks.keys()) {
-            if (id.endsWith('_previous')) continue;
+        for (const match of text.matchAll(/\[\[UWU_PHONE_MEMORY:([a-zA-Z0-9_-]+):BEGIN\]\]/g)) {
+            const id = match[1];
+            if (!id.startsWith(operationOwner)) continue;
+            const serial = id.slice(operationOwner.length), number = Number(serial);
+            if (!/^[1-9]\d*$/.test(serial) || !Number.isSafeInteger(number) || !publishedOperations.has(number)) continue;
             const begin = `[[UWU_PHONE_MEMORY:${id}:BEGIN]]`, end = `[[UWU_PHONE_MEMORY:${id}:END]]`;
-            let from = text.indexOf(begin);
-            while (from !== -1) {
-                const to = text.indexOf(end, from + begin.length);
-                if (to === -1) break;
-                ranges.push({ start: from, end: to + end.length });
-                from = text.indexOf(begin, to + end.length);
-            }
+            const to = text.indexOf(end, match.index + begin.length);
+            if (to !== -1) ranges.push({ start: match.index, end: to + end.length });
         }
         for (const block of knownBlocks.values()) {
             if (!block) continue;
@@ -614,23 +625,27 @@ export function createPhoneMemoryAdapter(host = {}) {
         for (const range of knownRanges(text).reverse()) text = text.slice(0, range.start) + text.slice(range.end);
         return text;
     }
-    async function prune(actual, shape, dryRun = false, sending = false, requestType, hasRequestType = false) {
+    async function prune(actual, shape, dryRun = false, sending = false, requestType, hasRequestType = false, getActual = () => actual) {
         const op = active;
         const assembledBlock = op?.block;
         const sentAtEntry = op?.sent;
-        let texts, replace;
+        const initialActual = actual;
+        let texts, replace, readTexts;
         if (shape === 'messages') {
             if (!Array.isArray(actual)) return;
             // 同一消息的多个文本部分共同构成原文；图片和工具信息保持原样。
-            texts = actual.map(m => contentTexts(m?.content).join(''));
+            readTexts = () => Array.isArray(actual) ? actual.map(m => contentTexts(m?.content).join('')) : null;
+            texts = readTexts();
             replace = fn => {
+                actual = getActual();
+                if (!Array.isArray(actual)) return;
                 for (let i = actual.length - 1; i >= 0; i--) {
                     const m = actual[i];
                     if (!m || typeof m !== 'object' || !('content' in m)) continue;
                     const previous = contentTexts(m.content).join('');
                     m.content = mapContent(m.content, fn, knownRanges(previous));
                     // 只有本扩展移除后变空的纯消息才删除；别的空消息不归本扩展处理。
-                    const hasMedia = Array.isArray(m.content) && m.content.some(part => typeof part === 'object' && part?.type !== 'text');
+                    const hasMedia = Array.isArray(m.content) && m.content.some(part => typeof part === 'object' && !TEXT_CONTENT_TYPES.has(part?.type));
                     if (previous && !contentTexts(m.content).join('').trim()
                         && previous !== contentTexts(m.content).join('') && !hasMedia && !m.tool_calls) actual.splice(i, 1);
                 }
@@ -638,8 +653,10 @@ export function createPhoneMemoryAdapter(host = {}) {
         } else {
             const field = shape === 'input' ? 'input' : 'prompt';
             if (typeof actual?.[field] !== 'string') return;
-            texts = [actual[field]]; replace = fn => { actual[field] = fn(actual[field]); };
+            readTexts = () => typeof actual?.[field] === 'string' ? [actual[field]] : null;
+            texts = readTexts(); replace = fn => { if (typeof actual?.[field] === 'string') actual[field] = fn(actual[field]); };
         }
+        const requestSnapshot = JSON.stringify(texts);
         const normalizeMode = mode => !mode || mode === 'normal' ? 'normal' : String(mode).toLowerCase();
         const foreignRequest = hasRequestType && normalizeMode(requestType) !== normalizeMode(op?.mode);
         const occurrences = op?.block ? texts.reduce((n, t) => n + t.split(op.block).length - 1, 0) : 0;
@@ -689,6 +706,15 @@ export function createPhoneMemoryAdapter(host = {}) {
         // 另一份最终数据可能在 token 等待期间已确认主请求发送。
         // 迟到组装只清理自己的副本，不能把 sent 或实际采用来源退回未发送状态。
         if (op.sent && !sentAtEntry) { replace(withoutKnown); return; }
+        // tokenizer 会让出执行权；其他扩展可原地编辑或替换同一份实际数据。
+        // 旧计数不能确认修改后的请求仍只含一份补充或未覆盖原文。
+        actual = getActual();
+        if (actual !== initialActual || JSON.stringify(readTexts()) !== requestSnapshot) {
+            replace(withoutKnown);
+            op.selected = []; op.sent = false; op.block = ''; op.tokens = 0; clearSlot();
+            updatePreview({ stage: 'removed', reason: 'NOT_RETAINED', selected: [], chars: 0, tokens: 0 });
+            return;
+        }
         // token 复核会让出执行权。期间后台开始或另一份组装可能已清空/裁短本轮块，
         // 迟到的结果不能恢复旧选择，更不能把 TC 的无归属后台材料当作主请求。
         if (op.supplementSuppressed || op.block !== assembledBlock) {
@@ -723,7 +749,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         const reply = getContext()?.chat?.[op.replyFloor];
         if (!core.isCompletedReply(reply)) return;
         op.replySeen = true;
-        op.replyVersion = JSON.stringify([reply?.mes, reply?.swipe_id ?? 0]);
+        op.replyVersion = messageVersion(reply);
         // 流式完成或并行后台请求可能先发 ENDED；仍以主回复落地为成功证据。
         if (op.ended && (op.streamSucceeded || op.waitingMainRender)) {
             return Promise.resolve().then(() => finish(op));
@@ -757,11 +783,14 @@ export function createPhoneMemoryAdapter(host = {}) {
     async function finish(op) {
         if (active !== op || op.saving) return;
         op.saving = true;
+        let savedReply = null, savedReplyVersion = null;
+        const savedReplyStillCurrent = () => !savedReply || (getContext()?.chat?.[op.replyFloor] === savedReply
+            && messageVersion(savedReply) === savedReplyVersion);
         try {
             const ctx = getContext(), message = ctx?.chat?.[op.replyFloor];
             if ((!op.sent && !op.priorReceipt) || !op.replySeen || (!op.selected.length && !op.priorReceipt) || !currentValid(op, true)
                 || !core.isCompletedReply(message)
-                || JSON.stringify([message.mes, message.swipe_id ?? 0]) !== op.replyVersion
+                || messageVersion(message) !== op.replyVersion
                 || ctx.chat.length !== op.replyFloor + 1) return;
             const scan = core.scanSources(ctx.chat, { chatId: op.chatId, cutoff: op.cutoff });
             const previous = (op.priorReceipt?.sources || []).map(ref => {
@@ -772,7 +801,7 @@ export function createPhoneMemoryAdapter(host = {}) {
                 .filter((s, index, all) => all.findIndex(x => JSON.stringify(x.ref) === JSON.stringify(s.ref)) === index);
             if (!selected.length) return;
             const receipt = core.createReceipt({ chatId: op.chatId, userFloor: op.userFloor,
-                replyFloor: op.replyFloor, swipeId: message.swipe_id ?? 0, replyText: message.mes, selected,
+                replyFloor: op.replyFloor, swipeId: message.swipe_id ?? 0, replyText: messageText(message), selected,
                 userText: op.query,
                 ...(op.priorReceipt?.userFingerprint ? { userFingerprint: op.priorReceipt.userFingerprint } : {}) });
             message.extra ||= {};
@@ -784,10 +813,11 @@ export function createPhoneMemoryAdapter(host = {}) {
             }
             const save = host.saveChat || ctx.saveChat;
             if (typeof save !== 'function') throw new Error('酒馆未提供保存聊天方法');
+            savedReply = message; savedReplyVersion = op.replyVersion;
             updatePreview({ stage: 'completed', persistence: 'saving' });
             const result = await save.call(ctx);
             // 保存可能跨越切账号、换聊、来源更新或下一次生成；结果只属于原操作。
-            if (!currentValid(op, true)) {
+            if (!currentValid(op, true) || !savedReplyStillCurrent()) {
                 if (active === op) invalidate();
                 return;
             }
@@ -797,7 +827,7 @@ export function createPhoneMemoryAdapter(host = {}) {
                 updatePreview({ persistence: result === true || result?.ok === true ? 'saved' : 'requested' });
             }
         } catch (error) {
-            if (!currentValid(op, true)) {
+            if (!currentValid(op, true) || !savedReplyStillCurrent()) {
                 if (active === op) invalidate();
                 return;
             }
@@ -1388,44 +1418,61 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (!dialog.open) dialog.showModal();
         return vectors.refreshStatus().then(() => renderVectorStatus()).catch(() => renderVectorStatus());
     }
+    function releaseBindings() {
+        for (const [events, type, fn] of bindings) (events.removeListener || events.off)?.call(events, type, fn);
+        bindings.length = 0;
+        initialized = false; boundEvents = null; boundTypes = null;
+    }
     function initialize() {
-        if (initialized || disposed) return;
+        if (disposed) return;
         const ctx = getContext();
         const events = host.eventSource || ctx?.eventSource;
         const types = host.eventTypes || ctx?.eventTypes || ctx?.event_types;
-        if (!events?.on || !types) throw new Error('酒馆生成事件接口未就绪');
+        if (!events?.on || !types) {
+            if (initialized) { releaseBindings(); invalidate(); }
+            throw new Error('酒馆生成事件接口未就绪');
+        }
+        if (initialized && boundEvents === events && Object.keys(boundTypes).length === Object.keys(types).length
+            && Object.entries(boundTypes).every(([name, value]) => types[name] === value)) return;
+        if (initialized) { releaseBindings(); invalidate(); }
         const on = (name, fn) => {
             if (!types[name]) return;
-            events.on(types[name], fn); bindings.push([events, types[name], fn]);
+            // 有些宿主注册后才抛错；先记账才能完整撤回并允许下一次重试。
+            bindings.push([events, types[name], fn]); events.on(types[name], fn);
         };
-        if (!host.generationStartManaged) on('GENERATION_STARTED', start);
-        on('CHAT_COMPLETION_PROMPT_READY', data => prune(data?.chat, 'messages', data?.dryRun));
-        on('CHAT_COMPLETION_SETTINGS_READY', data => prune(data?.messages, 'messages', false, true,
-            data?.type, !!data && Object.hasOwn(data, 'type')));
-        on('GENERATE_AFTER_DATA', (data, dryRun) => {
-            // CC还会发一份中间GENERATE_AFTER_DATA，最后发送检查在settings事件。
-            if (getContext()?.mainApi === 'openai') return;
-            // NovelAI 的最终请求正文是 input，其余 TC 宿主通常使用 prompt。
-            const shape = getContext()?.mainApi === 'novel' ? 'input' : 'prompt';
-            return prune(data, shape, dryRun, true);
-        });
-        on('CHARACTER_MESSAGE_RENDERED', replyRendered);
-        on('GENERATION_STOPPED', stop);
-        on('GENERATION_ENDED', ended);
-        for (const name of ['CHAT_CHANGED', 'CHARACTER_DELETED', 'PERSONA_CHANGED', 'MAIN_API_CHANGED', 'CONNECTION_PROFILE_LOADED'])
-            on(name, () => invalidate());
-        for (const name of ['MESSAGE_EDITED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED']) {
-            on(name, () => {
-                topicRefs = []; topicChat = null; topicScope = null;
-                // 重生的宿主删除发生在interceptor之前，不阻断它；选段后的变更取消本块。
-                if (active?.prefix && !active.replySeen && !currentValid(active, true)) invalidate();
-                scheduleVectorIndex();
+        try {
+            if (!host.generationStartManaged) on('GENERATION_STARTED', start);
+            on('CHAT_COMPLETION_PROMPT_READY', data => prune(data?.chat, 'messages', data?.dryRun, false, undefined, false, () => data?.chat));
+            on('CHAT_COMPLETION_SETTINGS_READY', data => prune(data?.messages, 'messages', false, true,
+                data?.type, !!data && Object.hasOwn(data, 'type'), () => data?.messages));
+            on('GENERATE_AFTER_DATA', (data, dryRun) => {
+                // CC还会发一份中间GENERATE_AFTER_DATA，最后发送检查在settings事件。
+                if (getContext()?.mainApi === 'openai') return;
+                // NovelAI 的最终请求正文是 input，其余 TC 宿主通常使用 prompt。
+                const shape = getContext()?.mainApi === 'novel' ? 'input' : 'prompt';
+                return prune(data, shape, dryRun, true);
             });
+            on('CHARACTER_MESSAGE_RENDERED', replyRendered);
+            on('GENERATION_STOPPED', stop);
+            on('GENERATION_ENDED', ended);
+            for (const name of ['CHAT_CHANGED', 'CHARACTER_DELETED', 'PERSONA_CHANGED', 'MAIN_API_CHANGED', 'CONNECTION_PROFILE_LOADED'])
+                on(name, () => invalidate());
+            for (const name of ['MESSAGE_EDITED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED']) {
+                on(name, () => {
+                    topicRefs = []; topicChat = null; topicScope = null;
+                    // 重生的宿主删除发生在interceptor之前，不阻断它；选段后的变更取消本块。
+                    if (active?.prefix && !active.replySeen && !currentValid(active, true)) invalidate();
+                    scheduleVectorIndex();
+                });
+            }
+            on('APP_READY', mountSettings);
+            initialized = true; boundEvents = events; boundTypes = { ...types }; clearSlot(); mountSettings();
+            scheduleVectorIndex();
+            if (!compatible(ctx)) { updatePreview({ reason: 'UNSUPPORTED' }); warn('UNSUPPORTED'); }
+        } catch (error) {
+            releaseBindings(); clearSlot();
+            throw error;
         }
-        on('APP_READY', mountSettings);
-        initialized = true; clearSlot(); mountSettings();
-        scheduleVectorIndex();
-        if (!compatible(ctx)) { updatePreview({ reason: 'UNSUPPORTED' }); warn('UNSUPPORTED'); }
     }
     function dispose() {
         if (disposed) return;
@@ -1433,8 +1480,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         invalidate(); disposed = true;
         clearVectorSaveSuccess();
         if (indexTimer !== null) { clearTimeout(indexTimer); indexTimer = null; }
-        for (const [events, type, fn] of bindings) (events.removeListener || events.off)?.call(events, type, fn);
-        bindings.length = 0;
+        releaseBindings();
         for (const id of ['uwu-phone-memory-preview-dialog', 'uwu-phone-memory-settings', 'uwu-phone-vector-dialog', 'uwu-phone-vector-menu-container', 'uwu-phone-vector-menu', 'uwu-phone-memory-ui-style']) getDocument()?.getElementById?.(id)?.remove();
     }
     return { initialize, startGeneration: start, interceptor, invalidate, setEnabled, getPreview, selectManual, availableSources, dispose,

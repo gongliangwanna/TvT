@@ -122,13 +122,22 @@ function stripOwnPhoneBlock(mes, extra) {
     if (!b) return (mes || '').trim();
     return (mes.slice(0, b.start) + mes.slice(b.end)).trim();
 }
+// 酒馆切换抽卡版本时会从 swipes 重新填 mes。只更新当前版本，避免手机块消失或复活。
+function setFloorText(message, text) {
+    message.mes = text;
+    const index = Number.isInteger(message.swipe_id) ? message.swipe_id : 0;
+    if (Array.isArray(message.swipes) && index >= 0 && index < message.swipes.length) message.swipes[index] = text;
+}
+function clearOwnPhoneMetadata(stMsg) {
+    for (const key of ['from_uwu', 'uwu_created', 'uwu_summary', 'uwu_summary_length', 'uwu_msg_ids', 'uwu_push_time',
+        'uwu_line_lens', 'uwu_time_flags', 'uwu_image_description_ids']) delete stMsg.extra[key];
+}
 // 新建楼层后来也可能被手工补过剧情；只有移除手机块后确实为空才删整楼。
 function clearOwnPhoneBlock(stMsg) {
     const rest = stripOwnPhoneBlock(stMsg.mes, stMsg.extra);
     if (stMsg.extra.uwu_created && !rest) return true;
-    stMsg.mes = rest;
-    for (const key of ['from_uwu', 'uwu_created', 'uwu_summary', 'uwu_summary_length', 'uwu_msg_ids', 'uwu_push_time',
-        'uwu_line_lens', 'uwu_time_flags', 'uwu_image_description_ids']) delete stMsg.extra[key];
+    setFloorText(stMsg, rest);
+    clearOwnPhoneMetadata(stMsg);
     return false;
 }
 // 把小手机那一段换成新的
@@ -253,6 +262,12 @@ const TavernSync = {
         const isRecord = value => value && typeof value === 'object' && !Array.isArray(value);
         if (Array.from(db.tavernSync.bindings).some(value => !isRecord(value))) db.tavernSync.bindings = db.tavernSync.bindings.filter(isRecord);
         if (Array.from(db.tavernSync.cleanRules).some(value => !isRecord(value))) db.tavernSync.cleanRules = db.tavernSync.cleanRules.filter(isRecord);
+        const ruleIds = new Set(db.tavernSync.cleanRules.map(rule => rule.id).filter(Boolean));
+        const seenRuleIds = new Set();
+        db.tavernSync.cleanRules.forEach(rule => {
+            if (!rule.id || seenRuleIds.has(rule.id)) rule.id = this._newCleanRuleId(ruleIds);
+            seenRuleIds.add(rule.id);
+        });
         if (!Array.isArray(db.tavernSync.ruleGroupsOff)) db.tavernSync.ruleGroupsOff = [];
         if (typeof db.tavernSync.pushIncludeStatusBar !== 'boolean') db.tavernSync.pushIncludeStatusBar = true;
         if (typeof db.tavernSync.pushIncludeOnlineStatus !== 'boolean') db.tavernSync.pushIncludeOnlineStatus = false;
@@ -270,6 +285,18 @@ const TavernSync = {
         db.tavernSync = config;
         if (await saveData() === false) throw new Error('小手机配置未能保存，请重试');
         console.log('[TavernSync] Config saved, bindings:', (config.bindings || []).length);
+    },
+
+    _pushPendingSaves: new WeakSet(),
+    async _savePushProgress(binding) {
+        this._pushPendingSaves.add(binding);
+        await this.saveConfig(this.getConfig());
+        this._pushPendingSaves.delete(binding);
+    },
+
+    _physicalPushIds(message) {
+        const extra = message && message.extra;
+        return extra?.from_uwu && Array.isArray(extra.uwu_msg_ids) && lastPhoneBlock(message.mes, extra) ? extra.uwu_msg_ids : [];
     },
 
     // ========== API ==========
@@ -514,8 +541,7 @@ const TavernSync = {
         const stMsgs = opts.stMsgs || await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
         const present = new Set();
         (Array.isArray(stMsgs) ? stMsgs : []).forEach(m => {
-            const ids = m && m.extra && m.extra.uwu_msg_ids;
-            if (Array.isArray(ids)) ids.forEach(id => present.add(id));
+            this._physicalPushIds(m).forEach(id => present.add(id));
         });
         const { phoneById } = this._pushHelpers(char, binding);
         const lostRaw = new Set();
@@ -610,7 +636,9 @@ const TavernSync = {
     async getSTWorldInfo(name) {
         const data = await this.apiCall('/api/worldinfo/get', { name });
         const record = value => value && typeof value === 'object' && !Array.isArray(value);
-        if (!record(data) || !record(data.entries) || Object.values(data.entries).some(value => !record(value))) {
+        if (!record(data) || !record(data.entries) || Object.values(data.entries).some(value => !record(value)
+            || (value.uid != null && (!Number.isSafeInteger(Number(value.uid)) || Number(value.uid) < 0
+                || (typeof value.uid === 'string' && !value.uid.trim()))))) {
             throw new Error('酒馆世界书数据格式异常，已停止读取和写入，请检查世界书后重试');
         }
         return data;
@@ -670,6 +698,15 @@ const TavernSync = {
         return a.regex === b.regex && (a.mode || 'exclude') === (b.mode || 'exclude') && (a.scope || 'both') === (b.scope || 'both');
     },
 
+    _cleanRuleSerial: 0,
+    _newCleanRuleId(used = null) {
+        const ids = used || new Set((db.tavernSync?.cleanRules || []).map(rule => rule?.id));
+        let id;
+        do { id = `rule_${Date.now()}_${++this._cleanRuleSerial}`; } while (ids.has(id));
+        ids.add(id);
+        return id;
+    },
+
     // 导出：ids = 要导出的规则编号（null 导出全部），按页面上的顺序
     exportCleanRules(ids) {
         const cfg = this.getConfig();
@@ -679,7 +716,7 @@ const TavernSync = {
         return {
             type: 'uwu-tavern-clean-rules', version: 1,
             rules: rules.map(r => {
-                const o = { name: r.name || '未命名', regex: r.regex, mode: r.mode || 'exclude', scope: r.scope || 'both', enabled: r.enabled !== false };
+                const o = { name: r.name || '未命名', regex: r.regex, mode: r.mode || 'exclude', scope: r.scope || 'both', enabled: !!r.enabled };
                 if (r.group) o.group = r.group;
                 return o;
             }),
@@ -711,6 +748,7 @@ const TavernSync = {
         let data;
         try { data = JSON.parse(text); } catch (e) { throw new Error('文件不是有效的 JSON'); }
         if (!data || data.type !== 'uwu-tavern-clean-rules' || !Array.isArray(data.rules)) throw new Error('不是酒馆互联导出的正则文件');
+        if (data.version != null && data.version !== 1) throw new Error('不支持这个正则文件版本，请使用兼容的酒馆互联文件');
         const rules = data.rules.filter(r => r && typeof r.regex === 'string' && r.regex).map(r => {
             const o = {
                 name: String(r.name || '未命名'), regex: r.regex,
@@ -718,7 +756,7 @@ const TavernSync = {
                 scope: ['pull', 'push', 'both'].includes(r.scope) ? r.scope : 'both',
                 enabled: r.enabled !== false,
             };
-            if (typeof r.group === 'string' && r.group.trim()) o.group = r.group.trim();
+            if (typeof r.group === 'string' && r.group.trim()) o.group = r.group;
             try { new RegExp(o.regex); } catch (e) { o.invalid = true; }
             return o;
         });
@@ -734,14 +772,20 @@ const TavernSync = {
     // 把选中的规则加进来。target：'__file__' = 照文件里的分组（同名分组已有就放进去），'' = 不分组，其余 = 放进这个分组。
     // 文件里关着的分组，只在这次新建出来时才关；已有的分组开关不动。重复的跳过。
     async importCleanRules(list, target, fileGroupsOff) {
+        if (!Array.isArray(list) || Array.from(list).some(rule => !rule || typeof rule !== 'object' || Array.isArray(rule)
+            || typeof rule.regex !== 'string' || !rule.regex)) throw new Error('导入规则数据格式异常，未添加任何规则');
+        for (const rule of list) {
+            if (!rule.invalid) { try { new RegExp(rule.regex, 'gs'); } catch (e) { throw new Error('导入规则正则格式异常，未添加任何规则'); } }
+        }
         const cfg = this.getConfig();
         if (!Array.isArray(cfg.cleanRules)) cfg.cleanRules = [];
         const before = new Set(this.ruleGroupsOf(cfg));
         let added = 0, skipped = 0;
-        list.forEach((r, i) => {
+        const ids = new Set(cfg.cleanRules.map(rule => rule.id));
+        list.forEach(r => {
             if (r.invalid) return;
             if (cfg.cleanRules.some(e => this.sameCleanRule(e, r))) { skipped++; return; }
-            const rule = { id: `rule_${Date.now()}_${i}`, name: r.name, regex: r.regex, mode: r.mode, scope: r.scope, enabled: r.enabled };
+            const rule = { id: this._newCleanRuleId(ids), name: r.name, regex: r.regex, mode: r.mode, scope: r.scope, enabled: r.enabled };
             const g = target === '__file__' ? (r.group || '') : (target || '');
             if (g) rule.group = g;
             cfg.cleanRules.push(rule);
@@ -1305,7 +1349,10 @@ const TavernSync = {
     async resetImportRange(binding, range) {
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (!char) throw new Error('找不到角色');
+        if (range && (!Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end)
+            || range.start < 0 || range.end < range.start)) throw new Error('同步楼层范围无效，请填非负整数且开始不能大于结束');
         const info = await this.getTavernFloorInfo(binding);
+        if (range && range.end >= info.total) throw new Error('同步楼层范围超出当前酒馆聊天，请重新选择范围');
         const last = info.usable[info.usable.length - 1];
         let importStart = { none: true }, importEnd = null;
         if (range) {
@@ -1559,7 +1606,8 @@ const TavernSync = {
             restored++;
 
             // 精简时一起收走的 user 楼，也从酒馆取回来（找不到的就算了，和 AI 楼一样报“找不到”）
-            const marks = m.tavern.roundUsers || [];
+            const marks = Array.isArray(m.tavern.roundUsers) ? m.tavern.roundUsers.filter(mark => mark && typeof mark === 'object') : [];
+            const restoredHits = new Set();
             // 时间要夹在“上一楼”和“这一回合的 AI 楼”之间，否则取回来的楼层会排到别处去
             const aiTime = typeof m.tavern.time === 'number' ? m.tavern.time : null;
             let prevTime = null;
@@ -1572,7 +1620,11 @@ const TavernSync = {
             }
             marks.forEach((mark, idx) => {
                 const hit = list.find(x => x && typeof x.mes === 'string' && this._sameFloor(x, mark));
-                if (!hit) { missing++; return; }
+                if (!hit || !hit.is_user) { missing++; return; }
+                if (restoredHits.has(hit)) return;
+                restoredHits.add(hit);
+                if (char.history.some(existing => existing?.fromTavern && existing.tavern?.isUser
+                    && this._sameTavernSource(existing.tavern, m.tavern) && this._sameFloor(hit, existing.tavern))) return;
                 const text = cleanOf(hit);
                 if (!text) { missing++; return; }
                 let time = readFloorTime(hit);
@@ -1840,8 +1892,7 @@ const TavernSync = {
         const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
         const pushed = new Set();
         (Array.isArray(stMsgs) ? stMsgs : []).forEach(m => {
-            const ids = m && m.extra && m.extra.uwu_msg_ids;
-            if (Array.isArray(ids)) ids.forEach(id => pushed.add(id));
+            this._physicalPushIds(m).forEach(id => pushed.add(id));
         });
         // “推过的消息名单”：把酒馆里现在有的也补进去（以前推的、别处推的都算），小手机里已经删掉的顺手去掉。
         // 小总结覆盖的不算：那几条在酒馆里是一段总结，不是原文，丢了也不该按原文补推
@@ -1849,7 +1900,7 @@ const TavernSync = {
         const ledger = new Set((Array.isArray(binding.pushedIds) ? binding.pushedIds : []).filter(id => phoneById.has(id)));
         (Array.isArray(stMsgs) ? stMsgs : []).forEach(m => {
             const ex = m && m.extra;
-            if (ex && ex.from_uwu && !ex.uwu_summary && Array.isArray(ex.uwu_msg_ids)) ex.uwu_msg_ids.forEach(id => { if (phoneById.has(id)) ledger.add(id); });
+            if (ex && !ex.uwu_summary) this._physicalPushIds(m).forEach(id => { if (phoneById.has(id)) ledger.add(id); });
         });
         binding.pushedIds = [...ledger];
         // 小总结覆盖的另记一份（重新生成时用来判断旧回复在不在酒馆里），同样把酒馆里现有的补进去
@@ -1857,7 +1908,7 @@ const TavernSync = {
         const sumLedger = new Set((Array.isArray(binding.summarizedIds) ? binding.summarizedIds : []).filter(id => phoneById.has(id)));
         (Array.isArray(stMsgs) ? stMsgs : []).forEach(m => {
             const ex = m && m.extra;
-            if (ex && ex.from_uwu && ex.uwu_summary && Array.isArray(ex.uwu_msg_ids)) ex.uwu_msg_ids.forEach(id => { if (phoneById.has(id)) sumLedger.add(id); });
+            if (ex && ex.uwu_summary) this._physicalPushIds(m).forEach(id => { if (phoneById.has(id)) sumLedger.add(id); });
         });
         binding.summarizedIds = [...sumLedger];
         if (JSON.stringify(binding.pushedIds) !== before || JSON.stringify(binding.summarizedIds) !== sumBefore) await this.saveConfig(this.getConfig());
@@ -2123,11 +2174,12 @@ const TavernSync = {
         } finally { clearTimeout(timer); }
     },
     _startImageDescriptions(target, ids, opts = {}) {
-        this.describeImagesAfterReply(target.uwuCharId, ids, { ...opts, target }).catch(e => {
+        return this.describeImagesAfterReply(target.uwuCharId, ids, { ...opts, target }).catch(e => {
             // 识图之前读取酒馆也会遇到断网，不能因此丢掉整个重试任务。
             for (const id of ids) {
                 if (!this._imageTargetMatches(target)
-                    || !db.characters.find(c => c.id === target.uwuCharId)?.history?.some(m => m.id === id)) {
+                    || !Array.isArray(db.characters.find(c => c.id === target.uwuCharId)?.history)
+                    || !db.characters.find(c => c.id === target.uwuCharId).history.some(m => m && m.id === id)) {
                     this._cancelImageRetries(target, id);
                     continue;
                 }
@@ -2263,7 +2315,8 @@ const TavernSync = {
         const kind = 'image-write:' + JSON.stringify([target.uwuCharId, messageId]);
         this.syncRecognizedImage(target, messageId).catch(e => {
             if (!this._imageTargetMatches(target)
-                || !db.characters.find(c => c.id === target.uwuCharId)?.history?.some(m => m.id === messageId)) {
+                || !Array.isArray(db.characters.find(c => c.id === target.uwuCharId)?.history)
+                || !db.characters.find(c => c.id === target.uwuCharId).history.some(m => m && m.id === messageId)) {
                 this._cancelImageRetries(target, messageId);
                 return;
             }
@@ -2303,7 +2356,7 @@ const TavernSync = {
         if (!replacements.size) return false;
         // 按位置补写，历史重复编号的两份正文可能已被分别修改。
         const lines = stored.map((line, i) => replacements.has(i) ? replacements.get(i) : line);
-        stMsg.mes = replaceOwnPhoneBlock(stMsg.mes, `<phone_chat>\n${lines.filter(line => line && line.trim()).join('\n')}\n</phone_chat>`, stMsg.extra);
+        setFloorText(stMsg, replaceOwnPhoneBlock(stMsg.mes, `<phone_chat>\n${lines.filter(line => line && line.trim()).join('\n')}\n</phone_chat>`, stMsg.extra));
         stMsg.extra.uwu_line_lens = this._lineLens(lines);
         this._rebuildPhoneBlock(stMsg, ids, phoneById, toLine, null, withTimeLine);
         if (updatedIds) for (const i of replacements.keys()) updatedIds.add(ids[i]);
@@ -2319,7 +2372,7 @@ const TavernSync = {
             return;
         }
         const char = db.characters.find(c => c.id === target.uwuCharId);
-        const msg = char?.history?.find(m => m.id === messageId);
+        const msg = Array.isArray(char?.history) ? char.history.find(m => m && m.id === messageId) : null;
         if (!msg?.parts?.some(p => p?.type === 'image' && p.description)) {
             this._cancelImageRetries(target, messageId);
             return;
@@ -2625,7 +2678,7 @@ const TavernSync = {
             });
         }
         const phoneChat = `<phone_chat>\n${lines.filter(l => l && l.trim()).join('\n')}\n</phone_chat>`;
-        stMsg.mes = replaceOwnPhoneBlock(stMsg.mes || '', phoneChat, stMsg.extra);
+        setFloorText(stMsg, replaceOwnPhoneBlock(stMsg.mes || '', phoneChat, stMsg.extra));
         stMsg.extra.uwu_msg_ids = nextIds;
         stMsg.extra.uwu_line_lens = this._lineLens(lines);
         // 与消息编号逐条对应：0 表示无时间行，正整数表示写入行数，null 表示旧行归属不明。
@@ -2683,6 +2736,7 @@ const TavernSync = {
     async _pushToTavern(binding, pushCount, trackProgress = true, opts = {}) {
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (!char) throw new Error('找不到角色');
+        if (this._pushPendingSaves.has(binding)) await this._savePushProgress(binding);
         let stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
         // 等识图后再读酒馆，避免把漫长识图期间酒馆新增的内容覆盖掉。
         if (!opts.messages && !opts.recovering) {
@@ -2692,6 +2746,16 @@ const TavernSync = {
             } catch (e) { this.reportIssue('核对被酒馆盖掉的推送时出错：' + e.message, 'push'); }
         }
         const { allUwuMsgs, toLine, timeLine, timestampOf, withTimeLine, phoneById } = this._pushHelpers(char, binding);
+        const all = Array.isArray(stMsgs) ? [...stMsgs] : [];
+        let hadDeletions = false;
+        const orphanedPhoneFloors = new Set();
+        for (const stMsg of all) {
+            if (stMsg?.extra?.from_uwu && Array.isArray(stMsg.extra.uwu_msg_ids) && !lastPhoneBlock(stMsg.mes, stMsg.extra)) {
+                // 抽卡只盖掉正文、保留 extra 时，补回前先撤销已失效的归属。
+                // 新剧情与其他插件字段原样保留，不能把旧编号留成第二份推送。
+                orphanedPhoneFloors.add(stMsg); clearOwnPhoneMetadata(stMsg); hadDeletions = true;
+            }
+        }
         // 小手机里还在的消息。只有从小手机里真的删掉了，才去酒馆里删（改推送设置不算删）。
         // binding.keptIds：被“重新生成”换掉的旧回复。它们在小手机里没了，但酒馆里的旧版本要保留，所以当作还在（yuan 版新增）
         // binding.keepInTavern：小手机里删了、但你在推送窗口里选了「留在酒馆」的
@@ -2711,10 +2775,7 @@ const TavernSync = {
             delete binding.bulkDeleteNotice;
         }
 
-        const all = Array.isArray(stMsgs) ? [...stMsgs] : [];
-
         // === 把删除推送到酒馆：小手机里删掉的消息，从酒馆楼层里去掉 ===
-        let hadDeletions = false;
         for (let i = 0; i < all.length; i++) {
             const stMsg = all[i];
             if (!stMsg?.extra?.from_uwu || !Array.isArray(stMsg.extra.uwu_msg_ids)) continue;
@@ -2775,7 +2836,7 @@ const TavernSync = {
                 const block = lastPhoneBlock(draft.mes, draft.extra);
                 const nextText = block ? replaceOwnPhoneBlock(stMsg.mes, block.text, stMsg.extra) : stMsg.mes;
                 if (nextText !== stMsg.mes || JSON.stringify(oldFlags) !== JSON.stringify(draft.extra.uwu_time_flags)) {
-                    stMsg.mes = nextText;
+                    setFloorText(stMsg, nextText);
                     stMsg.extra = draft.extra;
                     hadTimestampUpdates = true;
                 }
@@ -2817,8 +2878,7 @@ const TavernSync = {
         // 酒馆里现在已经有的小手机消息（删除处理之后）
         const pushedIds = new Set();
         all.forEach(m => {
-            const ids = m && m.extra && m.extra.uwu_msg_ids;
-            if (Array.isArray(ids)) ids.forEach(id => pushedIds.add(id));
+            this._physicalPushIds(m).forEach(id => pushedIds.add(id));
         });
 
         // === 找出要推送的新消息 ===
@@ -2884,7 +2944,7 @@ const TavernSync = {
             const newIds = new Set(newMsgs.map(m => m.id));
             const overlaps = lastMsg?.extra?.uwu_msg_ids?.some(id => newIds.has(id));
             const damagedOwnBlock = lastMsg?.extra?.from_uwu && !this._blockSegments(lastMsg);
-            const appendToLast = !overlaps && !lastMsg?.extra?.uwu_summary && !damagedOwnBlock
+            const appendToLast = !overlaps && !lastMsg?.extra?.uwu_summary && !damagedOwnBlock && !orphanedPhoneFloors.has(lastMsg)
                 && (lastIsOwnFloor || (pushMode === 'append' && lastMsg));
             const own = appendToLast && lastMsg.extra?.from_uwu ? lastPhoneBlock(lastMsg.mes, lastMsg.extra) : null;
             const previousSegments = own ? this._blockSegments(lastMsg) : null;
@@ -2920,9 +2980,9 @@ const TavernSync = {
                     ? target.extra.uwu_time_flags : Array(oldCount).fill(null);
                 if (own) {
                     const inner = own.text.slice(0, own.text.length - '</phone_chat>'.length);
-                    target.mes = existingContent.slice(0, own.start) + inner + lines.join('\n') + '\n</phone_chat>' + existingContent.slice(own.end);
+                    setFloorText(target, existingContent.slice(0, own.start) + inner + lines.join('\n') + '\n</phone_chat>' + existingContent.slice(own.end));
                 } else {
-                    target.mes = existingContent + '\n' + mergedContent;
+                    setFloorText(target, existingContent + '\n' + mergedContent);
                 }
                 if (!target.extra) target.extra = {};
                 target.extra.from_uwu = true;
@@ -2972,11 +3032,11 @@ const TavernSync = {
         // 只推删除时不能改它，否则下次推送会跳过中间的消息
         // 推送过就记一笔（手动、自动都算），卡片上“第一次自动推送最近 N 条”那一行就不再显示
         if (newMsgs.length > 0 && !binding.hasPushed) binding.hasPushed = true;
-        if (newMsgs.length > 0 && !trackProgress) await this.saveConfig(this.getConfig());
+        if (newMsgs.length > 0 && !trackProgress) await this._savePushProgress(binding);
         if (trackProgress && newMsgs.length > 0) {
             const markTo = opts.messages ? newMsgs[newMsgs.length - 1].id : allUwuMsgs[allUwuMsgs.length - 1].id;
             this._advancePushMark(binding, char, markTo);
-            await this.saveConfig(this.getConfig());
+            await this._savePushProgress(binding);
         }
 
         this.resolveIssues('push');   // 这次推送成功了，之前“推送失败”的记录就不用留着了
@@ -3021,7 +3081,7 @@ const TavernSync = {
                     if (head >= 0) {
                         const at = pos + head;
                         // 只替换这个编号对应的正文，保留它前面的时间行和同楼其他相同文字。
-                        stMsg.mes = stMsg.mes.slice(0, at) + newLine + stMsg.mes.slice(at + oldLine.length);
+                        setFloorText(stMsg, stMsg.mes.slice(0, at) + newLine + stMsg.mes.slice(at + oldLine.length));
                         if (segments) {
                             stMsg.extra.uwu_line_lens = stMsg.extra.uwu_line_lens.slice();
                             stMsg.extra.uwu_line_lens[i] += newLine.length - oldLine.length;
@@ -3229,37 +3289,40 @@ ${transcript}`;
     // 自动拉取（进入聊天时调用）
     async autoPullIfNeeded(charId) {
         const cfg = this.getConfig();
-        if (!cfg.enabled) return;
+        if (!cfg.enabled) return { ok: true, skipped: true };
         const binding = this.findBindingForChar(charId);
-        if (!binding || !this.isAuto(binding, 'autoPull')) return;
+        if (!binding || !this.isAuto(binding, 'autoPull')) return { ok: true, skipped: true };
         try {
             const r = await this.pullFromTavern(binding);
             if (r.imported > 0) console.log(`[TavernSync] Auto-pull: ${r.imported} messages`);
-        } catch (e) { this.reportIssue('自动从酒馆同步失败：' + e.message, 'pull'); }
+            return { ok: true, result: r };
+        } catch (e) { const error = e?.message || String(e); this.reportIssue('自动从酒馆同步失败：' + error, 'pull'); return { ok: false, error }; }
     },
 
     // 仅同步删除（消息被删后立即调用，不推送新消息）
     async autoDeletionSyncIfNeeded(charId) {
         const cfg = this.getConfig();
-        if (!cfg.enabled) return;
+        if (!cfg.enabled) return { ok: true, skipped: true };
         const binding = this.findBindingForChar(charId);
-        if (!binding || !this.isAuto(binding, 'autoPush')) return;
+        if (!binding || !this.isAuto(binding, 'autoPush')) return { ok: true, skipped: true };
         try {
             const r = await this.pushToTavern(binding, 0);
             if (r.deleted) console.log('[TavernSync] Deletion sync done');
-        } catch (e) { this.reportIssue('把删除推送到酒馆失败：' + e.message, 'push'); }
+            return { ok: true, result: r };
+        } catch (e) { const error = e?.message || String(e); this.reportIssue('把删除推送到酒馆失败：' + error, 'push'); return { ok: false, error }; }
     },
 
     // 自动推送（AI 回复后调用）
     async autoPushIfNeeded(charId) {
         const cfg = this.getConfig();
-        if (!cfg.enabled) return;
+        if (!cfg.enabled) return { ok: true, skipped: true };
         const binding = this.findBindingForChar(charId);
-        if (!binding || !this.isAuto(binding, 'autoPush')) return;
+        if (!binding || !this.isAuto(binding, 'autoPush')) return { ok: true, skipped: true };
         try {
             const r = await this.pushToTavern(binding);
             if (r.pushed > 0 || r.deleted) console.log(`[TavernSync] Auto-push: ${r.pushed} new, deleted=${r.deleted}`);
-        } catch (e) { this.reportIssue('自动推送到酒馆失败：' + e.message, 'push'); }
+            return { ok: true, result: r };
+        } catch (e) { const error = e?.message || String(e); this.reportIssue('自动推送到酒馆失败：' + error, 'push'); return { ok: false, error }; }
     },
 
     // 页面可见时自动同步（从酒馆切回来时触发拉取 + 删除同步）
@@ -3716,6 +3779,10 @@ ${transcript}`;
             delete ps.charKept;
         }
         if (what.user) {
+            // 正文和头像可以分别勾选导入；改正文来源时保留已经确认的旧头像来源。
+            if (!ps.userAvatarSource && ps.userAvatarHash !== undefined && what.userSource && what.userSource !== ps.userSource) {
+                ps.userAvatarSource = ps.userSource || '__active__';
+            }
             if (what.userSource) ps.userSource = what.userSource;
             const tv = this._userPersonaText(result, ps.userSource);
             ps.userHash = this.textHash(tv == null ? '' : tv);
@@ -3730,10 +3797,13 @@ ${transcript}`;
         if (what.char) {
             const h = await this._imageHash(this.tavernCharThumbUrl(result.charAvatar || binding.stCharAvatar));
             if (h) { ps.charAvatarHash = h; ps.charAvatarLocal = this.textHash(char.avatar || ''); delete ps.charAvatarKept; }
+            else { delete ps.charAvatarHash; delete ps.charAvatarLocal; delete ps.charAvatarKept; }
         }
         if (what.userFile) {
+            ps.userAvatarSource = what.userFile;
             const h = await this._imageHash(this.tavernUserThumbUrl(what.userFile));
             if (h) { ps.userAvatarHash = h; ps.userAvatarLocal = this.textHash(char.myAvatar || ''); delete ps.userAvatarKept; }
+            else { delete ps.userAvatarHash; delete ps.userAvatarLocal; delete ps.userAvatarKept; }
         }
         binding.personaSync = ps;
     },
@@ -3823,6 +3893,7 @@ ${transcript}`;
         const errors = [];
         if (mode !== 'char' && result.userSettingsAvailable === false) errors.push('用户人设读取失败：' + (result.userSettingsError || '酒馆设置暂时不可用'));
         const userFile = this._userPersonaAvatar(result, ps.userSource);
+        const userAvatarFile = this._userPersonaAvatar(result, ps.userAvatarSource || ps.userSource);
 
         // 每一样怎么读、怎么写
         const items = [];
@@ -3856,8 +3927,8 @@ ${transcript}`;
                 },
             });
         }
-        if ((mode === 'user' || mode === 'both') && userFile !== null) {
-            const tv = this._userPersonaText(result, ps.userSource);
+        if (mode === 'user' || mode === 'both') {
+            const tv = userFile === null ? null : this._userPersonaText(result, ps.userSource);
             if (tv !== null) {
                 items.push({
                     key: 'user', text: true,
@@ -3870,22 +3941,22 @@ ${transcript}`;
                     } : null,
                 });
             }
-            if (userFile) {
+            if (userAvatarFile) {
                 items.push({
                     key: 'userAvatar',
-                    tavernHash: () => this._imageHash(this.tavernUserThumbUrl(userFile)),
+                    tavernHash: () => this._imageHash(this.tavernUserThumbUrl(userAvatarFile)),
                     local: () => char.myAvatar || '',
                     empty: () => !this._isOwnAvatar(char.myAvatar),
                     pull: async () => {
                         const before = char.myAvatar;
-                        const next = await this.avatarToSquare(this.tavernUserAvatarUrl(userFile) + '?_t=' + Date.now());
+                        const next = await this.avatarToSquare(this.tavernUserAvatarUrl(userAvatarFile) + '?_t=' + Date.now());
                         if (char.myAvatar !== before) return false;
                         char.myAvatar = next; return next;
                     },
                     push: async local => {
                         const a = await this.avatarToTall(local);
-                        await this._writePersonaAvatar(userFile, a.blob);
-                        return this._imageHash(this.tavernUserThumbUrl(userFile));
+                        await this._writePersonaAvatar(userAvatarFile, a.blob);
+                        return this._imageHash(this.tavernUserThumbUrl(userAvatarFile));
                     },
                 });
             }
@@ -4071,7 +4142,11 @@ ${transcript}`;
     // 酒馆里所有世界书的名字（酒馆的设置接口顺带返回）
     async getSTWorldNames() {
         const resp = await this.apiCall('/api/settings/get', {});
-        return Array.isArray(resp && resp.world_names) ? resp.world_names : [];
+        const names = resp && resp.world_names;
+        if (!Array.isArray(names) || Array.from(names).some(name => typeof name !== 'string' || !name.trim())) {
+            throw new Error('酒馆世界书列表格式异常，无法确认同名世界书是否已存在，请重试');
+        }
+        return names;
     },
 
     // 通知同一个浏览器里开着的酒馆页面（st-launcher.js 在听）：刷新角色列表、世界书、人设
@@ -4132,6 +4207,7 @@ ${transcript}`;
             const syncedBook = { ...w, keywords: Array.isArray(w.keywords) ? w.keywords.slice() : [] };
             if (mode === 'add') {
                 if (st.linked) { skipped++; continue; }
+                if (!Number.isSafeInteger(nextUid) || nextUid < 0) throw new Error('酒馆世界书 UID 已超出安全范围，已停止新增条目');
                 const uid = nextUid++;
                 data.entries[uid] = this._newTavernEntry(uid, syncedBook);
                 touched.push([w, uid, syncedBook]);
@@ -5018,7 +5094,7 @@ function setupTavernSyncScreen() {
         const rules = cfg.cleanRules || [];
         // 很老的规则可能没有编号，多选要靠编号认规则，补上
         if (rules.some(r => !r.id)) {
-            rules.forEach((r, i) => { if (!r.id) r.id = `rule_${Date.now()}_${i}`; });
+            rules.forEach(r => { if (!r.id) r.id = TavernSync._newCleanRuleId(); });
             TavernSync.saveConfig(cfg);
         }
         if (!rules.length) rulesSelected = null;
@@ -5940,7 +6016,12 @@ function showTrimModal(binding, onDone) {
 async function showResetRangeModal(binding, onDone) {
     const char = db.characters.find(c => c.id === binding.uwuCharId);
     if (!char) { showToast('找不到角色'); return; }
+    const target = { uwuCharId: binding.uwuCharId, stCharAvatar: binding.stCharAvatar, stChatFile: binding.stChatFile };
+    const isCurrent = () => db.characters.includes(char) && TavernSync.getConfig().bindings.includes(binding)
+        && binding.uwuCharId === target.uwuCharId && binding.stCharAvatar === target.stCharAvatar && binding.stChatFile === target.stChatFile;
+    const staleMessage = '角色绑定已更换或删除，请重新打开管理同步范围';
     const info = await TavernSync.getTavernFloorInfo(binding);
+    if (!isCurrent()) { showToast(staleMessage); return; }
     const have = TavernSync._floorsOfChat(char, binding).length;
     const others = TavernSync.otherChatFloors(binding).length;   // 以前绑定的别的酒馆聊天留下的
     const lastFloor = Math.max(0, info.total - 1);
@@ -5985,6 +6066,7 @@ async function showResetRangeModal(binding, onDone) {
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     const othersBtn = modal.querySelector('#rr-others');
     if (othersBtn) othersBtn.addEventListener('click', async () => {
+        if (!isCurrent()) { showToast(staleMessage); return; }
         if (!confirm(`删掉小手机里以前绑定的酒馆聊天文件留下的 ${others} 楼剧情？酒馆里的原文不受影响。`)) return;
         othersBtn.disabled = true;
         try {
@@ -6015,6 +6097,7 @@ async function showResetRangeModal(binding, onDone) {
     endInput.addEventListener('input', syncRecent);
 
     const run = async (range, btn) => {
+        if (!isCurrent()) { showToast(staleMessage); return; }
         const buttons = modal.querySelectorAll('button');
         buttons.forEach(b => { b.disabled = true; });
         const orig = btn.textContent; btn.textContent = '处理中...';
@@ -6027,9 +6110,11 @@ async function showResetRangeModal(binding, onDone) {
                     && x.stCharAvatar === binding.stCharAvatar && x.stChatFile === binding.stChatFile));
                 if (b2) { b2.initialImportCount = n; await TavernSync.saveConfig(cfg); }
             }
+            if (!isCurrent()) throw new Error(staleMessage);
             const r = await TavernSync.resetImportRange(binding, range);
             let msg = synced ? `已删掉 ${r.removed} 楼` : '';
             if (range) {
+                if (!isCurrent()) throw new Error(staleMessage);
                 const p = await TavernSync.pullFromTavern(binding);
                 msg += msg ? `，重新同步 ${p.imported} 楼` : `同步了 ${p.imported} 楼`;
             }
@@ -6049,11 +6134,12 @@ async function showResetRangeModal(binding, onDone) {
             showToast(`请填 0 ~ ${lastFloor} 之间的楼层，而且开始不能大于结束`);
             return;
         }
-        run({ start, end }, e.currentTarget);
+        return run({ start, end }, e.currentTarget);
     });
     modal.querySelector('#rr-none').addEventListener('click', (e) => {
+        if (!isCurrent()) { showToast(staleMessage); return; }
         if (synced && !confirm(`删掉小手机里全部 ${have} 楼酒馆剧情，以后只同步新楼层？`)) return;
-        run(null, e.currentTarget);
+        return run(null, e.currentTarget);
     });
 }
 
@@ -6132,7 +6218,7 @@ function showRuleEditor(ruleIndex, onSave) {
     modal.querySelector('#rr-save').addEventListener('click', async () => {
         const regex = modal.querySelector('#rr-regex').value; if (!regex) { showToast('请填写正则'); return; }
         try { new RegExp(regex); } catch { showToast('正则无效'); return; }
-        const rule = { id: existing?.id || `rule_${Date.now()}`, name: modal.querySelector('#rr-name').value.trim() || '未命名', regex, mode: modal.querySelector('#rr-mode').value, scope: modal.querySelector('#rr-scope').value, enabled: existing?.enabled ?? true };
+        const rule = { id: existing?.id || TavernSync._newCleanRuleId(), name: modal.querySelector('#rr-name').value.trim() || '未命名', regex, mode: modal.querySelector('#rr-mode').value, scope: modal.querySelector('#rr-scope').value, enabled: existing?.enabled ?? true };
         if (groupValue) rule.group = groupValue;
         const cfg = TavernSync.getConfig(); if (!cfg.cleanRules) cfg.cleanRules = [];
         // 换了分组的规则挪到末尾，这样它排在新分组的最后
@@ -6273,9 +6359,14 @@ function showImportRulesModal(text, onDone) {
 
 // ========== 导入角色设定弹窗 ==========
 async function showImportCharModal(binding) {
-    const result = await TavernSync.importCharSettings(binding);
     const char = db.characters.find(c => c.id === binding.uwuCharId);
     if (!char) { showToast('找不到角色'); return; }
+    const target = { uwuCharId: binding.uwuCharId, stCharAvatar: binding.stCharAvatar, stChatFile: binding.stChatFile };
+    const bindingIsCurrent = () => db.characters.includes(char) && TavernSync.getConfig().bindings.includes(binding)
+        && binding.uwuCharId === target.uwuCharId && binding.stCharAvatar === target.stCharAvatar && binding.stChatFile === target.stChatFile;
+    const staleMessage = '角色绑定已更换或删除，请重新打开人设导入';
+    const result = await TavernSync.importCharSettings(binding);
+    if (!bindingIsCurrent()) { showToast(staleMessage); return; }
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
@@ -6388,47 +6479,64 @@ async function showImportCharModal(binding) {
     modal.querySelector('#ic-cancel').addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 
+    let importing = false;
     modal.querySelector('#ic-save').addEventListener('click', async () => {
-        const importPersona = modal.querySelector('#ic-persona-check')?.checked;
-        const importMyPersona = modal.querySelector('#ic-mypersona-check')?.checked;
-
-        let didChar = false, didUser = false;
-        if (importPersona && result.charPersona) {
-            if (hasPersona && !confirm('当前角色已有人设，确定覆盖吗？')) { /* skip */ }
-            else { char.persona = modal.querySelector('#ic-persona').value; didChar = true; }
-        }
-        if (importMyPersona && myPersonaArea?.value?.trim()) {
-            if (hasMyPersona && !confirm('当前角色已有用户人设，确定覆盖吗？')) { /* skip */ }
-            else { char.myPersona = myPersonaArea.value; didUser = true; }
-        }
-        // 头像：截好正方形再换上；读不到的不换，告诉你是哪张
-        const avatarFails = [];
-        let didAvatar = false, didCharAv = false, didUserAv = false;
-        if (modal.querySelector('#ic-avatar-check').checked && result.charAvatar) {
-            try { char.avatar = await TavernSync.avatarToSquare(TavernSync.tavernCharAvatarUrl(result.charAvatar)); didAvatar = didCharAv = true; }
-            catch (e) { avatarFails.push('角色头像'); }
-        }
-        const myFile = myAvatarFile();
-        if (modal.querySelector('#ic-myavatar-check').checked && myFile) {
-            try { char.myAvatar = await TavernSync.avatarToSquare(TavernSync.tavernUserAvatarUrl(myFile)); didAvatar = didUserAv = true; }
-            catch (e) { avatarFails.push('用户头像'); }
-        }
-        // 记下这次导入的是酒馆哪个版本、写进小手机的是什么，「双向自动更新人设」拿它判断以后谁改过
+        if (importing) return;
+        if (!bindingIsCurrent()) { showToast(staleMessage); return; }
+        // 所有选择在点击时固定，头像转换期间不会把另一人设的头像/来源拼到这次正文上。
         const src = personaSelect ? personaSelect.value : '';
-        if (didChar || didUser || didAvatar) {
-            const cfg = TavernSync.getConfig();
-            const b = cfg.bindings.find(x => x === binding) || cfg.bindings.find(x => x.uwuCharId === binding.uwuCharId);
-            if (b) {
-                TavernSync.recordPersonaImport(b, char, result, { char: didChar, user: didUser && !!src, userSource: src });
-                // 头像也记下两边这一版，「双向自动更新人设」拿它判断以后谁改过
-                try { await TavernSync.recordAvatarImport(b, char, result, { char: didCharAv, userFile: didUserAv ? myFile : '' }); } catch (e) { /* 记不下就当以前没记过 */ }
+        const myFile = myAvatarFile();
+        const wanted = {
+            persona: !!modal.querySelector('#ic-persona-check')?.checked,
+            myPersona: !!modal.querySelector('#ic-mypersona-check')?.checked,
+            personaText: modal.querySelector('#ic-persona')?.value || '',
+            myPersonaText: myPersonaArea?.value || '',
+            avatar: !!modal.querySelector('#ic-avatar-check').checked,
+            myAvatar: !!modal.querySelector('#ic-myavatar-check').checked,
+        };
+        const before = { persona: char.persona, myPersona: char.myPersona, avatar: char.avatar, myAvatar: char.myAvatar };
+        const patch = {}, avatarFails = [];
+        const controls = [...modal.querySelectorAll('input,select,textarea,button')];
+        const disabled = controls.map(control => control.disabled);
+        importing = true; controls.forEach(control => { control.disabled = true; });
+        let didChar = false, didUser = false, didCharAv = false, didUserAv = false;
+        try {
+            if (wanted.persona && result.charPersona && (!hasPersona || confirm('当前角色已有人设，确定覆盖吗？'))) {
+                patch.persona = wanted.personaText; didChar = true;
             }
-            await TavernSync.saveConfig(cfg);   // 会顺带存角色数据
-        } else {
-            await saveData();
-        }
-        overlay.remove();
-        showToast(avatarFails.length ? `人设已导入，${avatarFails.join('和')}读不到，没有换` : (didChar || didUser || didAvatar ? '人设已导入' : '没有要导入的内容'));
+            if (wanted.myPersona && wanted.myPersonaText.trim() && (!hasMyPersona || confirm('当前角色已有用户人设，确定覆盖吗？'))) {
+                patch.myPersona = wanted.myPersonaText; didUser = true;
+            }
+            if (wanted.avatar && result.charAvatar) {
+                try { patch.avatar = await TavernSync.avatarToSquare(TavernSync.tavernCharAvatarUrl(result.charAvatar)); didCharAv = true; }
+                catch (e) { avatarFails.push('角色头像'); }
+            }
+            if (!bindingIsCurrent() || !modal.isConnected) throw new Error(staleMessage);
+            if (wanted.myAvatar && myFile) {
+                try { patch.myAvatar = await TavernSync.avatarToSquare(TavernSync.tavernUserAvatarUrl(myFile)); didUserAv = true; }
+                catch (e) { avatarFails.push('用户头像'); }
+            }
+            const didAvatar = didCharAv || didUserAv;
+            const draft = { ...char, ...patch };
+            const ledger = { ...target, personaSync: { ...(binding.personaSync || {}) } };
+            TavernSync.recordPersonaImport(ledger, draft, result, { char: didChar, user: didUser && !!src, userSource: src });
+            try { await TavernSync.recordAvatarImport(ledger, draft, result, { char: didCharAv, userFile: didUserAv ? myFile : '' }); } catch (e) { /* 指纹读不到时不新增头像基线 */ }
+            if (!bindingIsCurrent() || !modal.isConnected) throw new Error(staleMessage);
+            if (Object.keys(patch).some(key => char[key] !== before[key])) throw new Error('人设或头像已在其他页面修改，请重新打开导入页面');
+            if (didChar || didUser || didAvatar) {
+                const previousLedger = binding.personaSync;
+                Object.assign(char, patch); binding.personaSync = ledger.personaSync;
+                try { await TavernSync.saveConfig(TavernSync.getConfig()); }
+                catch (e) {
+                    Object.keys(patch).forEach(key => { if (char[key] === patch[key]) char[key] = before[key]; });
+                    if (binding.personaSync === ledger.personaSync) binding.personaSync = previousLedger;
+                    throw e;
+                }
+            }
+            overlay.remove();
+            showToast(avatarFails.length ? `人设已导入，${avatarFails.join('和')}读不到，没有换` : (didChar || didUser || didAvatar ? '人设已导入' : '没有要导入的内容'));
+        } catch (e) { showToast(e.message); }
+        finally { importing = false; controls.forEach((control, index) => { control.disabled = disabled[index]; }); }
     });
 }
 

@@ -17,6 +17,27 @@ const phoneMemoryLoadedAdapters = new Set();
 const phoneMemoryDisposedAdapters = new WeakSet();
 const phoneUpdateWaits = new Set();
 const personaUpdateEpochs = new Map();
+const phoneRefreshTasks = new Map();
+const phoneImageWaits = new Set();
+let phoneSettingsSaveTask = null;
+let phoneReloadChatIdentity = null;
+let phoneReloadChatEpoch = 0;
+
+function observePhoneReloadChatIdentity() {
+    const chat = currentChat();
+    const identity = chat ? JSON.stringify([chat.avatar, chat.file]) : null;
+    if (identity !== phoneReloadChatIdentity) { phoneReloadChatIdentity = identity; phoneReloadChatEpoch++; }
+    return phoneReloadChatEpoch;
+}
+
+function queuePhoneRefresh(surface, action) {
+    const run = async () => { if (!phoneLauncherClosed) await action(); };
+    const result = (phoneRefreshTasks.get(surface) || Promise.resolve()).then(run, run)
+        .catch(error => console.warn('[小手机] 刷新 ' + surface + ' 失败:', error));
+    phoneRefreshTasks.set(surface, result);
+    result.then(() => { if (phoneRefreshTasks.get(surface) === result) phoneRefreshTasks.delete(surface); });
+    return result;
+}
 
 // 记忆模块只在酒馆页加载。异步加载出错时，原来的手机入口和推送监听仍能使用。
 let phoneMemoryModule = null;
@@ -26,6 +47,7 @@ let phoneMemoryInitializationEpoch = 0;
 let phoneMemoryGenerationEpoch = 0;
 let phoneMemoryCancellationEpoch = 0;
 let phoneMemoryBridgeReady = false;
+let phoneMemoryBridgeSource = null, phoneMemoryBridgeSignature = null, phoneMemoryBridgeEpoch = 0;
 let phoneMemoryObservedSnapshot = null;
 
 function disposePhoneMemoryAdapter(adapter) {
@@ -76,17 +98,26 @@ function phoneMemoryChatSnapshot() {
 
 function installPhoneMemoryLifecycleBridge() {
     if (phoneLauncherClosed) return false;
-    if (phoneMemoryBridgeReady) return true;
     const ctx = getCtx();
     const events = ctx?.eventSource;
     const types = ctx?.eventTypes || ctx?.event_types;
-    if (!events?.on || !types?.GENERATION_STARTED) return false;
+    const names = ['GENERATION_STARTED', 'GENERATION_STOPPED', 'GENERATION_ENDED', 'CHAT_CHANGED',
+        'CHARACTER_DELETED', 'PERSONA_CHANGED', 'MAIN_API_CHANGED', 'CONNECTION_PROFILE_LOADED',
+        'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSAGE_UPDATED'];
+    const signature = JSON.stringify(names.map(name => types?.[name] ?? null));
+    if (phoneMemoryBridgeReady && phoneMemoryBridgeSource === events && phoneMemoryBridgeSignature === signature) return true;
+    if (phoneMemoryBridgeBindings.length) detachPhoneMemoryLifecycleBridge();
+    if (typeof events?.on !== 'function' || !types?.GENERATION_STARTED) return false;
+    const bridgeEpoch = ++phoneMemoryBridgeEpoch;
+    try {
     phoneMemoryObservedSnapshot = phoneMemoryChatSnapshot();
+    observePhoneReloadChatIdentity();
     const on = (type, callback) => {
-        events.on(type, callback); phoneMemoryBridgeBindings.push([events, type, callback]);
+        // 某些事件实现会先加监听再抛错，先记录才能完整回滚。
+        phoneMemoryBridgeBindings.push([events, type, callback]); events.on(type, callback);
     };
     on(types.GENERATION_STARTED, async (...args) => {
-        if (phoneLauncherClosed) return;
+        if (phoneLauncherClosed || bridgeEpoch !== phoneMemoryBridgeEpoch) return;
         // 并行摘要/预览并非新的主回复，不能取消正在等模块加载的主开始事件。
         const primary = isPrimaryPhoneMemoryGeneration(...args);
         const epoch = primary ? ++phoneMemoryGenerationEpoch : phoneMemoryGenerationEpoch;
@@ -115,12 +146,15 @@ function installPhoneMemoryLifecycleBridge() {
         'CHARACTER_DELETED', 'PERSONA_CHANGED', 'MAIN_API_CHANGED', 'CONNECTION_PROFILE_LOADED',
         'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED']) {
         if (types[name]) on(types[name], () => {
+            if (phoneLauncherClosed || bridgeEpoch !== phoneMemoryBridgeEpoch) return;
+            if (name === 'CHAT_CHANGED') observePhoneReloadChatIdentity();
             phoneMemoryGenerationEpoch++;
             phoneMemoryCancellationEpoch++;
             phoneMemoryObservedSnapshot = phoneMemoryChatSnapshot();
         });
     }
     if (types.MESSAGE_UPDATED) on(types.MESSAGE_UPDATED, () => {
+        if (phoneLauncherClosed || bridgeEpoch !== phoneMemoryBridgeEpoch) return;
         const snapshot = phoneMemoryChatSnapshot();
         if (snapshot === phoneMemoryObservedSnapshot) return;
         phoneMemoryObservedSnapshot = snapshot;
@@ -128,7 +162,24 @@ function installPhoneMemoryLifecycleBridge() {
         phoneMemoryCancellationEpoch++;
     });
     phoneMemoryBridgeReady = true;
+    phoneMemoryBridgeSource = events; phoneMemoryBridgeSignature = signature;
+    // 适配器自己的发送/完成监听也需要随宿主对象变化重绑；同源 initialize 是幂等的。
+    phoneMemoryAdapter?.initialize?.();
     return true;
+    } catch (error) {
+        detachPhoneMemoryLifecycleBridge();
+        console.warn('[小手机] 生成事件桥接暂未就绪，已撤销本次注册:', error);
+        return false;
+    }
+}
+
+function detachPhoneMemoryLifecycleBridge() {
+    phoneMemoryBridgeEpoch++; phoneMemoryGenerationEpoch++; phoneMemoryCancellationEpoch++;
+    for (const [events, type, callback] of phoneMemoryBridgeBindings) {
+        try { (events.removeListener || events.off)?.call(events, type, callback); } catch (e) { /* 旧宿主不支持解绑时，epoch 仍阻止旧回调 */ }
+    }
+    phoneMemoryBridgeBindings.length = 0;
+    phoneMemoryBridgeReady = false; phoneMemoryBridgeSource = null; phoneMemoryBridgeSignature = null;
 }
 
 function clearPhoneMemorySlotAfterFailure() {
@@ -145,6 +196,7 @@ function clearPhoneMemorySlotAfterFailure() {
 // 随后直接调用返回的适配器，避免重新读取全局函数而调回代理自身。
 globalThis.uwuPhoneMemoryInterceptor = async (...args) => {
     if (phoneLauncherClosed) return;
+    installPhoneMemoryLifecycleBridge();
     const epoch = phoneMemoryGenerationEpoch;
     try {
         const adapter = phoneMemoryAdapter || await phoneMemoryLoadTask;
@@ -380,6 +432,7 @@ function tryReload() {
     if (!p) return;
     if (activeReload) return; // 完成回调会重新安排待处理任务。
     const cur = currentChat();
+    const reloadEpoch = observePhoneReloadChatIdentity();
     // 酒馆现在开的不是这个聊天：它会在打开时自己从文件读，不用管
     if (!cur || cur.avatar !== p.avatar || cur.file !== p.file) { pendingReload = null; return; }
     const reason = busyReason();
@@ -401,21 +454,41 @@ function tryReload() {
     if (typeof cur.ctx.reloadCurrentChat === 'function') {
         activeReload = p;
         p.reloaded = false;
+        p.reloadAttempts = (p.reloadAttempts || 0) + 1;
         // async 包裹也接住旧宿主的同步抛错，确保队列释放、覆盖风险回话都能完成。
         (async () => {
+            let failed = false;
             try {
                 await cur.ctx.reloadCurrentChat();
                 const after = currentChat();
-                if (after && after.avatar === p.avatar && after.file === p.file) {
+                const afterEpoch = observePhoneReloadChatIdentity();
+                if (afterEpoch === reloadEpoch && after && after.avatar === p.avatar && after.file === p.file) {
                     p.reloaded = true;
                     reloadedContext = after.ctx;
                     invalidatePhoneMemoryAfterReload();
                 }
-            } catch (e) { console.warn('[小手机] 重新读取聊天失败:', e); }
+            } catch (e) { failed = true; console.warn('[小手机] 重新读取聊天失败:', e); }
             finally {
                 activeReload = null;
                 done();
-                if (pendingReload && !reloadTimer) reloadTimer = setTimeout(tryReload, 300);
+                const after = currentChat();
+                if (failed && after && after.avatar === p.avatar && after.file === p.file && phoneReloadChatEpoch === reloadEpoch) {
+                    if (p.reloadAttempts < 3) {
+                        // 保留失败通知；连续的新保存与重试合并，再重新检查生成/编辑的忙闲状态。
+                        if (pendingReload?.avatar === p.avatar && pendingReload.file === p.file) {
+                            const seen = new Set(p.saves.map(save => save.saveId));
+                            p.saves.push(...pendingReload.saves.filter(save => !seen.has(save.saveId)));
+                            if (pendingReload.busySince) {
+                                p.busySince ||= pendingReload.busySince; p.busyReason ||= pendingReload.busyReason;
+                                p.busyEnded = pendingReload.busyEnded || null;
+                            }
+                        }
+                        pendingReload = p;
+                    } else if (globalThis.toastr) {
+                        globalThis.toastr.info('小手机保存后酒馆未能重新读取聊天，请刷新酒馆页面，避免下一次保存覆盖小手机的改动');
+                    }
+                }
+                if (pendingReload && !reloadTimer) reloadTimer = setTimeout(tryReload, failed ? 500 : 300);
             }
         })();
     } else {
@@ -433,27 +506,28 @@ function getCtx() {
 
 // 新建了角色：让酒馆重新读一遍角色列表，不用刷新页面就能看到
 function refreshCharacters() {
-    try {
+    return queuePhoneRefresh('characters', async () => {
         const ctx = getCtx();
-        if (ctx && typeof ctx.getCharacters === 'function') {
-            Promise.resolve(ctx.getCharacters()).catch(e => console.warn('[小手机] 刷新角色列表失败:', e));
-        }
-    } catch (e) { console.warn('[小手机] 刷新角色列表失败:', e); }
+        if (ctx && typeof ctx.getCharacters === 'function') await ctx.getCharacters();
+    });
 }
 
 // 小手机改了某一本世界书：酒馆手里有这本的旧副本（缓存），不丢掉的话，你在酒馆里编辑这本世界书时
 // 会拿旧副本存回去，把小手机加的条目盖掉。所以丢掉缓存，再刷新世界书列表和编辑器
-async function refreshWorldInfo(name) {
-    try {
+function refreshWorldInfo(name) {
+    const settings = getCtx()?.powerUserSettings;
+    return queuePhoneRefresh('world-info', async () => {
         let wi = null;
         try { wi = await import('/scripts/world-info.js'); } catch (e) { wi = null; }
-        const ctx = getCtx() || {};
+        const ctx = getCtx();
+        if (!ctx || ctx.powerUserSettings !== settings) return;
         if (wi && wi.worldInfoCache && typeof wi.worldInfoCache.delete === 'function') wi.worldInfoCache.delete(name);
         const updateList = (wi && wi.updateWorldInfoList) || ctx.updateWorldInfoList;
-        if (typeof updateList === 'function') await updateList();
+        if (typeof updateList === 'function') await updateList.call(wi || ctx);
+        if (phoneLauncherClosed || getCtx()?.powerUserSettings !== settings) return;
         const reload = (wi && wi.reloadEditor) || ctx.reloadWorldInfoEditor;
-        if (typeof reload === 'function') await reload(name, false);
-    } catch (e) { console.warn('[小手机] 刷新世界书失败:', e); }
+        if (typeof reload === 'function') await reload.call(wi || ctx, name, false);
+    });
 }
 
 // 新建用户人设：酒馆的人设存在设置里，酒馆页面随时会把它手里的整份设置存回去，
@@ -465,11 +539,27 @@ function validPersonaMessage(d, requireName = false) {
         && (d.description == null || typeof d.description === 'string');
 }
 
-function addPersona(d) {
+function savePhonePersonaSettings(ctx) {
+    const save = () => {
+        if (phoneLauncherClosed || getCtx()?.powerUserSettings !== ctx.powerUserSettings) return;
+        return ctx.saveSettingsDebounced();
+    };
+    const result = phoneSettingsSaveTask ? phoneSettingsSaveTask.catch(() => {}).then(save) : save();
+    if (result && typeof result.then === 'function') {
+        const task = Promise.resolve(result); phoneSettingsSaveTask = task;
+        const clear = () => { if (phoneSettingsSaveTask === task) phoneSettingsSaveTask = null; };
+        task.then(clear, clear);
+        return task;
+    }
+    return result;
+}
+
+async function addPersona(d) {
     const reply = (ok, error) => { try { channel.postMessage({ type: 'page-answer', id: d.id, ok, error }); } catch (e) { /* 回不了话，小手机会改用直接写文件 */ } };
+    let epoch = null;
     try {
         if (!validPersonaMessage(d, true)) { reply(false, '人设头像、名称或描述无效'); return; }
-        personaUpdateEpochs.set(d.avatarId, (personaUpdateEpochs.get(d.avatarId) || 0) + 1);
+        epoch = (personaUpdateEpochs.get(d.avatarId) || 0) + 1; personaUpdateEpochs.set(d.avatarId, epoch);
         const ctx = getCtx();
         const pu = ctx && ctx.powerUserSettings;
         if (!pu || typeof ctx.saveSettingsDebounced !== 'function') { reply(false, '酒馆版本不支持'); return; }
@@ -477,9 +567,12 @@ function addPersona(d) {
         if (!pu.persona_descriptions || typeof pu.persona_descriptions !== 'object' || Array.isArray(pu.persona_descriptions)) pu.persona_descriptions = {};
         pu.personas[d.avatarId] = d.name;
         pu.persona_descriptions[d.avatarId] = { description: d.description || '', position: 0, depth: 2, role: 0, lorebook: '' };
-        ctx.saveSettingsDebounced();
+        const saving = savePhonePersonaSettings(ctx);
+        // 旧酒馆的同步 debouncer 仍同步回话；返回 Promise 的宿主要等保存结果。
+        if (saving && typeof saving.then === 'function') await saving;
+        if (phoneLauncherClosed) return;
         reply(true);
-    } catch (e) { reply(false, e.message); }
+    } catch (e) { reply(epoch !== null && personaUpdateEpochs.get(d.avatarId) !== epoch, e.message); }
 }
 
 // 小手机改了某个角色卡的描述/性格/场景或头像：重新读角色列表（酒馆生成回复时用的是它手里的这份）。
@@ -502,9 +595,10 @@ function characterUpdated(d) {
 // 这个人设正在用时，酒馆另外存着一份“当前人设内容”和页面上的输入框，也一起换掉
 async function updatePersona(d) {
     const reply = (ok, error) => { try { channel.postMessage({ type: 'page-answer', id: d.id, ok, error }); } catch (e) { /* 回不了话，小手机会改用直接写文件 */ } };
+    let epoch = null;
     try {
         if (!validPersonaMessage(d)) { reply(false, '人设头像或描述无效'); return; }
-        const epoch = (personaUpdateEpochs.get(d.avatarId) || 0) + 1;
+        epoch = (personaUpdateEpochs.get(d.avatarId) || 0) + 1;
         personaUpdateEpochs.set(d.avatarId, epoch);
         const ctx = getCtx();
         const pu = ctx && ctx.powerUserSettings;
@@ -522,17 +616,55 @@ async function updatePersona(d) {
             const el = document.getElementById('persona_description');
             if (el) el.value = d.description || '';
         }
-        ctx.saveSettingsDebounced();
+        await savePhonePersonaSettings(ctx);
+        if (phoneLauncherClosed) return;
         reply(true);
-    } catch (e) { reply(false, e.message); }
+    } catch (e) {
+        // 已被较新更新覆盖的旧请求不能回失败，否则手机会拿旧内容执行直接写文件的兜底。
+        reply(epoch !== null && personaUpdateEpochs.get(d.avatarId) !== epoch, e.message);
+    }
+}
+
+function refreshPhoneImage(url) {
+    let controller = typeof AbortController === 'function' ? new AbortController() : null;
+    return new Promise(resolve => {
+        let settled = false, timer = null;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (timer !== null && typeof clearTimeout === 'function') clearTimeout(timer);
+            phoneImageWaits.delete(cancel); resolve();
+        };
+        const cancel = () => { controller?.abort(); finish(); };
+        phoneImageWaits.add(cancel);
+        timer = setTimeout(cancel, 10000);
+        (async () => {
+            const response = await fetch(url, { cache: 'reload', ...(controller ? { signal: controller.signal } : {}) });
+            if (typeof response?.arrayBuffer === 'function') await response.arrayBuffer();
+        })().then(finish, finish);
+    });
 }
 
 // 小手机换了用户人设的头像：酒馆页面上的小图可能还是旧的（浏览器缓存），刷新人设列表
-function refreshPersonaAvatar() {
-    try {
+function refreshPersonaAvatar(avatarId) {
+    const settings = getCtx()?.powerUserSettings;
+    return queuePhoneRefresh('persona-avatars', async () => {
+        let personas = null;
+        try { personas = await import('/scripts/personas.js'); } catch (e) { /* 使用旧宿主公开的接口 */ }
         const ctx = getCtx();
-        if (ctx && typeof ctx.getUserAvatars === 'function') Promise.resolve(ctx.getUserAvatars()).catch(() => {});
-    } catch (e) { /* 刷新不了就等下次打开 */ }
+        if (!ctx || ctx.powerUserSettings !== settings) return;
+        // 官方 context 没有 getUserAvatars；实际公开接口位于 personas 模块。
+        // 覆盖同一头像文件时也要重取 HTTP 缓存，单独刷新文件名列表不会更新旧图片。
+        if (typeof avatarId === 'string' && avatarId && typeof fetch === 'function') {
+            const urls = new Set();
+            if (typeof personas?.getUserAvatar === 'function') urls.add(personas.getUserAvatar(avatarId));
+            if (typeof ctx.getThumbnailUrl === 'function') urls.add(ctx.getThumbnailUrl('persona', avatarId));
+            await Promise.all([...urls].filter(url => typeof url === 'string' && url).map(refreshPhoneImage));
+        }
+        if (phoneLauncherClosed || getCtx()?.powerUserSettings !== settings) return;
+        const refresh = personas?.getUserAvatars || ctx.getUserAvatars;
+        if (typeof refresh === 'function') await refresh.call(personas || ctx, true);
+    });
 }
 
 try {
@@ -548,7 +680,7 @@ try {
             }
             // 「推送小手机人设」「推送小手机世界书」之后：酒馆页面刷新角色列表 / 世界书、新建用户人设
             if (d && d.type === 'character-created') { refreshCharacters(); return; }
-            if (d && d.type === 'worldinfo-saved' && d.name) { refreshWorldInfo(d.name); return; }
+            if (d && d.type === 'worldinfo-saved' && typeof d.name === 'string' && d.name) { refreshWorldInfo(d.name); return; }
             if (d && d.type === 'add-persona' && d.id) { addPersona(d); return; }
             // 「双向自动更新人设」把小手机的改动推过来了
             if (d && d.type === 'character-updated' && d.avatar) { characterUpdated(d); return; }
@@ -558,13 +690,21 @@ try {
             // 其他聊天的通知不能覆盖当前聊天已排队的重载和保存编号。
             const cur = currentChat();
             if (!cur || cur.avatar !== d.avatar || cur.file !== d.file) return;
+            if (d.saveId && activeReload?.avatar === d.avatar && activeReload.file === d.file
+                && activeReload.saves.some(save => save.saveId === d.saveId)) return;
             const same = pendingReload && pendingReload.avatar === d.avatar && pendingReload.file === d.file;
             if (!same) pendingReload = { avatar: d.avatar, file: d.file, saves: [] };
             if (d.saveId && !pendingReload.saves.some(save => save.saveId === d.saveId)) {
                 pendingReload.saves.push({ saveId: d.saveId, time: d.time });
             }
             // 已经在等酒馆忙完了：不用重新计时，忙完一起处理
-            if (pendingReload.busySince) return;
+            if (pendingReload.busySince) {
+                // 失败重试已排队时，新保存仍沿用普通的 300ms 合并窗口；实际忙碌时继续等待。
+                if (pendingReload.reloadAttempts && !busyReason()) {
+                    clearTimeout(reloadTimer); reloadTimer = setTimeout(tryReload, 300);
+                }
+                return;
+            }
             // 这一刻酒馆就在忙：记下来（小手机这次写的内容很可能会被忙完后的保存盖掉）
             const reason = busyReason();
             if (reason) { pendingReload.busySince = Date.now(); pendingReload.busyReason = reason; }
@@ -588,10 +728,8 @@ function disposePhoneLauncher(event) {
     if (typeof clearTimeout === 'function') { clearTimeout(phoneMenuTimer); clearTimeout(reloadTimer); }
     phoneMenuTimer = null; reloadTimer = null; pendingReload = null;
     for (const cancel of [...phoneUpdateWaits]) cancel();
-    for (const [events, type, callback] of phoneMemoryBridgeBindings) {
-        try { (events.removeListener || events.off)?.call(events, type, callback); } catch (e) { /* 旧宿主不支持解绑 */ }
-    }
-    phoneMemoryBridgeBindings.length = 0; phoneMemoryBridgeReady = false;
+    for (const cancel of [...phoneImageWaits]) cancel();
+    detachPhoneMemoryLifecycleBridge();
     for (const adapter of phoneMemoryLoadedAdapters) disposePhoneMemoryAdapter(adapter);
     phoneMemoryLoadedAdapters.clear();
     phoneMemoryAdapter = null; phoneMemoryModule = null;
@@ -602,5 +740,10 @@ function disposePhoneLauncher(event) {
     channel = null;
     globalThis.removeEventListener?.('st-baibai-book:changed', phoneSummaryChangeListener);
     globalThis.removeEventListener?.('pagehide', disposePhoneLauncher);
+    globalThis.removeEventListener?.('pageshow', rebindPhoneLauncherAfterPageShow);
 }
 if (typeof globalThis.addEventListener === 'function') globalThis.addEventListener('pagehide', disposePhoneLauncher);
+function rebindPhoneLauncherAfterPageShow(event) {
+    if (!phoneLauncherClosed && event?.persisted) installPhoneMemoryLifecycleBridge();
+}
+if (typeof globalThis.addEventListener === 'function') globalThis.addEventListener('pageshow', rebindPhoneLauncherAfterPageShow);
