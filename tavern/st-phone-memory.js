@@ -990,9 +990,6 @@ export function createPhoneMemoryAdapter(host = {}) {
                 border-color:var(--uwu-memory-accent,var(--SmartThemeQuoteColor,#8ab4f8));outline:none;
             }
             #uwu-phone-vector-credential::placeholder { color:#999;opacity:1; }
-            #toast-container > .toast-success.uwu-memory-save-success {
-                padding-left:10px;
-            }
             #uwu-phone-vector-dialog .uwu-memory-key-group {
                 display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--uwu-memory-item-gap);align-items:center;
             }
