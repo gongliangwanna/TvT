@@ -839,7 +839,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         use.addEventListener('click', () => {
             if (selectManual(checks.filter(x => x.input.checked).map(x => x.ref))) dialog.close();
         });
-        const close = doc.createElement('button'); close.className = 'menu_button'; close.textContent = '关闭';
+        const close = doc.createElement('button'); close.className = 'menu_button uwu-dialog-close'; close.textContent = '关闭';
         close.addEventListener('click', () => dialog.close()); dialog.addEventListener('close', () => dialog.remove());
         footerBtns.append(use, close); footer.append(footerBtns); dialog.append(footer);
         doc.body.append(dialog); dialog.showModal();
@@ -865,15 +865,15 @@ export function createPhoneMemoryAdapter(host = {}) {
             }
             #uwu-phone-vector-menu .uwu-memory-svg-icon { width:16px;height:16px;display:block; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-header {
-                position:sticky;top:0;z-index:2;display:flex;align-items:center;
+                position:sticky;top:0;z-index:2;display:flex;align-items:center !important;
                 justify-content:space-between;gap:16px;padding:16px 20px;
                 background:color-mix(in srgb,var(--SmartThemeBlurTintColor,#222) 94%,var(--SmartThemeBodyColor,#eee) 6%);
                 border-bottom:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 60%,transparent);
                 backdrop-filter:blur(10px);
             }
-            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-heading { min-width:0; }
-            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) h3 { margin:0;font-size:16px;font-weight:600;line-height:1.35; }
-            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-subtitle { margin:4px 0 0;font-size:12px;opacity:.68; }
+            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-heading { display:flex;flex-direction:column;gap:4px;min-width:0;margin:0;padding:0; }
+            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) h3 { margin:0 !important;padding:0;font-size:16px;font-weight:600;line-height:1.35; }
+            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-subtitle { margin:0 !important;padding:0;font-size:12px;opacity:.68; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-panel { display:flex;flex-direction:column;gap:14px;padding:16px 20px; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-card {
                 min-width:0;padding:15px 16px;border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 55%,transparent);border-radius:12px;
@@ -945,8 +945,10 @@ export function createPhoneMemoryAdapter(host = {}) {
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-danger {
                 color:color-mix(in srgb,var(--SmartThemeWarningColor,#df5b69) 80%,var(--SmartThemeBodyColor,#eee));
             }
-            #uwu-phone-vector-dialog #uwu-phone-vector-close, .uwu-memory-dialog .uwu-dialog-close {
-                flex:0 0 auto;min-height:32px;padding:5px 12px;font-size:12px;
+            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .menu_button.uwu-dialog-close {
+                flex:0 0 50px;align-self:center;justify-self:end;
+                width:50px !important;min-width:50px !important;max-width:50px;
+                height:32px;min-height:32px;padding:5px 12px;font-size:12px;white-space:nowrap;
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-help {
                 margin:8px 0 0;font-size:12px;line-height:1.65;opacity:.72;
@@ -986,6 +988,8 @@ export function createPhoneMemoryAdapter(host = {}) {
                 background:color-mix(in srgb,var(--SmartThemeBlurTintColor,#222) 94%,var(--SmartThemeBodyColor,#eee) 6%);
                 backdrop-filter:blur(10px);
             }
+            #uwu-phone-vector-dialog .uwu-memory-save-actions { display:flex !important;justify-content:center; }
+            #uwu-phone-vector-dialog .uwu-memory-save-actions .menu_button { width:160px !important; }
             #uwu-phone-memory-settings { padding:14px 16px; }
             #uwu-phone-memory-settings .uwu-memory-actions { margin:10px 0; }
             #uwu-phone-memory-settings p { margin:8px 0 0;font-size:12px;line-height:1.6;opacity:.75; }
@@ -1033,7 +1037,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         const heading = doc.createElement('h3'); heading.id = 'uwu-phone-memory-title'; heading.textContent = '小手机剧情召回';
         const subtitle = doc.createElement('p'); subtitle.className = 'uwu-memory-subtitle'; subtitle.textContent = '让酒馆聊天接上小手机里的剧情';
         headingBox.append(heading, subtitle);
-        const close = doc.createElement('button'); close.className = 'menu_button'; close.id = 'uwu-phone-vector-close'; close.textContent = '关闭';
+        const close = doc.createElement('button'); close.className = 'menu_button uwu-dialog-close'; close.id = 'uwu-phone-vector-close'; close.textContent = '关闭';
         close.addEventListener('click', () => dialog.close()); header.append(headingBox, close); dialog.append(header);
         const panel = doc.createElement('div'); panel.className = 'uwu-memory-panel'; dialog.append(panel);
         const config = vectorSettings(), controls = {};
@@ -1085,11 +1089,9 @@ export function createPhoneMemoryAdapter(host = {}) {
         const topRow = doc.createElement('div'); topRow.className = 'uwu-memory-grid-2'; connection.append(topRow);
         const provider = addSelect('provider', '接口类型', [['openai', 'OpenAI 兼容'], ['ollama', 'Ollama'], ['gemini', 'Gemini']], topRow);
         addField('model', '嵌入模型', 'text', config.model, topRow).placeholder = '填写 Embedding 模型名称';
-        const url = addField('url', '接口地址'); url.placeholder = 'https://你的接口/v1（或完整 embeddings 地址）';
+        const url = addField('url', '接口地址'); url.placeholder = 'https://你的接口/v1';
         url.autocomplete = 'off';
         const key = addField('credential', 'API Key', 'password', ''); key.autocomplete = 'new-password';
-        const keyHelp = doc.createElement('p'); keyHelp.className = 'uwu-memory-help'; keyHelp.textContent = '留空会保留此接口已保存的 Key。';
-        connection.append(keyHelp);
         const keyButtons = doc.createElement('div'); keyButtons.className = 'uwu-memory-actions'; connection.append(keyButtons);
         const reveal = doc.createElement('button'); reveal.id = 'uwu-phone-vector-reveal-key'; reveal.className = 'menu_button'; reveal.textContent = '显示输入的 Key';
         reveal.addEventListener('click', () => { key.type = key.type === 'password' ? 'text' : 'password'; reveal.textContent = key.type === 'password' ? '显示输入的 Key' : '隐藏输入的 Key'; });
@@ -1097,7 +1099,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         addField('allowAnonymous', '此接口无需 API Key（仅用于开放服务）', 'checkbox');
         const updateProviderHint = () => {
             url.placeholder = provider.value === 'ollama' ? 'http://127.0.0.1:11434' : provider.value === 'gemini'
-                ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://你的接口/v1（或完整 embeddings 地址）';
+                ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://你的接口/v1';
         };
         controls.updateProviderHint = updateProviderHint; provider.addEventListener('change', updateProviderHint); updateProviderHint();
         const retrieval = card('召回设置');
@@ -1121,7 +1123,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         maintenance.append(vectorStatus);
         const buttons = doc.createElement('div'); buttons.className = 'uwu-memory-actions'; maintenance.append(buttons);
         const footer = doc.createElement('div'); footer.className = 'uwu-memory-footer';
-        const primaryButtons = doc.createElement('div'); primaryButtons.className = 'uwu-memory-actions'; footer.append(primaryButtons); dialog.append(footer);
+        const primaryButtons = doc.createElement('div'); primaryButtons.className = 'uwu-memory-actions uwu-memory-save-actions'; footer.append(primaryButtons); dialog.append(footer);
         const readForm = () => ({ enabled: controls.enabled.checked, provider: provider.value,
             url: controls.url.value, model: controls.model.value, allowAnonymous: controls.allowAnonymous.checked,
             dimensions: controls.dimensions.value, threshold: controls.threshold.value, margin: controls.margin.value });
@@ -1153,19 +1155,15 @@ export function createPhoneMemoryAdapter(host = {}) {
             });
             actionButtons.push(btn); target.append(btn); return btn;
         };
-        action('保存设置与 Key', 'uwu-phone-vector-save', async () => {
+        action('保存设置', 'uwu-phone-vector-save', async () => {
             if (await saveForm()) { await vectors.refreshStatus(); renderVectorStatus(); }
         }, primaryButtons, 'uwu-memory-primary');
-        action('清除已保存的 Key', 'uwu-phone-vector-clear-key', async () => {
-            setVectorSettings(readForm()); const result = await saveVectorKey('', { clear: true });
-            if (result.ok) key.value = '';
-        }, keyButtons, 'uwu-memory-danger');
         action('测试连接', 'uwu-phone-vector-test', async () => {
             if (await saveForm()) {
                 const result = await testVectorConnection();
                 if (result.ok && result.dimensions) vectorStatus.textContent += ` 返回 ${result.dimensions} 维向量。`;
             }
-        }, primaryButtons);
+        }, keyButtons);
         action('准备本聊天索引', 'uwu-phone-vector-index', async () => {
             if (await saveForm()) await prepareVectorIndex();
         });
