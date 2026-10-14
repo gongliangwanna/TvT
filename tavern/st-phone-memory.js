@@ -869,6 +869,10 @@ export function createPhoneMemoryAdapter(host = {}) {
         style.textContent = `
             #uwu-phone-vector-dialog, .uwu-memory-dialog {
                 --uwu-memory-accent:var(--SmartThemeQuoteColor,#8ab4f8);
+                --uwu-memory-panel-gap:12px;
+                --uwu-memory-item-gap:8px;
+                --uwu-memory-sub-gap:6px;
+                --uwu-memory-label-gap:4px;
                 box-sizing:border-box;width:580px;max-width:calc(100vw - 24px);
                 max-height:88vh;max-height:88dvh;overflow:auto;padding:0;
                 border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 75%,transparent);border-radius:16px;
@@ -886,32 +890,39 @@ export function createPhoneMemoryAdapter(host = {}) {
             #uwu-phone-vector-menu .uwu-memory-menu-label { display:block;align-self:center; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-header {
                 position:sticky;top:0;z-index:2;display:flex;align-items:center !important;
-                justify-content:space-between;gap:16px;padding:16px 20px;
+                justify-content:space-between;gap:16px;padding:14px 18px;
                 background:color-mix(in srgb,var(--SmartThemeBlurTintColor,#222) 94%,var(--SmartThemeBodyColor,#eee) 6%);
                 border-bottom:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 60%,transparent);
                 backdrop-filter:blur(10px);
             }
-            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-heading { display:flex;flex-direction:column;gap:4px;min-width:0;margin:0;padding:0; }
+            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-heading { display:flex;flex-direction:column;gap:2px;min-width:0;margin:0;padding:0; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) h3 { margin:0 !important;padding:0;font-size:16px;font-weight:600;line-height:1.35; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-subtitle { margin:0 !important;padding:0;font-size:12px;opacity:.68; }
-            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-panel { display:flex;flex-direction:column;gap:14px;padding:16px 20px; }
+            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-panel {
+                display:flex;flex-direction:column;gap:var(--uwu-memory-panel-gap);padding:14px 18px;
+            }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-card {
-                min-width:0;padding:15px 16px;border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 55%,transparent);border-radius:12px;
+                display:flex;flex-direction:column;gap:var(--uwu-memory-item-gap);
+                min-width:0;padding:14px 16px;border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 55%,transparent);border-radius:12px;
                 background:color-mix(in srgb,var(--SmartThemeBodyColor,#eee) 3.5%,transparent);
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) h4 {
-                margin:0 0 12px;font-size:13px;font-weight:600;letter-spacing:.02em;opacity:.9;
+                margin:0 !important;padding:0;font-size:13px;font-weight:600;letter-spacing:.02em;line-height:1.35;opacity:.9;
             }
             #uwu-phone-vector-dialog .uwu-memory-model-group {
-                display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch;
+                display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--uwu-memory-item-gap);align-items:stretch;
             }
-            #uwu-phone-vector-dialog .uwu-memory-model-group > :is(.text_pole,.menu_button) { height:38px;min-height:38px; }
-            #uwu-phone-vector-dialog .uwu-memory-model-status { margin:0;font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
+            #uwu-phone-vector-dialog .uwu-memory-model-group > :is(.text_pole,.menu_button) { height:36px;min-height:36px; }
+            #uwu-phone-vector-dialog .uwu-memory-model-status { margin:0 !important;font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
             #uwu-phone-vector-dialog :is(.uwu-memory-model-options,.uwu-memory-model-status)[hidden] { display:none !important; }
-            #uwu-phone-vector-dialog .uwu-memory-field { display:flex;flex-direction:column;gap:6px;min-width:0;margin:10px 0; }
-            #uwu-phone-vector-dialog .uwu-memory-field-title { font-size:12.5px;font-weight:500;opacity:.88; }
+            #uwu-phone-vector-dialog .uwu-memory-field {
+                display:flex;flex-direction:column;gap:var(--uwu-memory-label-gap);min-width:0;margin:0 !important;padding:0;
+            }
+            #uwu-phone-vector-dialog .uwu-memory-field-title {
+                margin:0 !important;padding:0;font-size:12px;font-weight:500;line-height:1.35;opacity:.88;
+            }
             #uwu-phone-vector-dialog .uwu-memory-field .text_pole {
-                display:block;width:100%;min-width:0;min-height:38px;margin:0;padding:7px 11px;
+                display:block;width:100%;min-width:0;height:36px;min-height:36px;margin:0 !important;padding:6px 10px;
                 border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 75%,transparent);border-radius:8px;
                 background:color-mix(in srgb,var(--SmartThemeBlurTintColor,#222) 94%,var(--SmartThemeBodyColor,#eee));
                 color:inherit;font:inherit;font-size:13px;line-height:1.4;transition:border-color .15s,box-shadow .15s;
@@ -920,11 +931,11 @@ export function createPhoneMemoryAdapter(host = {}) {
                 border-color:var(--uwu-memory-accent,var(--SmartThemeQuoteColor,#8ab4f8));outline:none;
             }
             #uwu-phone-vector-dialog .uwu-memory-key-group {
-                display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;
+                display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--uwu-memory-item-gap);align-items:center;
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) .uwu-memory-check {
-                display:flex !important;flex-direction:row !important;align-items:center;gap:10px;
-                width:100%;min-width:0;min-height:34px;margin:8px 0 4px;padding:6px 10px;
+                display:flex !important;flex-direction:row !important;align-items:center;gap:8px;
+                width:100%;min-width:0;min-height:34px;margin:0 !important;padding:5px 10px;
                 border-radius:8px;background:color-mix(in srgb,var(--SmartThemeBodyColor,#eee) 3%,transparent);
                 border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 35%,transparent);
                 cursor:pointer;text-align:left;transition:background .15s,border-color .15s;
@@ -939,15 +950,15 @@ export function createPhoneMemoryAdapter(host = {}) {
                 accent-color:var(--uwu-memory-accent,var(--SmartThemeQuoteColor,#8ab4f8));
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) .uwu-memory-check-text {
-                display:block;flex:1;min-width:0;font-size:13px;line-height:1.45;overflow-wrap:anywhere;
+                display:block;flex:1;min-width:0;font-size:13px;line-height:1.4;overflow-wrap:anywhere;
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) .uwu-memory-actions {
-                display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;min-width:0;
+                display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--uwu-memory-item-gap);min-width:0;margin:0 !important;
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) .menu_button {
                 display:inline-flex !important;flex-direction:row !important;align-items:center;justify-content:center;
                 width:auto !important;min-width:0 !important;max-width:100%;min-height:36px;margin:0 !important;
-                padding:7px 12px;border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 75%,transparent);border-radius:8px;
+                padding:6px 12px;border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 75%,transparent);border-radius:8px;
                 background:color-mix(in srgb,var(--SmartThemeBodyColor,#eee) 5.5%,transparent);
                 color:inherit;font:inherit;font-size:12.5px;font-weight:500;line-height:1.35;white-space:normal;word-break:normal;
                 text-align:center;cursor:pointer;transition:background .15s,border-color .15s,transform .08s;
@@ -977,39 +988,44 @@ export function createPhoneMemoryAdapter(host = {}) {
                 height:32px;min-height:32px;padding:5px 12px;font-size:12px;white-space:nowrap;
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-help {
-                margin:8px 0 0;font-size:12px;line-height:1.65;opacity:.72;
+                margin:0 !important;padding:0;font-size:12px;line-height:1.5;opacity:.72;
+            }
+            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) :is(.uwu-memory-check,.uwu-memory-parameters,h4) + .uwu-memory-help {
+                margin-top:calc(var(--uwu-memory-sub-gap) - var(--uwu-memory-item-gap)) !important;
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-advanced {
-                margin-top:12px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 45%,transparent);
+                margin:0 !important;padding:0;border:0;
             }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-advanced summary {
-                cursor:pointer;font-size:12.5px;font-weight:500;opacity:.88;user-select:none;
+                margin:0 !important;padding:2px 0;cursor:pointer;font-size:12.5px;font-weight:500;line-height:1.35;opacity:.88;user-select:none;
+            }
+            :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-advanced[open] > :not(summary) {
+                margin-top:var(--uwu-memory-sub-gap) !important;
             }
             #uwu-phone-vector-dialog .uwu-memory-parameters {
-                display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:8px;
+                display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--uwu-memory-item-gap);margin:0 !important;align-items:start;
             }
             #uwu-phone-vector-dialog #uwu-phone-vector-status,
             #uwu-phone-vector-dialog #uwu-phone-memory-status,
             .uwu-memory-dialog .uwu-memory-status-banner,
             #uwu-phone-memory-settings #uwu-phone-memory-status {
-                margin:0 0 12px;padding:10px 12px;border-radius:8px;font-size:12.5px;line-height:1.6;overflow-wrap:anywhere;
+                margin:0 !important;padding:8px 12px;border-radius:8px;font-size:12.5px;line-height:1.5;overflow-wrap:anywhere;
                 background:color-mix(in srgb,var(--SmartThemeBodyColor,#eee) 4.5%,transparent);
                 border-left:3px solid var(--uwu-memory-accent,var(--SmartThemeQuoteColor,#8ab4f8));
             }
-            #uwu-phone-memory-settings #uwu-phone-memory-status { margin:10px 0 0; }
+            #uwu-phone-memory-settings #uwu-phone-memory-status { margin:8px 0 0 !important; }
             .uwu-memory-dialog .uwu-memory-snippet {
-                margin:10px 0 0;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.55;
+                margin:0 !important;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;
                 white-space:pre-wrap;overflow-wrap:anywhere;
                 background:color-mix(in srgb,var(--SmartThemeBlurTintColor,#222) 92%,var(--SmartThemeBodyColor,#eee));
                 border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 55%,transparent);
             }
-            .uwu-memory-dialog .uwu-memory-source-list { display:flex;flex-direction:column;gap:6px;margin-top:8px; }
+            .uwu-memory-dialog .uwu-memory-source-list { display:flex;flex-direction:column;gap:6px;margin:0 !important; }
             .uwu-memory-dialog .uwu-memory-source-list .uwu-memory-check { align-items:flex-start; }
             .uwu-memory-dialog .uwu-memory-source-list input[type="checkbox"] { margin-top:2px !important; }
-            #uwu-phone-vector-dialog .uwu-memory-story-actions { margin-top:12px; }
-            #uwu-phone-vector-dialog #uwu-phone-memory-status { margin:10px 0 0; }
+            #uwu-phone-vector-dialog .uwu-memory-story-actions { margin:0 !important; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-footer {
-                position:sticky;bottom:0;z-index:2;padding:12px 20px;
+                position:sticky;bottom:0;z-index:2;padding:12px 18px;
                 border-top:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 60%,transparent);
                 background:color-mix(in srgb,var(--SmartThemeBlurTintColor,#222) 94%,var(--SmartThemeBodyColor,#eee) 6%);
                 backdrop-filter:blur(10px);
@@ -1017,18 +1033,21 @@ export function createPhoneMemoryAdapter(host = {}) {
             #uwu-phone-vector-dialog .uwu-memory-save-actions { display:flex !important;justify-content:center; }
             #uwu-phone-vector-dialog .uwu-memory-save-actions .menu_button { width:160px !important; }
             #uwu-phone-memory-settings { padding:14px 16px; }
-            #uwu-phone-memory-settings .uwu-memory-actions { margin:10px 0; }
-            #uwu-phone-memory-settings p { margin:8px 0 0;font-size:12px;line-height:1.6;opacity:.75; }
-            @media(max-width:480px) {
-                #uwu-phone-vector-dialog, .uwu-memory-dialog { max-width:calc(100vw - 16px);max-height:92vh;max-height:92dvh;border-radius:14px; }
-                :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-header { padding:14px 16px;gap:10px; }
-                :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-panel { padding:12px 14px;gap:12px; }
-                :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-card { padding:13px 14px; }
+            #uwu-phone-memory-settings .uwu-memory-actions { margin:8px 0 !important; }
+            #uwu-phone-memory-settings p { margin:8px 0 0;font-size:12px;line-height:1.5;opacity:.75; }
+            @media(max-width:520px) {
+                #uwu-phone-vector-dialog, .uwu-memory-dialog {
+                    --uwu-memory-panel-gap:10px;
+                    max-width:calc(100vw - 16px);max-height:92vh;max-height:92dvh;border-radius:14px;
+                }
+                :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-header { padding:12px 14px;gap:10px; }
+                :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-panel { padding:12px 14px; }
+                :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-card { padding:12px 14px; }
                 :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-footer { padding:10px 14px; }
-                #uwu-phone-vector-dialog .uwu-memory-parameters { grid-template-columns:1fr;gap:8px; }
+                #uwu-phone-vector-dialog .uwu-memory-parameters { grid-template-columns:1fr; }
                 #uwu-phone-vector-dialog .uwu-memory-key-group { grid-template-columns:1fr 1fr; }
                 #uwu-phone-vector-dialog .uwu-memory-key-group .text_pole { grid-column:1 / -1; }
-                :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) .menu_button { padding:8px;font-size:12px; }
+                :is(#uwu-phone-vector-dialog,.uwu-memory-dialog,#uwu-phone-memory-settings) .menu_button { padding:6px 8px;font-size:12px; }
                 #uwu-phone-vector-dialog .uwu-memory-key-actions .menu_button { font-size:12px !important; }
             }
         `;
