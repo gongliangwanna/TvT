@@ -183,7 +183,7 @@ function tagFloorNth(list) {
 
 const TavernSync = {
     // 文件版本：显示在“酒馆互联”页面最下面，用来确认手机上加载的是不是最新文件（浏览器有时会用缓存的旧文件）
-    SYNC_VERSION: '2026-09-22 h',
+    SYNC_VERSION: '2026-10-15 a',
     DEFAULT_WRAP_NOTE,
     DEFAULT_WRAP_RAW,
     DEFAULT_WRAP_SUMMARY,
@@ -1079,6 +1079,7 @@ const TavernSync = {
                         h.tavern.localHash = this.textHash(cleaned);
                         h.tavern.rulesHash = rulesHash;
                         delete h.tavern.keptHash;
+                        delete h.tavern.cleanConflict;
                     } else if (h.tavern.keptHash !== bh) {
                         h.tavern.keptHash = bh;             // 同一次改动只提示一次
                         editedBoth.push(h.tavern.floor);
@@ -1096,6 +1097,7 @@ const TavernSync = {
                             recleaned++;
                         } else if (h.tavern.rulesHash !== undefined) {
                             editedRules.push(h.tavern.floor);   // 旧卡片第一次补记录时不提示（说不准是不是规则改过）
+                            h.tavern.cleanConflict = true;
                         }
                     }
                     h.tavern.rulesHash = rulesHash;
@@ -1115,12 +1117,12 @@ const TavernSync = {
         if (editedBoth.length) {
             const ch = db.characters.find(c => c.id === binding.uwuCharId);
             const nums = editedBoth.slice(0, 5).join('、') + (editedBoth.length > 5 ? ` 等 ${editedBoth.length} 楼` : '');
-            this.reportIssue(`「${ch ? (ch.remarkName || ch.name) : '这个角色'}」的酒馆第 ${nums} 楼在酒馆里改过字，但你在小手机里也改过这几楼，没有自动更新；如果想用酒馆的版本，在小手机里长按删掉这几张卡片，再点「同步酒馆剧情」重新导入。`);
+            this.reportIssue(`「${ch ? (ch.remarkName || ch.name) : '这个角色'}」的酒馆第 ${nums} 楼在酒馆和小手机里都改过，没有自动更新；请在绑定卡片点「查看并处理两边的冲突」，对照后选择版本。`);
         }
         if (editedRules.length) {
             const ch = db.characters.find(c => c.id === binding.uwuCharId);
             const nums = editedRules.slice(0, 5).join('、') + (editedRules.length > 5 ? ` 等 ${editedRules.length} 楼` : '');
-            this.reportIssue(`正则清洗规则改过了，但「${ch ? (ch.remarkName || ch.name) : '这个角色'}」的酒馆第 ${nums} 楼你在小手机里改过字，没有按新规则重新清洗；如果想按新规则来，在小手机里长按删掉这几张卡片，再点「同步酒馆剧情」重新导入。`);
+            this.reportIssue(`正则清洗规则改过了，但「${ch ? (ch.remarkName || ch.name) : '这个角色'}」的酒馆第 ${nums} 楼你在小手机里改过字，没有自动重新清洗；请在绑定卡片点「查看并处理两边的冲突」，对照后选择版本。`);
         }
 
         // 3. 按真实时间把酒馆楼层排进小手机聊天记录（包括以前导入时排错位置的）
@@ -1443,10 +1445,16 @@ const TavernSync = {
     // 换绑到这个角色的另一个酒馆聊天（绑定卡片上的「更换」）。
     // 推送记录是跟着旧聊天的，一起清掉：新聊天里还一条小手机消息都没有，按“第一次自动推送最近 N 条”重新开始。
     // 同步不用特别处理：卡片记着来源聊天，下次同步会按“第一次同步最近 N 楼”从新聊天重新开始。
-    async changeChatFile(binding, newFile) {
-        if (!newFile || newFile === binding.stChatFile) return false;
+    async changeChatFile(binding, newFile, opts = {}) {
+        if (!newFile) return false;
+        if (newFile === binding.stChatFile) {
+            if (typeof opts.includeOtherChatFloors !== 'boolean' || binding.includeOtherChatFloors === opts.includeOtherChatFloors) return false;
+            binding.includeOtherChatFloors = opts.includeOtherChatFloors;
+            await this.saveConfig(this.getConfig()); this._notifyData(); return true;
+        }
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (char) this._tagChatFiles(char, binding.stChatFile, binding);
+        if (typeof opts.includeOtherChatFloors === 'boolean') binding.includeOtherChatFloors = opts.includeOtherChatFloors;
         binding.stChatFile = newFile;
         delete binding.lastPushedMsgId;
         delete binding.hasPushed;
@@ -1671,6 +1679,10 @@ const TavernSync = {
     // 由 tavern_hooks.js 在保存编辑后调用。oldContent 是改之前小手机里的文字，用来确认两边本来是一致的。
     // 写不了的情况一律不动酒馆，返回原因给用户看。
     async writeBackFloorEdit(binding, message, oldContent) {
+        return this._writeBackFloorEdit(binding, message, oldContent);
+    },
+    _floorPendingSaves: new WeakSet(),
+    async _writeBackFloorEdit(binding, message, oldContent) {
         const t = message && message.tavern;
         if (!t) return { ok: false, reason: '这条不是酒馆剧情，没写回酒馆' };
         const char = db.characters.find(c => c.id === binding.uwuCharId);
@@ -1707,7 +1719,7 @@ const TavernSync = {
             await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: raw });
             // 小手机这边记着的摘要也一起更新，免得下次同步又被旧摘要覆盖
             t.summary = Object.assign({}, t.summary || {}, { text: newBody });
-            await saveData();
+            if (await saveData() === false) throw new Error('酒馆摘要已更新，但小手机记录未能保存，请重试');
             return { ok: true, floor: t.floor, what: 'summary' };
         }
 
@@ -1735,7 +1747,10 @@ const TavernSync = {
         t.localHash = this.textHash(message.content || '');
         t.rulesHash = this.pullRulesHash();
         delete t.keptHash;
-        await saveData();
+        delete t.cleanConflict;
+        this._floorPendingSaves.add(message);
+        if (await saveData() === false) throw new Error('酒馆剧情已更新，但小手机记录未能保存，请在冲突对照中重新读取并重试保存');
+        this._floorPendingSaves.delete(message);
         return { ok: true, floor: t.floor, what: 'text' };
     },
 
@@ -1780,6 +1795,12 @@ const TavernSync = {
     //   最新的 N 楼酒馆剧情 + 最新的（maxMemory - 实际取到的酒馆楼数）条小手机消息，按原来的顺序排好。
     // 例：可见上文 100，最近玩了 200 楼酒馆，之前有 100 条小手机消息，N 填 50 → 最新 50 楼酒馆 + 之前最新 50 条小手机消息。
     // 只处理 yuan 普通发消息时那种“聊天记录最后 maxMemory 条”的截取；其他情况（写日记、剧情节点等）返回 null，照原样。
+    allowsTavernContext(chat, message) {
+        if (!message || !message.fromTavern) return true;
+        const binding = this.findBindingForChar(chat && chat.id);
+        return !binding || binding.includeOtherChatFloors !== false || this._belongsToChat(message.tavern, binding);
+    },
+
     limitTavernContext(chat, slice, ignoreContextDisabled) {
         if (ignoreContextDisabled || !chat || !Array.isArray(chat.history) || !Array.isArray(slice) || !slice.length) return null;
         const binding = this.findBindingForChar(chat.id);
@@ -1802,7 +1823,7 @@ const TavernSync = {
             if (!m) return;
             if (m.isNodeBoundary && m.nodeAction === 'start' && archived.has(m.nodeId)) { inArchived = m.nodeId; return; }
             if (m.isNodeBoundary && m.nodeAction === 'end' && m.nodeId === inArchived) { inArchived = null; return; }
-            if (inArchived || (m.nodeId && archived.has(m.nodeId))) return;
+            if (inArchived || (m.nodeId && archived.has(m.nodeId)) || !this.allowsTavernContext(chat, m)) return;
             usable.push(i);
         });
 
@@ -1823,6 +1844,7 @@ const TavernSync = {
     // history 是 yuan 已经深拷贝过的副本，可以直接改。每条处理过的消息打上 __tavernView 方便预览统计。
     prepareHistoryForAI(chat, history) {
         if (!Array.isArray(history) || !history.some(m => m && m.fromTavern)) return history;
+        history = history.filter(m => this.allowsTavernContext(chat, m));
         const cfg = this.getConfig();
         const tavernIdx = [];
         history.forEach((m, i) => { if (m && m.fromTavern) tavernIdx.push(i); });
@@ -3219,16 +3241,24 @@ ${transcript}`;
     },
 
     // 推送一条小总结到酒馆，并把 lastPushedMsgId 推进到被覆盖的最后一条
-    async pushSummaryToTavern(binding, summaryText, lastCoveredMsgId, coveredMsgIds) {
-        return this._pushSummaryToTavern(binding, summaryText, lastCoveredMsgId, coveredMsgIds);
+    async pushSummaryToTavern(binding, summaryText, lastCoveredMsgId, coveredMsgIds, opts = {}) {
+        return this._pushSummaryToTavern(binding, summaryText, lastCoveredMsgId, coveredMsgIds, opts);
     },
     async _pushSummaryToTavern(binding, summaryText, lastCoveredMsgId, coveredMsgIds, opts = {}) {
+        const validate = () => {
+            // 回调必须同步确认；Promise 不能被当成已经通过的检查。
+            if (opts.validate !== undefined && (typeof opts.validate !== 'function' || opts.validate() !== true)) {
+                throw new Error('小总结的来源或绑定已改变，此次推送已取消，请重新生成或填写');
+            }
+        };
+        validate();
         const char = db.characters.find(c => c.id === binding.uwuCharId);
         if (!char) throw new Error('找不到角色');
         const text = (summaryText || '').trim();
         if (!text) throw new Error('总结内容为空');
 
         const stMsgs = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+        validate();
         const all = Array.isArray(stMsgs) ? [...stMsgs] : [];
 
         const myName = char.myName || '我';
@@ -3242,6 +3272,7 @@ ${transcript}`;
             mes: mergedContent,
             extra: { from_uwu: true, uwu_created: true, uwu_summary: true, uwu_summary_length: `[小总结：${text}]`.length, uwu_push_time: Date.now(), uwu_msg_ids: coveredMsgIds || [], st_char_name: stCharName },
         });
+        validate();
         await this.apiCall('/api/chats/save', { avatar_url: binding.stCharAvatar, file_name: binding.stChatFile, chat: all });
 
         if (!opts.noLog) this._logPush(binding, { kind: 'summary', ids: (coveredMsgIds || []).slice(), text });
@@ -3263,7 +3294,7 @@ ${transcript}`;
         if (!character) return '';
         const cfg = this.getConfig();
         const parts = [];
-        const hasTavernFloors = Array.isArray(character.history) && character.history.some(m => m && m.fromTavern);
+        const hasTavernFloors = Array.isArray(character.history) && character.history.some(m => m && m.fromTavern && this.allowsTavernContext(character, m));
         if (hasTavernFloors && cfg.wrapNote && cfg.wrapNote.trim()) {
             parts.push(cfg.wrapNote.trim().replace(/\{\{用户\}\}/g, () => character.myName || '我'));
         }
@@ -3734,7 +3765,7 @@ ${transcript}`;
         }
         if (kept.length) {
             const names2 = kept.slice(0, 5).map(n => `「${n}」`).join('、') + (kept.length > 5 ? ` 等 ${kept.length} 条` : '');
-            this.reportIssue(`酒馆中「${(binding.stCharAvatar || '').replace(/\.png$/i, '')}」的世界书条目 ${names2} 在酒馆和小手机里都改过，没有自动更新。想用酒馆的版本：点「导入酒馆世界书」，勾选这些条目后点「更新小手机里的内容」；想用小手机的版本：点「推送小手机世界书」，选这本世界书，勾选这些条目后点「更新酒馆里的内容」。`);
+            this.reportIssue(`酒馆中「${(binding.stCharAvatar || '').replace(/\.png$/i, '')}」的世界书条目 ${names2} 在酒馆和小手机里都改过，没有自动更新。请在绑定卡片点「查看并处理两边的冲突」，对照后选择版本。`);
         }
         if (updated || pushed || changedMeta || this._worldBookSavePending) await this._saveWorldBookChanges();
         return { updated, pushed, kept: kept.length };
@@ -3987,6 +4018,10 @@ ${transcript}`;
                 const localEmpty = it.text ? !String(local).trim() : it.empty();
                 const same = it.text && local === tavernText;
                 if (force) {
+                    if (force.expected && (local !== force.expected.local || (it.text ? tavernText !== force.expected.remote : th !== force.expected.remoteHash)
+                        || (force.expected.sourceIdentity && this._personaComparisonSource(binding, K, result, ps) !== force.expected.sourceIdentity))) {
+                        throw new Error('两边内容已经变化，请重新打开冲突对照后选择');
+                    }
                     if (force.use === 'tavern') await doPull();
                     else if (it.push) await doPush();
                     continue;
@@ -4042,6 +4077,188 @@ ${transcript}`;
         const mode = this.personaUpdateMode(binding);
         return ['char', 'charAvatar', 'user', 'userAvatar'].filter(k => ps[k + 'Kept']
             && (mode === 'both' || (mode === 'char' ? k.startsWith('char') : k.startsWith('user'))));
+    },
+
+    _personaComparisonSource(binding, key, result, ps = binding.personaSync || {}) {
+        const selector = key === 'userAvatar' ? (ps.userAvatarSource || ps.userSource) : ps.userSource;
+        return JSON.stringify([binding.stCharAvatar, key,
+            key.startsWith('user') ? this._userPersonaAvatar(result, selector) : binding.stCharAvatar,
+            key.startsWith('user') ? (selector || '__active__') : '']);
+    },
+    _conflictPendingWorldSaves: new WeakSet(),
+    // 对照窗口只保存本次看到的版本；选择时重新读来源，变化后要求重新对照。
+    async getConflictComparisons(binding) { return this._getConflictComparisons(binding); },
+    async _getConflictComparisons(binding) {
+        const char = db.characters.find(c => c.id === binding.uwuCharId);
+        if (!char) throw new Error('找不到角色');
+        const items = [], warnings = [];
+        const add = item => {
+            item.target = [binding.uwuCharId, binding.stCharAvatar, binding.stChatFile];
+            item.stamp = JSON.stringify([item.target, item.local, item.remote, item.remoteHash, item.rulesHash, item.localState, item.remoteState, !!item.pendingSave]);
+            items.push(item);
+        };
+        const floors = this._floorsOfChat(char, binding).filter(m => !m.tavern.trimmed
+            && (this._floorPendingSaves.has(m) || m.tavern.keptHash || m.tavern.cleanConflict || this.textHash(m.content || '') !== m.tavern.localHash));
+        if (floors.length) {
+            try {
+                const raw = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+                const offset = raw.length && raw[0] && !('mes' in raw[0]) ? 1 : 0;
+                const rows = tagFloorNth(raw.slice(offset));
+                for (const m of floors) {
+                    const found = rows.find(row => row && typeof row.mes === 'string' && this._sameFloor(row, m.tavern));
+                    if (!found || found.extra?.uwu_created || found.extra?.bbs_omit) continue;
+                    const body = floorBody(found), remote = this.applyCleanRules(body, 'pull');
+                    const remoteChanged = m.tavern.rawHash !== undefined && this.textHash(body) !== m.tavern.rawHash;
+                    const pendingSave = this._floorPendingSaves.has(m);
+                    if (!remote || (!pendingSave && (remote === m.content || (!remoteChanged && !m.tavern.cleanConflict)))) continue;
+                    add({ kind: 'floor', key: `floor:${m.id}`, label: `酒馆第 ${rows.indexOf(found)} 楼`,
+                        local: String(m.content || ''), remote, rawBody: body, record: m,
+                        pendingSave, remoteChanged, canPush: !pendingSave && (!remoteChanged || body === remote),
+                        pushLabel: remoteChanged ? '用小手机的更新酒馆' : '保留小手机的版本',
+                        help: pendingSave ? '本地记录还没有保存。请点「重试保存小手机记录」；这一步只保存本地记录，不覆盖酒馆。'
+                            : remoteChanged && body !== remote ? '这楼经过正则清洗，不能用清洗后的文字覆盖酒馆原文；可选酒馆版本，或先复制小手机版本自行合并。'
+                            : (!remoteChanged ? '这是清洗规则与本地编辑的冲突。保留小手机版本只确认本地选择，不改酒馆原文。' : ''),
+                        remoteHash: this.textHash(body), rulesHash: this.pullRulesHash(), raw, row: found });
+                }
+            } catch (e) { warnings.push('酒馆剧情读取失败：' + e.message); }
+        }
+        const books = (db.worldBooks || []).filter(w => w && (w.tavernSource?.avatar === binding.stCharAvatar || w.tavernPushes));
+        if (books.length) {
+            try {
+                const worldBooks = await this.getCharAndChatWorldBooks(binding);
+                const sources = [worldBooks.charWorld, worldBooks.chatWorld].filter(Boolean);
+                const names = sources.map(source => source.name);
+                const localDescription = w => `名称：${w.name || ''}\n关键词：${(Array.isArray(w.keywords) ? w.keywords : []).join('、')}\n常驻：${w.alwaysOn ? '是' : '否'}\n启用：${w.disabled ? '否' : '是'}\n位置：${w.position || 'after'}\n顺序：${w.weight ?? ''}\n\n${w.content || ''}`;
+                for (const w of books) for (const link of this._wbLinksFor(w, binding, names)) {
+                    const source = sources.find(s => s.name === link.world);
+                    const entry = source?.entries.find(e => e.uid === link.uid);
+                    if (!entry) continue;
+                    const state = this._wbChangeState(w, link, entry);
+                    const pendingSave = this._conflictPendingWorldSaves.has(w);
+                    if (!pendingSave && (!state.tavernChanged || state.localChanged === false)) continue;
+                    const remote = `名称：${entry.comment || ''}\n关键词：${this.entryKeywords(entry).join('、')}\n常驻：${entry.constant ? '是' : '否'}\n启用：${entry.disabled ? '否' : '是'}\n位置：${this.tavernPositionLabel(entry)}\n顺序：${entry.order ?? ''}\n\n${entry.content || ''}`;
+                    add({ kind: 'world', key: JSON.stringify(['world', w.id ?? (db.worldBooks || []).indexOf(w), link.world, link.uid]),
+                        label: `世界书「${link.world}」· ${w.name || entry.comment || '未命名'}`, local: localDescription(w), remote,
+                        localState: JSON.stringify(w), remoteState: JSON.stringify(entry), record: w, link, entry,
+                        entryIndex: source.entries.indexOf(entry), pendingSave, canPush: !pendingSave && link.world !== '角色内嵌世界书',
+                        pushLabel: '用小手机的更新酒馆', help: pendingSave ? '这项已经更新，本地记录还没有保存。请点「重试保存小手机记录」。'
+                            : link.world === '角色内嵌世界书' ? '角色内嵌世界书不能直接写回，可选酒馆版本或复制文字自行合并。' : '' });
+                }
+            } catch (e) { warnings.push('世界书读取失败：' + e.message); }
+        }
+        const personaKeys = this.personaConflicts(binding);
+        if (personaKeys.length) {
+            try {
+                const result = await this.importCharSettings(binding), ps = binding.personaSync || {};
+                for (const key of personaKeys) {
+                    const image = key.endsWith('Avatar');
+                    const local = String(char[{ char: 'persona', user: 'myPersona', charAvatar: 'avatar', userAvatar: 'myAvatar' }[key]] || '');
+                    const file = this._userPersonaAvatar(result, image ? (ps.userAvatarSource || ps.userSource) : ps.userSource);
+                    if (key.startsWith('user') && file === null) { warnings.push('用户人设暂时读不到，请稍后重试。'); continue; }
+                    const remote = key === 'char' ? String(result.charPersona || '') : key === 'user' ? String(this._userPersonaText(result, ps.userSource) || '')
+                        : key === 'charAvatar' ? this.tavernCharThumbUrl(binding.stCharAvatar) : this.tavernUserThumbUrl(file);
+                    const remoteHash = image ? await this._imageHash(remote) : this.textHash(remote);
+                    if (remoteHash == null || (!image && local === remote)) continue;
+                    add({ kind: 'persona', key: `persona:${key}`, personaKey: key, label: this.PERSONA_LABELS[key],
+                        image, local, remote, remoteHash, remoteState: this._personaComparisonSource(binding, key, result, ps), canPush: !key.startsWith('user') || !!file,
+                        pushLabel: '用小手机的更新酒馆', help: key.startsWith('user') && !file ? '当前用户人设没有可写入的头像文件，请先在酒馆选定用户人设。' : '' });
+                }
+            } catch (e) { warnings.push('人设读取失败：' + e.message); }
+        }
+        this._assertChatTarget();
+        return { items, warnings };
+    },
+
+    async resolveConflictComparison(binding, snapshot, use) {
+        if (!snapshot || !['phone', 'tavern'].includes(use)) throw new Error('请选择要使用的版本');
+        const currentTarget = [binding.uwuCharId, binding.stCharAvatar, binding.stChatFile];
+        if (JSON.stringify(snapshot.target) !== JSON.stringify(currentTarget)) throw new Error('绑定已更换，请重新打开冲突对照');
+        const latest = await this._getConflictComparisons(binding);
+        const item = latest.items.find(row => row.key === snapshot.key);
+        if (!item || item.stamp !== snapshot.stamp || (snapshot.record && item.record !== snapshot.record)) {
+            throw new Error('两边内容已经变化或冲突已消失，请重新打开冲突对照后选择');
+        }
+        this._assertChatTarget();
+        if (use === 'phone' && !item.canPush) throw new Error(item.help || '这项不能直接写回酒馆');
+        if (item.pendingSave) {
+            if (item.kind === 'world') { await this._saveWorldBookChanges(); this._conflictPendingWorldSaves.delete(item.record); }
+            else {
+                if (await saveData() === false) throw new Error('小手机记录仍未能保存，请稍后重试');
+                this._floorPendingSaves.delete(item.record);
+            }
+            this._notifyData(); return { ok: true };
+        }
+        if (item.kind === 'floor') {
+            const m = item.record, t = m.tavern;
+            const char = db.characters.find(c => c.id === binding.uwuCharId);
+            const latestRaw = await this.getSTChatMessages(binding.stCharAvatar, binding.stChatFile);
+            this._assertChatTarget();
+            const offset = latestRaw.length && latestRaw[0] && !('mes' in latestRaw[0]) ? 1 : 0;
+            const row = tagFloorNth(latestRaw.slice(offset)).find(candidate => candidate && typeof candidate.mes === 'string' && this._sameFloor(candidate, t));
+            if (!char?.history?.includes(m) || String(m.content || '') !== item.local || !row
+                || row.extra?.uwu_created || row.extra?.bbs_omit || floorBody(row) !== item.rawBody || this.pullRulesHash() !== item.rulesHash) {
+                throw new Error('剧情已经变化，请重新打开冲突对照后选择');
+            }
+            if (use === 'phone' && item.remoteChanged) {
+                const result = await this._writeBackFloorEdit(binding, m, item.rawBody);
+                if (!result.ok) throw new Error(result.reason);
+            } else {
+                const previous = { content: m.content, parts: m.parts, tavern: { ...t } };
+                if (use === 'tavern') { m.content = item.remote; m.parts = []; }
+                t.rawHash = item.remoteHash; t.localHash = this.textHash(m.content || ''); t.rulesHash = item.rulesHash;
+                delete t.keptHash; delete t.cleanConflict;
+                const applied = JSON.stringify(m);
+                try { if (await saveData() === false) throw new Error('小手机剧情未能保存，请重试'); }
+                catch (e) {
+                    if (JSON.stringify(m) === applied) {
+                        m.content = previous.content; m.parts = previous.parts;
+                        Object.keys(t).forEach(key => { delete t[key]; }); Object.assign(t, previous.tavern);
+                    } else this._floorPendingSaves.add(m);
+                    throw e;
+                }
+            }
+            this._rerender(db.characters.find(c => c.id === binding.uwuCharId));
+        } else if (item.kind === 'world') {
+            const w = item.record, link = item.link;
+            let data, target;
+            if (link.world === '角色内嵌世界书') {
+                const current = await this.getCharAndChatWorldBooks(binding);
+                target = current.charWorld?.name === link.world && current.charWorld.entries.find(entry => entry.uid === link.uid);
+            } else {
+                data = await this.getSTWorldInfo(link.world);
+                target = data?.entries?.[link.uid];
+            }
+            this._assertChatTarget();
+            if (!target || JSON.stringify(this._normTavernEntry(target)) !== JSON.stringify(item.entry)
+                || JSON.stringify(w) !== item.localState || !(db.worldBooks || []).includes(w)) {
+                throw new Error('世界书已变化，请重新打开冲突对照后选择');
+            }
+            const previous = JSON.parse(JSON.stringify(w));
+            if (use === 'tavern') this.pullEntryInto(w, this._normTavernEntry(target), item.entryIndex, link.world, link.via);
+            else {
+                const sent = { ...w, keywords: Array.isArray(w.keywords) ? w.keywords.slice() : [] };
+                this._applyPhoneEntry(target, sent, { keepOrder: link.via === 'import' });
+                await this.apiCall('/api/worldinfo/edit', { name: link.world, data });
+                this._tellTavernPage({ type: 'worldinfo-saved', name: link.world });
+                this._relinkEntry(w, link.world, link.uid, this.wbHash(this._normTavernEntry(target)), target.order, sent);
+            }
+            const applied = JSON.stringify(w);
+            this._conflictPendingWorldSaves.add(w);
+            try { await this._saveWorldBookChanges(); this._conflictPendingWorldSaves.delete(w); }
+            catch (e) {
+                if (use === 'tavern' && JSON.stringify(w) === applied) {
+                    Object.keys(w).forEach(key => { delete w[key]; }); Object.assign(w, previous);
+                    this._conflictPendingWorldSaves.delete(w);
+                }
+                throw e;
+            }
+        } else if (item.kind === 'persona') {
+            const result = await this.syncPersona(binding, { force: { key: item.personaKey, use,
+                expected: { local: item.local, remote: item.remote, remoteHash: item.remoteHash, sourceIdentity: item.remoteState } } });
+            if (result.errors || (!result.updated && !result.pushed)) throw new Error('没有完成更新，请查看页面顶部的问题提示，重新对照后重试');
+        }
+        this._notifyData();
+        return { ok: true };
     },
 
     // ========== 把小手机设定推送到酒馆（2026-09-22 加）==========
@@ -5326,8 +5543,7 @@ function setupTavernSyncScreen() {
                 ${TavernSync.personaConflicts(b).map(k => `
                 <div style="display:flex; align-items:center; gap:6px; margin:6px 0 0 12px; font-size:11px; color:#FF9800; line-height:1.5; flex-wrap:wrap;">
                     <span style="flex:1; min-width:0;">${TavernSync.PERSONA_LABELS[k]}在酒馆和小手机里都改过，选用哪边的：</span>
-                    <button data-pconf="${i}" data-key="${k}" data-use="tavern" style="${TS.btnS} font-size:11px; padding:2px 8px; line-height:1.5;">用酒馆的</button>
-                    <button data-pconf="${i}" data-key="${k}" data-use="phone" style="${TS.btnS} font-size:11px; padding:2px 8px; line-height:1.5;">用小手机的</button>
+                    <button data-pconf="${i}" style="${TS.btnS} font-size:11px; padding:2px 8px; line-height:1.5;">对照并选择版本</button>
                 </div>`).join('')}
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
                     <span>双向自动更新复制过的世界书</span>
@@ -5354,6 +5570,12 @@ function setupTavernSyncScreen() {
                         style="width:70px; padding:6px 8px; border-radius:8px; border:1px solid rgba(128,128,128,0.4); background:transparent; color:inherit; font-size:14px; text-align:center;"> 楼
                     <span style="font-size:11px; color:#888; width:100%;">这个角色的可见上文是 ${maxMem} 条：取最新的这么多楼酒馆剧情，剩下的名额给小手机消息。</span>
                 </div>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; font-size:13px; cursor:pointer;">
+                    <span>以前酒馆聊天的剧情也给 AI 看</span>
+                    <span class="kkt-switch" style="flex-shrink:0;"><input type="checkbox" data-old-context="${i}" ${b.includeOtherChatFloors !== false ? 'checked' : ''}><span class="kkt-slider"></span></span>
+                </label>
+                <div style="font-size:11px; color:#888; margin:4px 0 0 12px; line-height:1.6;">关闭后，以前绑定的酒馆聊天文件留下的剧情卡片仍可查看，但不再作为 AI 上文；当前绑定的剧情照常使用。已经另存到日记、表格或向量记忆的内容需在对应功能里单独管理。</div>
+                <button data-conflicts="${i}" style="width:100%; margin-top:8px; ${TS.btnPu}">查看并处理两边的冲突</button>
             </div>`;
         }).join('');
 
@@ -5403,15 +5625,26 @@ function setupTavernSyncScreen() {
         bindingsList.querySelectorAll('[data-pconf]').forEach(btn => btn.addEventListener('click', async () => {
             const b = TavernSync.getConfig().bindings[parseInt(btn.dataset.pconf, 10)];
             if (!b) return;
-            const label = TavernSync.PERSONA_LABELS[btn.dataset.key];
-            const phone = btn.dataset.use === 'phone';
-            if (!confirm(phone ? `用小手机的${label}覆盖酒馆里的？酒馆里的改动会丢失。` : `用酒馆的${label}覆盖小手机里的？小手机里的改动会丢失。`)) return;
             btn.disabled = true;
-            try {
-                const r = await TavernSync.resolvePersonaConflict(b, btn.dataset.key, btn.dataset.use);
-                showToast(r.errors ? '没有成功，原因写在页面顶部' : (phone ? `已用小手机的${label}更新酒馆` : `已用酒馆的${label}更新小手机`));
-            } catch (e) { showToast(e.message); }
-            renderBindings();
+            try { await showConflictComparison(b, () => renderBindings()); }
+            catch (e) { showToast(e.message); }
+            finally { btn.disabled = false; }
+        }));
+        bindingsList.querySelectorAll('[data-old-context]').forEach(cb => cb.addEventListener('change', async () => {
+            const cfg = TavernSync.getConfig();
+            const b = cfg.bindings[parseInt(cb.dataset.oldContext, 10)];
+            if (!b) return;
+            b.includeOtherChatFloors = cb.checked;
+            try { await TavernSync.saveConfig(cfg); TavernSync._notifyData(); }
+            catch (e) { showToast(e.message); }
+        }));
+        bindingsList.querySelectorAll('[data-conflicts]').forEach(btn => btn.addEventListener('click', async () => {
+            const b = TavernSync.getConfig().bindings[parseInt(btn.dataset.conflicts, 10)];
+            if (!b) return;
+            btn.disabled = true;
+            try { await showConflictComparison(b, () => renderBindings()); }
+            catch (e) { showToast(e.message); }
+            finally { btn.disabled = false; }
         }));
         bindingsList.querySelectorAll('[data-persona-mode]').forEach(sel => sel.addEventListener('change', async () => {
             const cfg = TavernSync.getConfig();
@@ -5507,9 +5740,18 @@ function setupTavernSyncScreen() {
             const cfg = TavernSync.getConfig(); const b = cfg.bindings[parseInt(btn.dataset.newerGo)];
             const newer = b && TavernSync.newerChatFor(b);
             if (!newer) return;
+            const oldTarget = [b.uwuCharId, b.stCharAvatar, b.stChatFile];
             btn.disabled = true;
             try {
-                await TavernSync.changeChatFile(b, newer.file);
+                const memoryChoice = await askChoice('以前的酒馆剧情', '更换酒馆聊天文件后，旧剧情卡片仍保留。请选择它们是否继续作为 AI 上文。', [
+                    { label: '保留并继续作为回忆', value: 'include' },
+                    { label: '保留记录，但不给 AI 看', value: 'exclude' },
+                ]);
+                if (!memoryChoice) { btn.disabled = false; return; }
+                if (!TavernSync.getConfig().bindings.includes(b) || JSON.stringify(oldTarget) !== JSON.stringify([b.uwuCharId, b.stCharAvatar, b.stChatFile])) {
+                    throw new Error('绑定已经变化，请重新打开更换窗口');
+                }
+                await TavernSync.changeChatFile(b, newer.file, { includeOtherChatFloors: memoryChoice === 'include' });
                 showToast(`已改绑到酒馆聊天文件「${newer.file}」，下次同步从它开始`);
                 renderBindings();
             } catch (e) { showToast(`${e.message}`); btn.disabled = false; }
@@ -5612,9 +5854,20 @@ function setupTavernSyncScreen() {
 //   小总结：把一段消息浓缩成一段总结后推送，默认也是未推送的那一段
 //   清理酒馆：把推送到酒馆的小手机消息删掉（只删酒馆里的，不动小手机自己的聊天）
 async function showAutoPushModal(binding, onDone) {
+    const owner = { binding, charId: binding.uwuCharId, avatar: binding.stCharAvatar, file: binding.stChatFile,
+        registered: TavernSync.getConfig().bindings.includes(binding), char: db.characters.find(c => c.id === binding.uwuCharId) };
+    const assertOwner = () => {
+        TavernSync._assertChatTarget(owner);
+        if (!owner.char || !db.characters.includes(owner.char)) throw new Error('小手机角色已删除或更换，请重新打开推送窗口');
+    };
+    const checkOwner = () => {
+        try { assertOwner(); return true; } catch (e) { showToast(e.message); return false; }
+    };
     let state;
     try {
+        assertOwner();
         state = await TavernSync.getPushState(binding);
+        assertOwner();
     } catch (e) { showToast(`读取酒馆失败：${e.message}`); return; }
     const { list, pushed, lastPushedIdx } = state;
     const missing = state.missing || [];
@@ -5686,6 +5939,7 @@ async function showAutoPushModal(binding, onDone) {
         <div id="auto-mode-summary" style="display:none; flex-direction:column;">
             <div style="font-size:12px; color:#888; margin-bottom:6px; line-height:1.6;">把这些消息浓缩成一段总结后推送（消耗 1 次总结 API）。</div>
             ${rangeRow('auto-sum', unpushedCount ? firstUnpushed : total, total)}
+            <div id="auto-sum-range-info" style="font-size:12px; color:#888; line-height:1.6; margin-bottom:8px;"></div>
             <button id="auto-sum-gen" style="${TS.btnG} ${TS.big} width:100%; margin-bottom:10px;">生成小总结</button>
             <textarea id="auto-sum-text" placeholder="生成后可在此编辑..." style="width:100%; box-sizing:border-box; min-height:130px; max-height:220px; padding:10px; border-radius:8px; border:1px solid rgba(128,128,128,0.35); background:rgba(128,128,128,0.08); color:inherit; font-size:13px; line-height:1.6; resize:vertical; margin-bottom:12px;"></textarea>
         </div>
@@ -5708,6 +5962,15 @@ async function showAutoPushModal(binding, onDone) {
 
     let mode = 'raw';
     let summaryState = null;
+    let summaryVersion = 0;
+    let summaryPending = false;
+    let summaryRangeKey = null;
+    let summaryInvalidReason = '';
+    let manualSourceSignature = null;
+    const genBtn = modal.querySelector('#auto-sum-gen');
+    const sumText = modal.querySelector('#auto-sum-text');
+    const sumRangeInfo = modal.querySelector('#auto-sum-range-info');
+    const confirmBtn = modal.querySelector('#auto-confirm');
 
     // 读取某个页签里填的范围，返回这段消息（编号从 1 开始）。
     // keepInput = true 时只算、不把改正后的数字写回框里：打字时用，否则删空一个框会马上跳回原来的数
@@ -5722,6 +5985,47 @@ async function showAutoPushModal(binding, onDone) {
         if (!keepInput) { fromEl.value = fromEl.dataset.good = from; toEl.value = toEl.dataset.good = to; }
         return { from, to, msgs: list.slice(from - 1, to) };
     }
+
+    const rangeKeyOf = range => JSON.stringify(range.msgs.map(m => m.id));
+    const summarySourceSignature = range => {
+        assertOwner();
+        const wanted = new Set(range.msgs.map(m => m.id));
+        const current = (Array.isArray(owner.char.history) ? owner.char.history : []).filter(m => m && wanted.has(m.id));
+        if (current.length !== range.msgs.length || current.some(m => m.fromTavern)) {
+            throw new Error('所选消息已被删除或替换，请重新打开推送窗口再选择范围');
+        }
+        const helpers = TavernSync._pushHelpers(owner.char, binding);
+        // 同一消息编号也可能改过正文、图片描述或通话总结，不能只核对编号。
+        return JSON.stringify([owner.char.myName || '我', owner.char.realName || owner.char.name || '对方',
+            current.map(m => [m.id, m.role, !!m.isThinking, m.content || '', helpers.toLine(m)])]);
+    };
+    const describeSummaryRange = () => {
+        const range = readRange('auto-sum', true);
+        const selection = `第 ${range.from} ~ ${range.to} 条`;
+        sumRangeInfo.textContent = summaryPending ? `正在总结${selection}，更改范围后这次结果会作废。`
+            : summaryState ? `已生成：选定${selection}，实际覆盖 ${summaryState.coveredMsgIds.length} 条。修改总结文字不会改变覆盖范围。`
+                : `${summaryInvalidReason}当前选定${selection}（${range.msgs.length} 条）。也可以手工填写这段消息的小总结。`;
+    };
+    const invalidateSummary = reason => {
+        summaryVersion++;
+        summaryState = null;
+        summaryPending = false;
+        summaryInvalidReason = reason;
+        manualSourceSignature = null;
+        sumText.value = ''; sumText.disabled = false;
+        genBtn.disabled = false; genBtn.textContent = '生成小总结';
+        if (mode === 'summary') confirmBtn.disabled = false;
+        describeSummaryRange();
+    };
+    const refreshSummaryRange = () => {
+        const nextKey = rangeKeyOf(readRange('auto-sum', true));
+        if (summaryRangeKey !== null && nextKey !== summaryRangeKey) {
+            // 已生成的文字和仍在请求中的结果，都只能属于生成时选择的那一段。
+            invalidateSummary('范围已更改，旧总结已作废。');
+        }
+        summaryRangeKey = nextKey;
+        describeSummaryRange();
+    };
 
     function renderPreview(idPrefix, boxId, markPushed) {
         const { msgs } = readRange(idPrefix, true);
@@ -5742,6 +6046,7 @@ async function showAutoPushModal(binding, onDone) {
     const refreshPreviews = () => {
         renderPreview('auto-raw', '#auto-raw-preview', true);
         renderPreview('auto-clean', '#auto-clean-preview', false);
+        refreshSummaryRange();
     };
     // 打字时只刷新预览；离开框时：清空了就退回改之前的数，超出范围的拉回 1 ~ 总条数
     // （开始大于结束留到按确认时再改，免得先改一个框时把另一个框的数动了）
@@ -5774,7 +6079,6 @@ async function showAutoPushModal(binding, onDone) {
     };
     setTimeout(watchImagePreview, 500);
 
-    const confirmBtn = modal.querySelector('#auto-confirm');
     modal.querySelectorAll('.auto-push-tab').forEach(btn => {
         btn.addEventListener('click', () => {
             mode = btn.dataset.mode;
@@ -5788,34 +6092,67 @@ async function showAutoPushModal(binding, onDone) {
             modal.querySelector('#auto-mode-summary').style.display = mode === 'summary' ? 'flex' : 'none';
             modal.querySelector('#auto-mode-clean').style.display = mode === 'clean' ? 'flex' : 'none';
             confirmBtn.textContent = mode === 'clean' ? '确认删除' : '确认推送';
+            confirmBtn.disabled = mode === 'summary' && summaryPending;
             confirmBtn.style.background = mode === 'clean' ? 'rgba(244,67,54,0.8)' : '#cee4f1';
             confirmBtn.style.color = mode === 'clean' ? '#fff' : '#2a3032';
         });
     });
 
-    const genBtn = modal.querySelector('#auto-sum-gen');
-    const sumText = modal.querySelector('#auto-sum-text');
     genBtn.addEventListener('click', async () => {
-        const { msgs } = readRange('auto-sum');
+        if (!checkOwner()) return;
+        refreshSummaryRange();
+        const range = readRange('auto-sum');
+        const { msgs } = range;
         if (!msgs.length) { showToast('这个范围里没有消息'); return; }
+        let sourceSignature;
+        try { sourceSignature = summarySourceSignature(range); }
+        catch (e) { invalidateSummary(e.message + '。'); showToast(e.message); return; }
+        const version = ++summaryVersion;
+        const rangeKey = rangeKeyOf(range);
+        summaryState = null;
+        summaryInvalidReason = ''; manualSourceSignature = null;
+        summaryPending = true;
+        sumText.value = ''; sumText.disabled = true;
+        if (mode === 'summary') confirmBtn.disabled = true;
         genBtn.disabled = true; genBtn.textContent = '生成中...';
+        describeSummaryRange();
         try {
             const r = await TavernSync.summarizeUnpushedSlice(binding, { mode: 'list', messages: msgs });
-            summaryState = { text: r.text, lastMsgId: r.lastMsgId, coveredMsgIds: r.coveredMsgIds };
+            if (!overlay.isConnected || version !== summaryVersion || rangeKey !== rangeKeyOf(readRange('auto-sum', true))) return;
+            assertOwner();
+            if (sourceSignature !== summarySourceSignature(range)) {
+                invalidateSummary('所选消息已修改，旧总结已作废，请重新生成。');
+                showToast('所选消息在生成期间被修改，请重新生成小总结'); return;
+            }
+            summaryState = { text: r.text, rangeKey, sourceSignature, coveredMsgIds: r.coveredMsgIds };
             sumText.value = r.text;
             genBtn.textContent = `重新生成（已覆盖 ${r.coveredCount} 条）`;
         } catch (e) {
+            if (!overlay.isConnected || version !== summaryVersion) return;
+            invalidateSummary(e.message + '。');
             showToast(`${e.message}`);
-            genBtn.textContent = '生成小总结';
-        } finally { genBtn.disabled = false; }
+        } finally {
+            if (overlay.isConnected && version === summaryVersion) {
+                summaryPending = false;
+                sumText.disabled = false; genBtn.disabled = false;
+                if (mode === 'summary') confirmBtn.disabled = false;
+                describeSummaryRange();
+            }
+        }
+    });
+    sumText.addEventListener('input', () => {
+        if (summaryState || summaryPending) return;
+        try { manualSourceSignature = summarySourceSignature(readRange('auto-sum', true)); }
+        catch (e) { invalidateSummary(e.message + '。'); showToast(e.message); }
     });
 
-    const close = () => { overlay.remove(); if (onDone) { try { onDone(); } catch (e) { /* 刷新失败不影响推送 */ } } };
+    const close = () => { summaryVersion++; overlay.remove(); if (onDone) { try { onDone(); } catch (e) { /* 刷新失败不影响推送 */ } } };
     modal.querySelector('#auto-cancel').addEventListener('click', close);
 
     // 丢失提示：补推 / 忽略
     const missingPush = modal.querySelector('#auto-missing-push');
     if (missingPush) missingPush.addEventListener('click', async () => {
+        if (!checkOwner()) return;
         missingPush.disabled = true; missingPush.textContent = '补推中...';
         try {
             const r = await TavernSync.pushToTavern(binding, undefined, true, { messages: missing });
@@ -5828,6 +6165,7 @@ async function showAutoPushModal(binding, onDone) {
     });
     const missingIgnore = modal.querySelector('#auto-missing-ignore');
     if (missingIgnore) missingIgnore.addEventListener('click', async () => {
+        if (!checkOwner()) return;
         await TavernSync.ignoreMissing(binding, missing.map(m => m.id));
         const box = modal.querySelector('#auto-missing');
         if (box) box.remove();
@@ -5837,6 +6175,7 @@ async function showAutoPushModal(binding, onDone) {
     // 一次少了很多条：从酒馆删掉 / 留在酒馆
     const bulkDelete = modal.querySelector('#auto-bulk-delete');
     if (bulkDelete) bulkDelete.addEventListener('click', async () => {
+        if (!checkOwner()) return;
         if (!confirm(`从酒馆里删掉这 ${bulkGone.length} 条小手机消息？小手机里它们已经没有了，删掉后酒馆里也找不回来。`)) return;
         bulkDelete.disabled = true; bulkDelete.textContent = '删除中...';
         try {
@@ -5850,6 +6189,7 @@ async function showAutoPushModal(binding, onDone) {
     });
     const bulkKeep = modal.querySelector('#auto-bulk-keep');
     if (bulkKeep) bulkKeep.addEventListener('click', async () => {
+        if (!checkOwner()) return;
         await TavernSync.keepGoneInTavern(binding, bulkGone);
         const box = modal.querySelector('#auto-bulk');
         if (box) box.remove();
@@ -5859,17 +6199,38 @@ async function showAutoPushModal(binding, onDone) {
 
     confirmBtn.addEventListener('click', async () => {
         const orig = confirmBtn.textContent;
+        let validateSummary = null;
         confirmBtn.textContent = '处理中...'; confirmBtn.disabled = true;
         try {
+            assertOwner();
             if (mode === 'summary') {
+                const range = readRange('auto-sum');
+                if (summaryPending) { showToast('小总结还在生成，请稍等'); throw new Error('__cancel'); }
+                if (summaryState && summaryState.rangeKey !== rangeKeyOf(range)) {
+                    refreshSummaryRange();
+                    showToast('总结范围已改变，请重新生成或填写小总结'); throw new Error('__cancel');
+                }
+                let sourceSignature;
+                try { sourceSignature = summarySourceSignature(range); }
+                catch (e) { invalidateSummary(e.message + '。'); throw e; }
+                if ((summaryState && summaryState.sourceSignature !== sourceSignature)
+                    || (manualSourceSignature !== null && manualSourceSignature !== sourceSignature)) {
+                    invalidateSummary('所选消息已修改，旧总结已作废，请重新生成或填写。');
+                    showToast('所选消息已修改，请重新生成或填写小总结'); throw new Error('__cancel');
+                }
                 const finalText = (sumText.value || '').trim();
                 if (!finalText) { showToast('请先生成或填入总结文本'); throw new Error('__cancel');
                 }
-                const { msgs } = readRange('auto-sum');
+                const { msgs } = range;
                 const coveredIds = (summaryState && summaryState.coveredMsgIds && summaryState.coveredMsgIds.length)
                     ? summaryState.coveredMsgIds : msgs.map(m => m.id);
                 const lastId = coveredIds[coveredIds.length - 1];
-                await TavernSync.pushSummaryToTavern(binding, finalText, lastId, coveredIds);
+                validateSummary = () => {
+                    assertOwner();
+                    if (sourceSignature !== summarySourceSignature(range)) throw new Error('所选消息已修改，旧总结已作废，请重新生成或填写');
+                    return true;
+                };
+                await TavernSync.pushSummaryToTavern(binding, finalText, lastId, coveredIds, { validate: validateSummary });
                 showToast(`已推送小总结 · 覆盖 ${coveredIds.length} 条`);
                 close();
             } else if (mode === 'clean') {
@@ -5896,8 +6257,11 @@ async function showAutoPushModal(binding, onDone) {
                 close();
             }
         } catch (e) {
+            if (validateSummary && overlay.isConnected) {
+                try { validateSummary(); } catch (stale) { invalidateSummary(stale.message + '。'); }
+            }
             if (e.message !== '__cancel') showToast(`${e.message}`);
-            confirmBtn.textContent = orig; confirmBtn.disabled = false;
+            confirmBtn.textContent = orig; confirmBtn.disabled = mode === 'summary' && summaryPending;
         }
     });
 }
@@ -5910,6 +6274,12 @@ async function showAutoPushModal(binding, onDone) {
 function showTrimModal(binding, onDone) {
     const char = db.characters.find(c => c.id === binding.uwuCharId);
     if (!char) { showToast('找不到角色'); return; }
+    const owner = { binding, charId: binding.uwuCharId, avatar: binding.stCharAvatar, file: binding.stChatFile,
+        registered: TavernSync.getConfig().bindings.includes(binding) };
+    const assertOwner = () => {
+        TavernSync._assertChatTarget(owner);
+        if (!db.characters.includes(char)) throw new Error('小手机角色已删除或更换，请重新打开精简窗口');
+    };
     // 只看现在绑定的这个酒馆聊天的楼层（以前绑定的聊天楼层号会重号）
     const floors = TavernSync._floorsOfChat(char, binding);
     if (!floors.length) { showToast('小手机里还没有这个酒馆聊天文件的剧情'); return; }
@@ -5920,16 +6290,18 @@ function showTrimModal(binding, onDone) {
     const lastFloor = Math.max(...floors.map(floorNo));
     // 默认范围：留着最近 keep 楼的原文，更早的都精简
     const older = floors.slice(0, Math.max(0, floors.length - keep));
-    const defEnd = older.length ? floorNo(older[older.length - 1]) : firstFloor;
+    const defEnd = older.length ? floorNo(older[older.length - 1]) : '';
 
     const can = floors.filter(m => TavernSync.canTrim(m));
     const trimmed = floors.filter(m => m.tavern.trimmed);
     // “还没有摘要”只算 AI 楼：你自己在酒馆里发的楼层本来就没有柏宝书摘要，列出来只会添乱
     const noSummary = floors.filter(m => !m.tavern.trimmed && !m.tavern.isUser && !(m.tavern.summary && m.tavern.summary.text));
-    // 能省多少字：AI 楼原文换成摘要省下的 + 同一回合里会被一起收走的 user 楼
-    const roundUserChars = (ai) => floors.filter(m => m.tavern.isUser && m.tavern.roundAi === ai.tavern.floor)
-        .reduce((n, m) => n + (m.content || '').length, 0);
-    const saveable = can.reduce((n, m) => n + Math.max(0, (m.content || '').length - m.tavern.summary.text.length) + roundUserChars(m), 0);
+    const usersByRound = new Map();
+    floors.filter(m => m.tavern.isUser).forEach(m => {
+        const round = m.tavern.roundAi;
+        if (!usersByRound.has(round)) usersByRound.set(round, []);
+        usersByRound.get(round).push(m);
+    });
     const sizeOf = (n) => n >= 10000 ? `约 ${(n / 10000).toFixed(1)} 万字` : `约 ${n} 字`;
 
     const overlay = document.createElement('div');
@@ -5946,14 +6318,15 @@ function showTrimModal(binding, onDone) {
         </div>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:12px;">
             小手机里有 ${floors.length} 楼酒馆剧情（第 ${firstFloor} ~ ${lastFloor} 楼）。
-            其中 ${trimmed.length} 个回合已精简、${can.length} 个回合可以精简（能省${sizeOf(saveable)}）${noSummary.length ? `、${noSummary.length} 个回合还没有摘要（不会精简）` : ''}。
+            其中 ${trimmed.length} 个回合已精简、${can.length} 个回合有摘要可以精简${noSummary.length ? `、${noSummary.length} 个回合还没有摘要（不会精简）` : ''}。
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:14px;">
-            从第 <input type="number" id="tm-start" min="0" value="${firstFloor}" style="${numStyle}">
-            到第 <input type="number" id="tm-end" min="0" value="${defEnd}" style="${numStyle}"> 楼
+            从第 <input type="number" id="tm-start" min="0" max="${lastFloor}" value="${older.length ? firstFloor : ''}" placeholder="楼层号" style="${numStyle}">
+            到第 <input type="number" id="tm-end" min="0" max="${lastFloor}" value="${defEnd}" placeholder="楼层号" style="${numStyle}"> 楼
         </div>
+        <div id="tm-range-info" style="font-size:12px; color:#888; line-height:1.6; margin-bottom:10px;"></div>
         <div style="font-size:12px; color:#888; line-height:1.6; margin-bottom:16px;">
-            填的是酒馆里的楼层号。默认留着最近 ${keep} 楼的原文（跟着「保留最近几楼的原文」走）。<br>
+            填的是酒馆里的楼层号。默认只选择最近 ${keep} 楼之前的旧楼层；手动填写范围可以精简最近的楼层。同回合里你发的楼层也会一起收走。<br>
             精简过的楼层发给 AI 时一律用摘要，不算在「最近几楼发原文」里面。
         </div>
         <button id="tm-do" style="width:100%; ${TS.btnP} margin-bottom:8px;">精简成摘要</button>
@@ -5964,17 +6337,48 @@ function showTrimModal(binding, onDone) {
     modal.querySelector('#tm-cancel').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
-    const readRange = () => {
-        const start = parseInt(modal.querySelector('#tm-start').value, 10);
-        const end = parseInt(modal.querySelector('#tm-end').value, 10);
-        if (!Number.isInteger(start) || !Number.isInteger(end) || start > end) { showToast('请填正确的楼层范围，开始不能大于结束'); return null; }
+    const startInput = modal.querySelector('#tm-start');
+    const endInput = modal.querySelector('#tm-end');
+    const readRange = (quiet = false) => {
+        const start = Number(startInput.value);
+        const end = Number(endInput.value);
+        if (!startInput.value.trim() || !endInput.value.trim() || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)
+            || start < 0 || end > lastFloor || start > end) {
+            if (!quiet) showToast('请填正确的楼层范围，开始不能大于结束，也不能超出当前楼层');
+            return null;
+        }
         return { start, end };
     };
+    let busy = false;
+    const updateRangeInfo = () => {
+        const range = readRange(true);
+        const selected = range ? floors.filter(m => floorNo(m) >= range.start && floorNo(m) <= range.end) : [];
+        const canTrim = selected.filter(m => TavernSync.canTrim(m));
+        const canRestore = selected.filter(m => m.tavern.trimmed);
+        const users = selected.filter(m => !m.tavern.isUser && (m.tavern.trimmed || TavernSync.canTrim(m)))
+            .flatMap(m => usersByRound.get(m.tavern.floor) || []);
+        const saved = canTrim.reduce((n, m) => n + Math.max(0, (m.content || '').length - m.tavern.summary.text.length), 0)
+            + users.reduce((n, m) => n + (m.content || '').length, 0);
+        const skipped = selected.filter(m => !m.tavern.isUser && !m.tavern.trimmed && !TavernSync.canTrim(m)).length;
+        modal.querySelector('#tm-range-info').textContent = !range
+            ? (!older.length && !startInput.value && !endInput.value
+                ? `目前没有超过保留范围的旧楼层（保留最近 ${keep} 楼）。如要手动精简或取回原文，请先填写范围。`
+                : '请填写有效的楼层范围。')
+            : `所选范围有 ${selected.length} 楼：可精简 ${canTrim.length} 个回合，能省${sizeOf(saved)}${users.length ? `（含同回合的 ${users.length} 楼用户原文）` : ''}；已精简 ${canRestore.length} 个回合${skipped ? `；${skipped} 个回合没有摘要，不会精简` : ''}。`;
+        modal.querySelector('#tm-do').disabled = busy || !(canTrim.length || users.length);
+        modal.querySelector('#tm-restore').disabled = busy || !canRestore.length;
+    };
+    [startInput, endInput].forEach(input => input.addEventListener('input', updateRangeInfo));
+    updateRangeInfo();
     const run = async (btn, job) => {
+        if (busy || btn.disabled) return;
+        try { assertOwner(); } catch (e) { showToast(e.message); return; }
         const range = readRange();
         if (!range) return;
+        busy = true;
         const buttons = modal.querySelectorAll('button');
         buttons.forEach(b => { b.disabled = true; });
+        startInput.disabled = endInput.disabled = true;
         const orig = btn.textContent; btn.textContent = '处理中...';
         try {
             await job(range);
@@ -5982,8 +6386,11 @@ function showTrimModal(binding, onDone) {
             if (onDone) onDone();
         } catch (e) {
             showToast(`${e.message}`);
+            busy = false;
             buttons.forEach(b => { b.disabled = false; });
+            startInput.disabled = endInput.disabled = false;
             btn.textContent = orig;
+            updateRangeInfo();
         }
     };
     // 把楼层号写成“第 0~3、7 楼”这样连着的几段；段数太多时只写前 5 段
@@ -7167,50 +7574,118 @@ function showPromptPreview(binding) {
     const promptBlock = TavernSync.buildPromptBlock(char);
     if (promptBlock) sections.push({ title: '系统提示词里（线下剧情说明）', content: promptBlock, color: '#FF9800' });
 
-    // 和 yuan 发消息时一样：取最近“记忆条数”条聊天记录，再经过 filterHistoryForAI（已被补丁接管，会做原文/摘要处理）
-    const maxMemory = Number(char.maxMemory) || 20;
-    let slice = (char.history || []).slice(-maxMemory);
-    if (typeof window.filterHistoryForAI === 'function') {
-        try { slice = window.filterHistoryForAI(char, slice); } catch (e) { TavernSync.reportIssue('预览时处理小手机聊天记录失败：' + e.message); }
+    const history = Array.isArray(char.history) ? char.history : [];
+    const rawLimit = Number(char.maxMemory);
+    const maxMemory = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.floor(rawLimit) : 20;
+    let slice = [], exactPreview = false;
+    let previewNote = '按当前普通私聊请求预览酒馆相关内容；发送前如果又同步或修改了记录，内容也会改变。';
+    if (typeof window.getChatRequestHistory === 'function') {
+        try {
+            slice = window.getChatRequestHistory(char, 'private');
+            if (!Array.isArray(slice)) throw new Error('聊天记录处理结果不是列表');
+            exactPreview = true;
+        } catch (e) { TavernSync.reportIssue('预览时读取实际请求的聊天记录失败：' + e.message); }
     }
-    const tavernViews = slice.filter(m => m && m.__tavernView);
-    const totalFloors = (char.history || []).filter(m => m && m.fromTavern).length;
+    if (!exactPreview) {
+        previewNote = '简化预览：当前暂时无法取得真正发给 AI 的聊天记录，下面只按最近记录估算，不能确认剧情节点等规则后的最终内容。';
+        slice = history.filter(m => m && !m.isMomentsActivity).slice(-maxMemory);
+        try {
+            slice = typeof window.filterHistoryForAI === 'function'
+                ? window.filterHistoryForAI(char, slice)
+                : TavernSync.prepareHistoryForAI(char, JSON.parse(JSON.stringify(slice)));
+        } catch (e) {
+            slice = [];
+            TavernSync.reportIssue('简化预览时处理小手机聊天记录失败：' + e.message);
+            previewNote += '简化处理也没有成功，请先处理页面顶部的问题。';
+        }
+    }
+    const tavernViews = slice.filter(m => m && m.fromTavern);
+    const allFloors = history.filter(m => m && m.fromTavern);
+    const totalFloors = allFloors.length;
     const labels = { raw: '原文', summary: '摘要', 'summary-trimmed': '摘要（原文已精简）',
-        'raw-nosummary': '原文（AI 楼还没有摘要）', 'raw-user': '原文（酒馆里你发的）' };
+        'raw-nosummary': '原文（AI 楼还没有摘要）', 'raw-user': '原文（酒馆里你发的）',
+        unprocessed: '原文（未经过酒馆包裹处理）' };
     const colors = { raw: '#2196F3', summary: '#4CAF50', 'summary-trimmed': '#26A69A',
-        'raw-nosummary': '#FF7043', 'raw-user': '#9E9E9E' };
+        'raw-nosummary': '#FF7043', 'raw-user': '#9E9E9E', unprocessed: '#FF7043' };
+    const floorLabel = m => `第 ${m.tavern?.floor ?? '?'} 楼${m.tavern?.chatFile ? `（${m.tavern.chatFile}）` : ''}`;
     if (tavernViews.length) {
         const counts = {};
-        tavernViews.forEach(m => { counts[m.__tavernView] = (counts[m.__tavernView] || 0) + 1; });
+        tavernViews.forEach(m => { const view = m.__tavernView || 'unprocessed'; counts[view] = (counts[view] || 0) + 1; });
         sections.push({
             title: '小手机聊天记录里的酒馆剧情',
-            meta: `最近 ${maxMemory} 条小手机聊天记录中有 ${tavernViews.length} 楼（一共 ${totalFloors} 楼）：`
+            meta: `${exactPreview ? '当前请求' : '简化范围'}中单独发送 ${tavernViews.length} 楼（一共 ${totalFloors} 楼，可见上文 ${maxMemory} 条）：`
                 + Object.entries(counts).map(([k, n]) => `${labels[k]} ${n}`).join('，') + '。',
-            items: tavernViews.map(m => ({ label: labels[m.__tavernView], color: colors[m.__tavernView], content: m.content })),
+            items: tavernViews.map(m => ({ label: `${floorLabel(m)} · ${labels[m.__tavernView || 'unprocessed']}`,
+                color: colors[m.__tavernView || 'unprocessed'], content: m.content })),
             color: '#2196F3',
         });
     } else {
         sections.push({ title: '小手机聊天记录里的酒馆剧情', content: totalFloors
-            ? `最近 ${maxMemory} 条小手机聊天记录里没有酒馆楼层（一共 ${totalFloors} 楼，都已经在更早的位置，AI 这次看不到原文）。`
-            : '小手机里还没有酒馆剧情，点「同步酒馆剧情」同步进来。', color: '#999' });
+            ? (exactPreview ? '当前请求中没有单独发送的酒馆楼层；未发送原因见下方。'
+                : '简化范围中没有可展示的酒馆楼层，实际是否发送请以真实请求为准。')
+            : '小手机里还没有酒馆剧情，点「同步酒馆剧情」同步进来。', color: '#999', displayOnly: true });
+    }
+
+    if (exactPreview) {
+        const sentById = new Map(tavernViews.map(m => [m.id, m]));
+        const cfg = TavernSync.getConfig();
+        const activeNode = (char.nodes || []).find(n => n && n.id === char.activeNodeId);
+        let nodeStart = -1;
+        if (activeNode) {
+            for (let i = history.length - 1; i >= 0; i--) {
+                const m = history[i];
+                if (m?.isNodeBoundary && m.nodeAction === 'start' && m.nodeId === char.activeNodeId) { nodeStart = i; break; }
+            }
+        }
+        const windowIds = new Set(history.slice(nodeStart + 1).filter(m => m && !m.isMomentsActivity).slice(-maxMemory).map(m => m.id));
+        const archived = new Set((char.nodes || []).filter(n => n && n.status === 'archived').map(n => n.id));
+        const currentBinding = TavernSync.findBindingForChar(char.id);
+        const omitted = allFloors.filter(m => !sentById.has(m.id)).map(m => {
+            let reason = '被当前上文处理规则过滤，未单独发送';
+            const t = m.tavern || {};
+            if (!TavernSync.allowsTavernContext(char, m)) reason = '已设置不给 AI 看以前酒馆聊天的剧情';
+            else if (m.isContextDisabled || m.excludeFromContext) reason = '已屏蔽，不进入 AI 上文';
+            else if (nodeStart >= 0 && history.indexOf(m) <= nodeStart) reason = '在当前剧情节点之外';
+            else if (m.nodeId && archived.has(m.nodeId)) reason = '属于已经收纳的剧情节点';
+            else if (t.isUser && cfg.injectUserFloors === false) reason = '已关闭「包含 user 楼层」';
+            else {
+                // 只有本次请求确实发送了同一回合的 AI 摘要，才能说用户原文由摘要代表。
+                let summaryFloor = null;
+                if (t.isUser) {
+                    for (let i = history.indexOf(m) + 1; i < history.length; i++) {
+                        const next = history[i];
+                        if (!next?.fromTavern || !TavernSync._sameTavernSource(t, next.tavern) || next.tavern?.isUser) continue;
+                        const sent = sentById.get(next.id);
+                        if ((t.roundAi === undefined || t.roundAi === next.tavern.floor)
+                            && (sent?.__tavernView === 'summary' || sent?.__tavernView === 'summary-trimmed')) summaryFloor = next;
+                        break;
+                    }
+                }
+                if (summaryFloor) reason = `已由同回合的${floorLabel(summaryFloor)}摘要代表`;
+                else if (!windowIds.has(m.id) && !currentBinding?.limitTavernContext) reason = '超出当前可见上文条数';
+            }
+            return `${floorLabel(m)}：${reason}`;
+        });
+        if (omitted.length) sections.push({ title: `没有单独发送的酒馆楼层（${omitted.length} 楼）`,
+            content: omitted.join('\n'), color: '#888', displayOnly: true });
     }
 
     sections.forEach(s => {
-        s.tokens = estimateTokens(s.content || (s.items || []).map(it => it.content).join('\n'));
+        s.tokens = s.displayOnly ? 0 : estimateTokens(s.content || (s.items || []).map(it => it.content).join('\n'));
     });
     const totalTokens = sections.reduce((sum, s) => sum + s.tokens, 0);
     const box = 'font-size:12px; color:inherit; background:rgba(128,128,128,0.08); border-radius:8px; padding:10px; white-space:pre-wrap; line-height:1.5;';
 
     modal.innerHTML = `
         <h3 style="margin:0 0 12px; font-size:16px; font-weight:600;">提示词预览 — ${esc(char.remarkName || char.name)}</h3>
-        <div style="font-size:12px; color:#888; margin-bottom:12px; line-height:1.6;">下面是 AI 下次会收到的酒馆相关内容。<br>预估约 ${totalTokens.toLocaleString()} tokens。</div>
+        <div style="font-size:12px; color:#888; margin-bottom:12px; line-height:1.6;">${esc(previewNote)}<br>酒馆相关内容预估约 ${totalTokens.toLocaleString()} tokens。</div>
         <div style="flex:1; overflow-y:auto; margin-bottom:12px;">
             ${sections.map(s => `
                 <div style="margin-bottom:14px;">
                     <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
                         <span style="width:8px; height:8px; border-radius:50%; background:${s.color}; flex-shrink:0;"></span>
                         <span style="font-size:13px; font-weight:600; color:${s.color};">${esc(s.title)}</span>
-                        <span style="font-size:11px; color:#888; margin-left:auto;">约 ${s.tokens.toLocaleString()} tokens</span>
+                        ${s.displayOnly ? '' : `<span style="font-size:11px; color:#888; margin-left:auto;">约 ${s.tokens.toLocaleString()} tokens</span>`}
                     </div>
                     ${s.meta ? `<div style="font-size:12px; color:#888; margin-bottom:6px; line-height:1.6;">${esc(s.meta)}</div>` : ''}
                     ${s.content ? `<div style="${box} border-left:3px solid ${s.color};">${esc(s.content)}</div>` : ''}
@@ -7230,8 +7705,100 @@ function showPromptPreview(binding) {
 // 酒馆里开了新聊天时用：不用删掉绑定重加，开关和设置都保留。
 // 换了之后，同步按“第一次同步最近 N 楼”从新聊天重新开始；以前那个聊天导入的剧情留在小手机里，
 // 可以在「管理同步范围」里一键删掉。推送也从头算（新聊天里还没有小手机消息）。
+async function showConflictComparison(binding, onDone) {
+    const result = await TavernSync.getConflictComparisons(binding);
+    const overlay = document.createElement('div');
+    overlay.classList.add('ts-overlay');
+    overlay.style.cssText = 'position:fixed; inset:0; z-index:10000; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; padding:16px;';
+    const modal = document.createElement('div');
+    modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-label', '两边的冲突对照');
+    modal.style.cssText = 'background:var(--bg-color,#fff); color:inherit; border-radius:16px; padding:18px; width:100%; max-width:720px; max-height:88vh; overflow:auto; overflow-wrap:anywhere;';
+    const title = document.createElement('h3'); title.textContent = '两边的冲突对照';
+    title.style.cssText = 'margin:0 0 12px; font-size:16px; font-weight:600;'; modal.appendChild(title);
+    const help = document.createElement('p');
+    help.textContent = '先对照两边内容，再选择要使用的版本。处理后仍保留这个窗口里的原文字供复制；关闭窗口后不会另外保存旧副本。';
+    help.style.cssText = 'font-size:12px; color:#888; line-height:1.6; margin:0 0 12px;'; modal.appendChild(help);
+    for (const warning of result.warnings) {
+        const p = document.createElement('p'); p.textContent = warning;
+        p.style.cssText = 'font-size:12px; color:#888; line-height:1.6;'; modal.appendChild(p);
+    }
+    if (!result.items.length) {
+        const p = document.createElement('p'); p.textContent = result.warnings.length ? '部分来源暂时无法读取，请稍后重新读取。' : '目前没有需要选择版本的冲突。';
+        p.style.cssText = 'font-size:12px; color:#888; line-height:1.6;'; modal.appendChild(p);
+    }
+    for (const [index, item] of result.items.entries()) {
+        const card = document.createElement('section'); card.style.cssText = `${TS.subCard} padding:12px; margin-bottom:12px;`;
+        const heading = document.createElement('h4'); heading.textContent = item.label;
+        heading.style.cssText = 'font-size:13px; margin:0 0 10px;'; card.appendChild(heading);
+        const columns = document.createElement('div'); columns.style.cssText = 'display:flex; flex-wrap:wrap; gap:12px;'; card.appendChild(columns);
+        const status = document.createElement('p'); status.setAttribute('role', 'status');
+        status.style.cssText = 'font-size:12px; color:#888; line-height:1.6; margin:8px 0;'; status.textContent = item.help || '';
+        for (const [side, label] of [['local', '小手机版本'], ['remote', '酒馆版本']]) {
+            const column = document.createElement('div'); column.style.cssText = 'flex:1; min-width:min(240px,100%);';
+            const caption = document.createElement('label'); caption.textContent = label;
+            caption.style.cssText = 'display:block; font-size:13px; margin-bottom:6px;'; column.appendChild(caption);
+            if (item.image) {
+                const img = document.createElement('img'); img.src = item[side]; img.alt = label;
+                img.style.cssText = 'width:100%; height:180px; object-fit:contain; border-radius:8px; background:rgba(128,128,128,0.08);'; column.appendChild(img);
+            } else {
+                const text = document.createElement('textarea'); text.value = item[side]; text.readOnly = true;
+                text.id = `ts-conflict-${index}-${side}`; caption.htmlFor = text.id;
+                text.setAttribute('aria-label', `${item.label}的${label}`);
+                text.style.cssText = 'width:100%; box-sizing:border-box; min-height:160px; max-height:320px; padding:8px; border-radius:8px; font-size:13px; line-height:1.6; resize:vertical;';
+                column.appendChild(text);
+                const copy = document.createElement('button'); copy.textContent = `复制${label}`; copy.style.cssText = `${TS.btnS} margin-top:6px;`;
+                copy.addEventListener('click', async () => {
+                    try {
+                        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) await navigator.clipboard.writeText(item[side]);
+                        else { text.focus(); text.select(); if (!document.execCommand?.('copy')) throw new Error('请长按复制'); }
+                        status.textContent = `已复制${label}。`;
+                    } catch (e) { text.focus(); text.select(); status.textContent = '请在文字框内长按复制。'; }
+                }); column.appendChild(copy);
+            }
+            columns.appendChild(column);
+        }
+        card.appendChild(status);
+        const actions = document.createElement('div'); actions.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px;'; card.appendChild(actions);
+        const choices = [];
+        for (const [use, label] of [['tavern', item.pendingSave ? '重试保存小手机记录' : '用酒馆的更新小手机'], ['phone', item.pushLabel]]) {
+            const button = document.createElement('button'); button.textContent = label; button.style.cssText = `flex:1; ${TS.btnP}`;
+            button.disabled = use === 'phone' && !item.canPush;
+            choices.push(button); actions.appendChild(button);
+            button.addEventListener('click', async () => {
+                choices.forEach(btn => { btn.disabled = true; }); status.textContent = '正在核对两边的最新内容。';
+                try {
+                    await TavernSync.resolveConflictComparison(binding, item, use);
+                    status.textContent = '已处理。以上仍保留处理前的两版内容，可继续复制。';
+                    if (onDone) onDone();
+                } catch (e) {
+                    status.textContent = `${e.message}。`;
+                    choices[0].disabled = false; choices[1].disabled = !item.canPush;
+                }
+            });
+        }
+        modal.appendChild(card);
+    }
+    const footer = document.createElement('div'); footer.style.cssText = 'display:flex; gap:10px; margin-top:12px;';
+    const refresh = document.createElement('button'); refresh.textContent = '重新读取冲突'; refresh.style.cssText = `flex:1; ${TS.btnP}`;
+    const close = document.createElement('button'); close.textContent = '关闭'; close.style.cssText = `flex:1; ${TS.btnS} font-size:14px;`;
+    refresh.addEventListener('click', async () => {
+        refresh.disabled = true;
+        try { await showConflictComparison(binding, onDone); overlay.remove(); }
+        catch (e) { showToast(e.message); refresh.disabled = false; }
+    });
+    close.addEventListener('click', () => overlay.remove());
+    footer.appendChild(refresh); footer.appendChild(close); modal.appendChild(footer);
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.appendChild(modal); document.body.appendChild(overlay);
+}
+
 async function showChangeChatModal(binding, onDone) {
+    const owner = [binding.uwuCharId, binding.stCharAvatar, binding.stChatFile];
+    const wasRegistered = TavernSync.getConfig().bindings.includes(binding);
+    const isCurrent = () => (!wasRegistered || TavernSync.getConfig().bindings.includes(binding))
+        && JSON.stringify(owner) === JSON.stringify([binding.uwuCharId, binding.stCharAvatar, binding.stChatFile]);
     const chats = await TavernSync.getSTChats(binding.stCharAvatar);
+    if (!isCurrent()) throw new Error('绑定已经变化，请重新打开更换窗口');
     const files = (Array.isArray(chats) ? chats : []).map(c => String(c.file_name || '').replace(/\.jsonl$/, '')).filter(Boolean);
     if (!files.length) { showToast('这个酒馆角色还没有酒馆聊天文件'); return; }
     const overlay = document.createElement('div');
@@ -7250,6 +7817,11 @@ async function showChangeChatModal(binding, onDone) {
             以前那个酒馆聊天文件同步进来的剧情会留在小手机里，不想要可以在「管理同步范围」里删掉。<br>
             推送也从新的酒馆聊天文件重新算，已经推到旧的酒馆聊天文件里的消息不会搬过去。
         </div>
+        <label style="display:block; font-size:13px; margin-bottom:6px;" for="cc-memory">以前酒馆聊天的剧情</label>
+        <select id="cc-memory" aria-label="以前酒馆聊天的剧情是否给 AI 看" title="以前酒馆聊天的剧情是否给 AI 看" style="${TS.input} margin-bottom:16px;">
+            <option value="include" ${binding.includeOtherChatFloors !== false ? 'selected' : ''}>保留并继续作为回忆</option>
+            <option value="exclude" ${binding.includeOtherChatFloors === false ? 'selected' : ''}>保留记录，但不给 AI 看</option>
+        </select>
         <div style="display:flex; gap:10px;">
             <button id="cc-cancel" style="flex:1; padding:10px; border-radius:10px; border:1px solid rgba(128,128,128,0.35); background:transparent; color:inherit; font-size:14px; cursor:pointer;">取消</button>
             <button id="cc-save" style="flex:1; ${TS.btnP}">更换</button>
@@ -7260,10 +7832,10 @@ async function showChangeChatModal(binding, onDone) {
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     modal.querySelector('#cc-save').addEventListener('click', async () => {
         const file = modal.querySelector('#cc-chat').value;
-        if (file === binding.stChatFile) { close(); return; }
         try {
-            await TavernSync.changeChatFile(binding, file);
-            showToast('已换成新的酒馆聊天文件');
+            if (!isCurrent()) throw new Error('绑定已经变化，请重新打开更换窗口');
+            await TavernSync.changeChatFile(binding, file, { includeOtherChatFloors: modal.querySelector('#cc-memory').value === 'include' });
+            showToast(file === owner[2] ? '已保存旧剧情的使用方式' : '已换成新的酒馆聊天文件');
             close();
             if (onDone) onDone();
         } catch (e) { showToast(`${e.message}`); }
@@ -7335,7 +7907,7 @@ TavernSync._writeQueue = Promise.resolve();
     // 推送小手机人设/世界书：会改小手机世界书条目上的记录、加绑定，也排进来（里面互相调用的是不排队的版本）
     'pushWorldBooksToTavern', 'createTavernCharacter',
     // 双向更新人设/世界书：同步里面调的是它们本身（同步已经在排队），单独触发的这两个排进来
-    'resolvePersonaConflict', 'syncSettingsBothWays'].forEach(name => {
+    'resolvePersonaConflict', 'syncSettingsBothWays', 'getConflictComparisons', 'resolveConflictComparison'].forEach(name => {
     const original = TavernSync[name];
     TavernSync[name] = function (...args) {
         const binding = args[0];

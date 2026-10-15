@@ -124,6 +124,7 @@ export function createPhoneMemoryAdapter(host = {}) {
     const getDocument = () => host.document === undefined ? globalThis.document : host.document;
     let active = null, sequence = 0, topicRefs = [], topicChat = null, topicScope = null, manual = null, assemblyOwner = null;
     let initialized = false, disposed = false, preview = { stage: 'idle', reason: 'NO_NEED', selected: [], chars: 0, tokens: 0 };
+    let trialJob = null;
     let boundEvents = null, boundTypes = null;
     let previewOwner = null;
     // 独有前缀与递增编号可识别任意久以前的自有块，不必无限保存整段原文。
@@ -316,6 +317,7 @@ export function createPhoneMemoryAdapter(host = {}) {
     }
     function invalidate(reason = 'SOURCE_CHANGED', { reindex = true } = {}) {
         if (disposed) return;
+        cancelTrial();
         sequence++;
         vectors.cancel();
         if (active) { active.invalid = true; active.vectorAbort?.abort(); active.abortCleanup?.(); }
@@ -355,6 +357,8 @@ export function createPhoneMemoryAdapter(host = {}) {
     }
     function start(type, options = {}, dryRun = false) {
         if (disposed) return;
+        // 正式生成优先。只取消试查自己的请求，不取消共享向量服务或改变真实采用状态。
+        cancelTrial();
         getPreview();
         clearSlot();
         const ctx = getContext();
@@ -472,6 +476,25 @@ export function createPhoneMemoryAdapter(host = {}) {
                 .then(value => finish(null, value), error => finish(error));
         });
     }
+    async function decideWithVectors(decisionInput, { isCurrent, signal }) {
+        let decision = core.decideMemory(decisionInput);
+        const config = vectorSettings(), classification = decision.classification;
+        const maySearch = config.enabled && decisionInput.scan.units.length && !decisionInput.manualRefs?.length
+            && !['JOIN', 'FOLLOW', 'MANUAL'].includes(decision.kind)
+            && classification?.need && !classification.genericFollow
+            && core.semanticQueryHasContent(classification,
+                [...decisionInput.roleNames, ...decisionInput.scan.units.map(unit => unit.speaker).filter(Boolean)]);
+        if (!maySearch) return { decision, vector: { reason: config.enabled ? 'NO_NEED' : 'DISABLED',
+            explanation: config.enabled ? '当前承接或输入无需向量查询' : VECTOR_REASONS.DISABLED } };
+        let result;
+        try { result = await vectors.search(decisionInput.scan, classification.demandText, { isCurrent, signal, timeoutMs: 3000 }); }
+        catch { result = { candidates: [], reason: 'NETWORK_ERROR' }; }
+        if (!isCurrent()) return null;
+        if (result.candidates?.length) decision = core.decideMemory({ ...decisionInput,
+            semanticCandidates: result.candidates, semanticThreshold: config.threshold, semanticMargin: config.margin });
+        return { decision, vector: { reason: result.reason, explanation: VECTOR_REASONS[result.reason] || result.reason,
+            candidateCount: result.candidates?.length || 0 } };
+    }
     async function interceptor(_coreChat, contextSize, _abort, type) {
         if (disposed) return;
         clearSlot();
@@ -523,36 +546,12 @@ export function createPhoneMemoryAdapter(host = {}) {
                 userFloor: op.userFloor, mode: op.mode || 'normal', joinAllowed: op.joinAllowed,
                 topicRefs: refs, receipts, manualRefs,
                 roleNames: [ctx.name1, ctx.name2, ctx.characters?.[ctx.characterId]?.name].filter(Boolean) };
-            let decision = core.decideMemory(decisionInput);
-            const vectorConfig = vectorSettings(), profile = vectorProfileSnapshot();
-            const classification = decision.classification;
-            // 当前需求先成立；承接、泛指、手选和内部请求无需另发查询。
-            const maySearch = vectorConfig.enabled && scan.units.length && !manualRefs.length
-                && !['JOIN', 'FOLLOW', 'MANUAL'].includes(decision.kind)
-                && classification?.need && !classification.genericFollow
-                && core.semanticQueryHasContent(classification,
-                    [...decisionInput.roleNames, ...scan.units.map(unit => unit.speaker).filter(Boolean)]);
-            if (maySearch) {
-                const isCurrent = () => currentValid(op) && vectorProfileSnapshot() === profile;
-                let result;
-                try {
-                    result = await vectors.search(scan, classification.demandText, {
-                        isCurrent, signal: op.vectorAbort.signal, timeoutMs: 3000,
-                    });
-                } catch {
-                    result = { candidates: [], reason: 'NETWORK_ERROR' };
-                }
-                if (!isCurrent()) return;
-                if (result.candidates?.length) decision = core.decideMemory({ ...decisionInput,
-                    semanticCandidates: result.candidates,
-                    semanticThreshold: vectorConfig.threshold, semanticMargin: vectorConfig.margin });
-                op.vectorReason = result.reason;
-                updatePreview({ vector: { reason: result.reason,
-                    explanation: VECTOR_REASONS[result.reason] || result.reason,
-                    candidateCount: result.candidates?.length || 0 }, retrieval: decision.retrieval || { mode: 'keyword' } });
-            } else updatePreview({ vector: { reason: vectorConfig.enabled ? 'NO_NEED' : 'DISABLED',
-                explanation: vectorConfig.enabled ? '当前承接或输入无需向量查询' : VECTOR_REASONS.DISABLED },
-                retrieval: { mode: 'keyword' } });
+            const found = await decideWithVectors(decisionInput, {
+                isCurrent: () => currentValid(op), signal: op.vectorAbort.signal });
+            if (!found) return;
+            const { decision, vector } = found;
+            op.vectorReason = vector.reason;
+            updatePreview({ vector, retrieval: decision.retrieval || { mode: 'keyword' } });
             if (!currentValid(op)) return;
             op.decision = decision;
             topicRefs = decision.topicRefs || []; topicChat = op.chatId; topicScope = op.scope;
@@ -838,9 +837,65 @@ export function createPhoneMemoryAdapter(host = {}) {
             if (active === op) active = null;
         }
     }
-    function availableSources() {
+    function availableSources({ query = '', recentFirst = false } = {}) {
         const ctx = getContext(), chatId = chatIdentity(ctx);
-        return chatId ? core.scanSources(ctx.chat, { chatId }).units.map(s => ({ ref: s.ref, text: s.text })) : [];
+        if (!chatId) return [];
+        const words = String(query).trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+        const units = core.scanSources(ctx.chat, { chatId }).units.filter(source =>
+            words.every(word => source.text.toLocaleLowerCase().includes(word)));
+        if (recentFirst) units.sort((a, b) => b.floor - a.floor || b.start - a.start);
+        return units.map(source => ({ ref: source.ref, text: source.text }));
+    }
+    function cancelTrial() {
+        trialJob?.vectorAbort.abort();
+        trialJob = null;
+    }
+    async function trialRecall(query, { contextSize = 1200 } = {}) {
+        cancelTrial();
+        const empty = reason => ({ stage: 'trial', adopted: false, reason,
+            explanation: REASONS[reason] || ({ EMPTY_QUERY: '请先输入一句要试查的话', BUSY: '角色正在生成，请等本次回复结束后试查' }[reason]) || reason,
+            selected: [], chars: 0, tokens: 0 });
+        if (disposed) return empty('CANCELLED');
+        query = String(query || '').trim();
+        if (!query) return empty('EMPTY_QUERY');
+        if (!settings().enabled) return empty('DISABLED');
+        const ctx = getContext(), chatId = chatIdentity(ctx), scope = userScope();
+        if (isGroupChat(ctx)) return empty('GROUP');
+        if (!chatId) return empty('TARGET_UNKNOWN');
+        if (active?.eligible && !active.invalid) return empty('BUSY');
+        const job = { vectorAbort: new AbortController(), profile: vectorProfileSnapshot(), chatId, scope,
+            snapshot: JSON.stringify(ctx.chat) };
+        trialJob = job;
+        const isCurrent = () => !disposed && trialJob === job && !job.vectorAbort.signal.aborted
+            && settings().enabled && chatIdentity(getContext()) === chatId && userScope() === scope
+            && vectorProfileSnapshot() === job.profile && JSON.stringify(getContext()?.chat) === job.snapshot;
+        try {
+            // 只给副本追加试查输入。手选、主题和采用记录均只读，不消费下一次正式补充。
+            const chat = clone(ctx.chat);
+            chat.push({ name: ctx.name1 || '我', is_user: true, mes: query, extra: {} });
+            const scan = core.scanSources(chat, { chatId });
+            const decisionInput = { scan, chat, query, userFloor: chat.length - 1, mode: 'normal',
+                topicRefs: clone(topicChat === chatId && topicScope === scope ? topicRefs : core.restoreTopicRefs(chat, scan)),
+                receipts: core.collectValidReceipts(chat, scan), manualRefs: [],
+                roleNames: [ctx.name1, ctx.name2, ctx.characters?.[ctx.characterId]?.name].filter(Boolean) };
+            const found = await decideWithVectors(decisionInput, { isCurrent, signal: job.vectorAbort.signal });
+            if (!found || !isCurrent()) return empty('SOURCE_CHANGED');
+            const { decision, vector } = found;
+            const result = { ...empty(decision.reason || 'NO_NEED'), query, kind: decision.kind,
+                vector, retrieval: decision.retrieval || { mode: 'keyword' },
+                candidateCount: decision.candidates?.length || 0 };
+            if (!decision.selected?.length) return result;
+            const budget = await core.fitBudget(decision.selected, {
+                countTokens: text => isCurrent() ? countOperationTokens(job, text) : Promise.reject(new Error('CANCELLED')),
+                maxTokens: Math.min(1200, Number.isFinite(contextSize) ? Math.max(0, contextSize) : 1200),
+                operationId: 'trial', query });
+            if (!isCurrent()) return empty('SOURCE_CHANGED');
+            return { ...result, reason: budget.selected?.length ? decision.kind : budget.reason || 'BUDGET',
+                explanation: REASONS[budget.selected?.length ? decision.kind : budget.reason || 'BUDGET'] || budget.reason,
+                selected: (budget.selected || []).map(source => ({ ref: clone(source.ref), text: source.text })),
+                chars: budget.chars || 0, tokens: budget.tokens };
+        } catch { return empty(isCurrent() ? 'ERROR' : 'SOURCE_CHANGED'); }
+        finally { if (trialJob === job) trialJob = null; }
     }
     function selectManual(refs) {
         if (disposed) return false;
@@ -909,6 +964,48 @@ export function createPhoneMemoryAdapter(host = {}) {
         details.append(summary, data); summaryCard.append(details);
         panel.append(summaryCard);
 
+        const trialCard = doc.createElement('section'); trialCard.className = 'uwu-memory-card';
+        const trialTitle = doc.createElement('h4'); trialTitle.textContent = '试查一句话';
+        const trialHelp = doc.createElement('p'); trialHelp.className = 'uwu-memory-help';
+        trialHelp.textContent = '按下一次普通提问试查，不生成角色回复，不记为实际采用，也不改变已手选的来源。使用已保存的设置；启用向量时，查询文字会发送到向量 API，可能产生费用。正式发送时仍会重新检查已有原文和剩余长度。';
+        const trialInput = doc.createElement('input'); trialInput.type = 'text'; trialInput.className = 'text_pole uwu-memory-search';
+        trialInput.id = 'uwu-phone-memory-trial-query'; trialInput.placeholder = '例如：之前约好的桂花咖啡店几点见';
+        trialInput.setAttribute?.('aria-label', '要试查的一句话');
+        const trialButton = doc.createElement('button'); trialButton.type = 'button'; trialButton.className = 'menu_button';
+        trialButton.id = 'uwu-phone-memory-trial-run'; trialButton.textContent = '试查'; trialButton.disabled = !settings().enabled;
+        const trialResult = doc.createElement('div'); trialResult.id = 'uwu-phone-memory-trial-result';
+        trialResult.className = 'uwu-memory-source-list'; trialResult.setAttribute?.('role', 'status');
+        const trialActions = doc.createElement('div'); trialActions.className = 'uwu-memory-actions'; trialActions.append(trialButton);
+        let trialUiEpoch = 0, dialogTrialJob = null;
+        const cancelDialogTrial = () => {
+            if (dialogTrialJob && trialJob === dialogTrialJob) cancelTrial();
+            dialogTrialJob = null;
+        };
+        trialInput.addEventListener('input', () => {
+            trialUiEpoch++; cancelDialogTrial(); trialResult.textContent = ''; trialButton.disabled = !settings().enabled;
+        });
+        trialButton.addEventListener('click', async () => {
+            const epoch = ++trialUiEpoch;
+            trialButton.disabled = true; trialResult.textContent = '正在试查，尚未采用…';
+            const pending = trialRecall(trialInput.value); dialogTrialJob = trialJob;
+            const result = await pending;
+            if (disposed || !dialog.open || trialUiEpoch !== epoch) return;
+            trialResult.textContent = '';
+            const status = doc.createElement('p'); status.className = 'uwu-memory-help';
+            status.textContent = `试查结果，未发送、未采用：${result.explanation}。${result.chars} 字符 / ${result.tokens ?? '未确认'} tokens。`;
+            trialResult.append(status);
+            if (result.vector) {
+                const vectorHint = doc.createElement('p'); vectorHint.className = 'uwu-memory-help';
+                vectorHint.textContent = result.vector.explanation; trialResult.append(vectorHint);
+            }
+            for (const source of result.selected) {
+                const text = doc.createElement('pre'); text.className = 'uwu-memory-snippet';
+                text.textContent = `来源：聊天第 ${source.ref.floor + 1} 楼\n${source.text}`; trialResult.append(text);
+            }
+            trialButton.disabled = !settings().enabled;
+        });
+        trialCard.append(trialTitle, trialHelp, trialInput, trialActions, trialResult); panel.append(trialCard);
+
         const manualCard = doc.createElement('section'); manualCard.className = 'uwu-memory-card';
         const manualTitle = doc.createElement('h4'); manualTitle.textContent = '手动指定下一次补充来源';
         const help = doc.createElement('p'); help.className = 'uwu-memory-help';
@@ -916,10 +1013,18 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (!settings().enabled) help.textContent = '剧情补充已关闭，开启「按需补充手机剧情」后可手动指定来源。';
         manualCard.append(manualTitle, help);
         const checks = [];
-        const sources = availableSources();
+        const sources = availableSources({ recentFirst: true });
         if (sources.length) {
+            const search = doc.createElement('input'); search.type = 'search'; search.className = 'text_pole uwu-memory-search';
+            search.id = 'uwu-phone-memory-source-search'; search.placeholder = '输入关键词找来源，多个词用空格分开';
+            search.setAttribute?.('aria-label', '搜索已推送手机来源');
+            const sourceCount = doc.createElement('p'); sourceCount.className = 'uwu-memory-help'; sourceCount.setAttribute?.('role', 'status');
+            sourceCount.textContent = `共 ${sources.length} 段，最近的排在前面。`;
+            manualCard.append(search, sourceCount);
             const list = doc.createElement('div'); list.className = 'uwu-memory-source-list';
+            const rows = [];
             for (const source of sources) {
+                const row = doc.createElement('div'); row.className = 'uwu-memory-source-row';
                 const label = doc.createElement('label'), input = doc.createElement('input'), textSpan = doc.createElement('span');
                 label.className = 'uwu-memory-check';
                 input.type = 'checkbox'; input.addEventListener('change', () => {
@@ -929,8 +1034,20 @@ export function createPhoneMemoryAdapter(host = {}) {
                 textSpan.className = 'uwu-memory-check-text';
                 textSpan.textContent = `第 ${source.ref?.floor + 1} 楼：${source.text.slice(0, 180)}`;
                 label.append(input, textSpan);
-                checks.push({ input, ref: source.ref }); list.append(label);
+                const full = doc.createElement('details'); full.className = 'uwu-memory-advanced';
+                const caption = doc.createElement('summary'); caption.textContent = '查看完整片段';
+                const body = doc.createElement('pre'); body.className = 'uwu-memory-snippet'; body.textContent = source.text;
+                full.append(caption, body); row.append(label, full);
+                rows.push({ row, text: source.text.toLocaleLowerCase() });
+                checks.push({ input, ref: source.ref }); list.append(row);
             }
+            search.addEventListener('input', () => {
+                const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+                for (const { row, text } of rows) row.hidden = !words.every(word => text.includes(word));
+                const count = rows.filter(item => !item.row.hidden).length;
+                sourceCount.textContent = count ? `找到 ${count} 段，最近的排在前面。已勾选的来源仍会保留。`
+                    : '没有匹配来源，换个关键词试试。已勾选的来源仍会保留。';
+            });
             manualCard.append(list);
         } else {
             const emptyHint = doc.createElement('p'); emptyHint.className = 'uwu-memory-help';
@@ -941,13 +1058,15 @@ export function createPhoneMemoryAdapter(host = {}) {
 
         const footer = doc.createElement('div'); footer.className = 'uwu-memory-footer';
         const footerBtns = doc.createElement('div'); footerBtns.className = 'uwu-memory-actions';
-        const use = doc.createElement('button'); use.className = 'menu_button uwu-memory-primary'; use.textContent = '本次补充所选来源';
+        const use = doc.createElement('button'); use.className = 'menu_button uwu-memory-primary'; use.textContent = '下次补充所选来源';
         use.id = 'uwu-phone-memory-use-sources'; use.disabled = true;
         use.addEventListener('click', () => {
             if (selectManual(checks.filter(x => x.input.checked).map(x => x.ref))) dialog.close();
         });
         const close = doc.createElement('button'); close.className = 'menu_button uwu-dialog-close'; close.textContent = '关闭';
-        close.addEventListener('click', () => dialog.close()); dialog.addEventListener('close', () => dialog.remove());
+        close.addEventListener('click', () => dialog.close()); dialog.addEventListener('close', () => {
+            trialUiEpoch++; cancelDialogTrial(); dialog.remove();
+        });
         footerBtns.append(use, close); footer.append(footerBtns); dialog.append(footer);
         doc.body.append(dialog); dialog.showModal();
     }
@@ -1111,6 +1230,9 @@ export function createPhoneMemoryAdapter(host = {}) {
                 border:1px solid color-mix(in srgb,var(--SmartThemeBorderColor,#555) 55%,transparent);
             }
             .uwu-memory-dialog .uwu-memory-source-list { display:flex;flex-direction:column;gap:6px;margin:0 !important; }
+            .uwu-memory-dialog .uwu-memory-source-row { display:flex;flex-direction:column;gap:6px;min-width:0; }
+            .uwu-memory-dialog .uwu-memory-source-list [hidden] { display:none !important; }
+            .uwu-memory-dialog .uwu-memory-search { width:100%;min-width:0;box-sizing:border-box; }
             .uwu-memory-dialog .uwu-memory-source-list .uwu-memory-check { align-items:flex-start; }
             .uwu-memory-dialog .uwu-memory-source-list input[type="checkbox"] { margin-top:2px !important; }
             #uwu-phone-vector-dialog .uwu-memory-story-actions { margin:0 !important; }
@@ -1356,6 +1478,16 @@ export function createPhoneMemoryAdapter(host = {}) {
                 if (result.ok && result.dimensions) vectorStatus.textContent += ` 返回 ${result.dimensions} 维向量。`;
             }
         }, keyButtons);
+        const keyMaintenance = doc.createElement('div'); keyMaintenance.className = 'uwu-memory-actions'; connection.append(keyMaintenance);
+        action('删除已保存 Key', 'uwu-phone-vector-clear-key', async () => {
+            const result = await saveVectorKey('', { clear: true });
+            if (result.ok) {
+                key.value = ''; key.type = 'password'; reveal.textContent = '显示输入的 Key'; clearModelOptions();
+                vectorStatus.textContent = '已删除当前酒馆账号保存的向量 Key。需要鉴权的接口请重新填写并保存。';
+            } else vectorStatus.textContent = VECTOR_REASONS[result.reason] || '删除未完成，请重试。';
+        }, keyMaintenance, 'uwu-memory-danger');
+        const keyHelp = doc.createElement('p'); keyHelp.className = 'uwu-memory-help';
+        keyHelp.textContent = '删除按钮只清除当前酒馆账号保存的向量 Key，不修改主聊天 API 的 Key。'; connection.append(keyHelp);
         action('准备本聊天索引', 'uwu-phone-vector-index', async () => {
             if (await saveForm()) await prepareVectorIndex();
         });
@@ -1483,7 +1615,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         releaseBindings();
         for (const id of ['uwu-phone-memory-preview-dialog', 'uwu-phone-memory-settings', 'uwu-phone-vector-dialog', 'uwu-phone-vector-menu-container', 'uwu-phone-vector-menu', 'uwu-phone-memory-ui-style']) getDocument()?.getElementById?.(id)?.remove();
     }
-    return { initialize, startGeneration: start, interceptor, invalidate, setEnabled, getPreview, selectManual, availableSources, dispose,
+    return { initialize, startGeneration: start, interceptor, invalidate, setEnabled, getPreview, selectManual, availableSources, trialRecall, dispose,
         getVectorSettings: () => clone(vectorSettings()), setVectorSettings,
         getVectorState: () => clone(vectors.getState()),
         refreshVectorStatus: () => disposed ? Promise.resolve({ reason: 'CANCELLED' }) : vectors.refreshStatus(),

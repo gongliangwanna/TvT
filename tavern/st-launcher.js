@@ -342,7 +342,10 @@ function addPhoneMenuButton() {
         // 让事件冒泡（酒馆会自动收起 wand menu）
         // 先同步开一个窗口，避免等待下载以后被浏览器当成弹窗拦截。
         const phone = window.open('about:blank', '_blank');
-        if (!phone) return;
+        if (!phone) {
+            globalThis.toastr?.warning?.('浏览器未能打开小手机，请允许本站打开新标签后再试', '小手机');
+            return;
+        }
         phone.opener = null;
         phone.document.title = '小手机';
         phone.document.body.textContent = '正在检查小手机更新，首次下载新版本可能需要一点时间…';

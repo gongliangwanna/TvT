@@ -1,7 +1,7 @@
 // Service Worker - 应用壳离线恢复与系统推送通知
 try {
     // A new import URL also reaches users whose older page still uses the default HTTP cache policy.
-    importScripts('./sw-assets.js?ovo-manifest=tavern-12696cebb3b9af3a');
+    importScripts('./sw-assets.js?ovo-manifest=tavern-c0264314be6a5eeb');
 } catch (error) {
     console.warn('Service worker asset manifest unavailable:', error);
 }
@@ -108,6 +108,7 @@ self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
         validateManifest(OVO_SW_MANIFEST);
         const current = await readShell();
+        tavernInstallPreviousName = current.name;
         const cached = await (await caches.open(current.name)).match(new URL('index.html', OVO_SCOPE).href);
         if (current.manifest.version === OVO_SW_MANIFEST.version && cached) {
             ovoInstalledShell = current;
@@ -127,7 +128,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
     event.waitUntil((async () => {
         const previous = await readShell();
-        const shell = ovoInstalledShell || previous;
+        const shell = ovoInstalledShell && (!tavernInstallPreviousName || previous.name === tavernInstallPreviousName || previous.name === ovoInstalledShell.name) ? ovoInstalledShell : previous;
         await writeShell(shell);
         await clients.claim();
         if (previous.name !== shell.name) await caches.delete(previous.name);
@@ -138,30 +139,141 @@ self.addEventListener('activate', (event) => {
     })());
 });
 
+// ===== Tavern refresh update begin =====
+let tavernRefreshTask = null;
+let tavernInstallPreviousName;
+const tavernPreparedPulls = new Set();
+
+async function tavernHasPreparedPulls() {
+    if (ovoPulls.size) return true;
+    const state = await caches.open(OVO_STATE_CACHE);
+    if (typeof state.keys !== 'function') return tavernPreparedPulls.size > 0;
+    const prefix = new URL('__ovo_pull_', OVO_SCOPE).href;
+    for (const key of await state.keys()) {
+        if (!key.url.startsWith(prefix)) continue;
+        const response = await state.match(key);
+        if (!response) continue;
+        const prepared = await response.json();
+        const current = await readShell();
+        const owner = typeof clients.get === 'function' ? await clients.get(prepared.owner) : true;
+        if (prepared.previous === current.name && owner) return true;
+        await state.delete(key);
+        if (prepared.name !== current.name && prepared.name.startsWith(OVO_CACHE_PREFIX + 'pull-')) await caches.delete(prepared.name);
+    }
+    return false;
+}
+
+async function tavernRememberPreviousShell(previous, shell) {
+    const state = await caches.open(OVO_STATE_CACHE);
+    const key = new URL('__tavern_previous_shell__', OVO_SCOPE).href;
+    const stored = await state.match(key);
+    const older = stored && await stored.json();
+    await state.put(key, new Response(JSON.stringify({ name: previous.name })));
+    if (older && older.name !== previous.name && older.name !== shell.name
+        && older.name.startsWith(OVO_CACHE_PREFIX) && older.name !== (await readShell()).name) {
+        await caches.delete(older.name);
+    }
+}
+
+async function tavernRefreshShell() {
+    if (tavernRefreshTask) return tavernRefreshTask;
+    tavernRefreshTask = (async () => {
+        // A manual pull owns its staged result until Apply or Discard.
+        if (await tavernHasPreparedPulls()) return readShell();
+        const nonce = 'refresh-' + crypto.randomUUID();
+        const response = await fetchFresh('sw-assets.js', nonce);
+        const match = (await response.text()).match(/^\s*self\.__OVO_SW_MANIFEST\s*=\s*(\{[\s\S]*\})\s*;?\s*$/);
+        const manifest = validateManifest(match && JSON.parse(match[1]));
+        const previous = await readShell();
+        const entry = new URL('index.html', OVO_SCOPE).href;
+        const cached = await (await caches.open(previous.name)).match(entry);
+        if (previous.manifest.version === manifest.version && cached) return previous;
+        const name = OVO_CACHE_PREFIX + 'pull-' + nonce;
+        let committed = false;
+        try {
+            await downloadShell(manifest, name, nonce);
+            const current = await readShell();
+            // Another tab or a newly activated worker may have committed while downloading.
+            if (current.name !== previous.name || await tavernHasPreparedPulls()) return current;
+            const shell = { name, manifest };
+            await writeShell(shell);
+            committed = true;
+            // Retain one previous shell, without accumulating complete caches on every update.
+            try { await tavernRememberPreviousShell(previous, shell); } catch (_) { /* Commit already succeeded. */ }
+            return readShell();
+        } finally {
+            if (!committed) await caches.delete(name);
+        }
+    })().finally(() => { tavernRefreshTask = null; });
+    return tavernRefreshTask;
+}
+
+function tavernEscapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;',
+        '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+}
+
+function tavernBrowserResponse(response) {
+    // CacheStorage remains available offline; prevent a separate browser memory cache
+    // from serving an older script without consulting the newly committed shell.
+    const headers = [...response.headers].filter(([name]) => !['cache-control', 'expires', 'pragma'].includes(name.toLowerCase()));
+    headers.push(['Cache-Control', 'no-store']);
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+async function tavernRefreshNavigation(request) {
+    try {
+        const shell = await tavernRefreshShell();
+        const cached = await (await caches.open(shell.name)).match(new URL('index.html', OVO_SCOPE).href);
+        if (!cached) throw new Error('小手机首页下载不完整，请刷新重试');
+        return tavernBrowserResponse(cached);
+    } catch (error) {
+        const shell = await readShell();
+        const cached = await (await caches.open(shell.name)).match(new URL('index.html', OVO_SCOPE).href);
+        const reason = error && error.name === 'AbortError' ? '检查更新超时，请检查网络后刷新重试'
+            : error && error.name === 'TypeError' ? '无法连接酒馆，请检查网络后刷新重试'
+            : error && error.name === 'SyntaxError' ? '更新文件清单格式有误，请等待扩展更新完成后刷新重试'
+            : error && error.message || '无法连接酒馆，请检查网络后刷新重试';
+        const message = tavernEscapeHtml(reason);
+        const banner = '<div role="alert" id="tavern-refresh-update-error" style="position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:12px 16px;background:#fff3cd;color:#664d03;font:14px/1.5 sans-serif;">'
+            + '小手机本次未能更新' + (cached ? '，当前显示旧版本' : '') + '：' + message
+            + '。<a style="color:inherit;text-decoration:underline;" href="' + tavernEscapeHtml(request.url) + '">重新检查更新</a></div>';
+        const html = cached ? await cached.text() : '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>小手机更新失败</title></head><body></body></html>';
+        const body = /<body\b[^>]*>/i.test(html) ? html.replace(/<body\b[^>]*>/i, tag => tag + banner) : banner + html;
+        const headers = cached ? [...cached.headers].filter(([name]) => !['content-length', 'content-encoding', 'content-type', 'cache-control'].includes(name.toLowerCase())) : [];
+        headers.push(['Content-Type', 'text/html; charset=utf-8'], ['Cache-Control', 'no-store']);
+        return new Response(body, { status: cached ? 200 : 503, headers });
+    }
+}
+// ===== Tavern refresh update end =====
+
 self.addEventListener('fetch', (event) => {
     const request = event.request;
     if (request.method !== 'GET') return;
     const url = new URL(request.url);
     if (url.origin !== self.location.origin) return;
+    if (!url.href.startsWith(OVO_SCOPE)) return;
 
     // Only handle app files; API requests, uploads and remote resources keep their existing behavior.
     const relative = url.href.startsWith(OVO_SCOPE) ? url.pathname.slice(new URL(OVO_SCOPE).pathname.length) : '';
+    if (request.mode === 'navigate' && relative !== '' && relative !== 'index.html') return;
     if (request.mode !== 'navigate' && !/\.(?:js|css)$/.test(relative) && relative !== 'manifest.json') return;
     event.respondWith((async () => {
+        if (request.mode === 'navigate') return tavernRefreshNavigation(request);
         const shell = await readShell();
         const cache = await caches.open(shell.name);
         const asset = request.mode === 'navigate' ? 'index.html' : relative;
         if (!shell.manifest.assets.includes(asset)) return fetch(request);
         const key = new URL(asset, OVO_SCOPE).href;
         const cached = await cache.match(key);
-        if (request.mode !== 'navigate' && cached) return cached;
+        if (request.mode !== 'navigate' && cached) return tavernBrowserResponse(cached);
         try {
             // Keep online navigation, but never mix a new HTML entry with an older shell.
             const response = await verifyResponse(await fetch(request), asset, shell.manifest);
             await cache.put(key, response.clone());
-            return response;
+            return tavernBrowserResponse(response);
         } catch (_) {
-            return cached || Response.error();
+            return cached ? tavernBrowserResponse(cached) : Response.error();
         }
     })());
 });
@@ -197,6 +309,7 @@ self.addEventListener('message', event => {
                     if (controller.signal.aborted) throw new Error('已取消拉取');
                     await state.put(key, new Response(JSON.stringify({ name, manifest, previous: previous.name, owner: event.source.id })));
                     if (controller.signal.aborted) throw new Error('已取消拉取');
+                    tavernPreparedPulls.add(data.token);
                     port.postMessage({ type: 'done', version: manifest.version });
                 } catch (error) {
                     await caches.delete(name);
@@ -206,6 +319,7 @@ self.addEventListener('message', event => {
                     ovoPulls.delete(data.token);
                 }
             } else if (data.type === 'OVO_UPDATE_DISCARD') {
+                tavernPreparedPulls.delete(data.token);
                 const running = ovoPulls.get(data.token);
                 if (running && running.owner === event.source.id) running.controller.abort();
                 const staged = await state.match(key);
@@ -228,6 +342,7 @@ self.addEventListener('message', event => {
                 await writeShell({ name, manifest: prepared.manifest });
                 // The commit has succeeded; cleanup failure must not report the update as failed.
                 await Promise.allSettled([state.delete(key), caches.delete(previous.name)]);
+                tavernPreparedPulls.delete(data.token);
                 port.postMessage({ type: 'done', version: prepared.manifest.version });
             }
         } catch (error) {

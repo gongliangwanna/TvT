@@ -252,6 +252,80 @@ function makeRef(source, start, end, msgIds, text) {
         start, end, msgIds: [...msgIds], textFingerprint: fingerprint(text) };
 }
 
+// Only explicit changes to a uniquely identifiable appointment form a relation.
+// A place name alone never makes two visits (or a menu change) the same event.
+function appointmentDates(text) {
+    const body = text.replace(/\[时间[：:][^\]]*\]|[（(][^）)]*\d{2}:\d{2}[^）)]*[）)]/g, '');
+    const stamp = text.match(/(\d{4})-(\d{2})-(\d{2})[ T]\d{2}:\d{2}/);
+    const offsets = { 今天: 0, 今晚: 0, 明天: 1, 明晚: 1, 后天: 2, 昨天: -1 };
+    return [...body.matchAll(/(?:\d{4}[-/.年])?\d{1,2}[-/.月]\d{1,2}日?|(?:下|这|本|上)?(?:周|星期|礼拜)[一二三四五六日天]|今天|明天|后天|今晚|明晚|昨天/g)].map(match => {
+        const day = match[0];
+        if (!(day in offsets)) return day;
+        return stamp ? new Date(Date.UTC(+stamp[1], +stamp[2] - 1, +stamp[3]) + offsets[day] * 86400000).toISOString().slice(0, 10) : `relative:${day}`;
+    });
+}
+
+function appointmentKind(text) {
+    if (/早餐|早饭/.test(text)) return 'breakfast';
+    if (/午餐|午饭/.test(text)) return 'lunch';
+    if (/晚餐|晚饭/.test(text)) return 'dinner';
+    if (/会议|开会/.test(text)) return 'meeting';
+    return /见面|碰头|约会|约定|约好|集合|会面|聚餐|吃饭|聚会|等你|(?:点|时|店|馆|园|院|站)[^。！？!?\n]{0,12}见/.test(text) ? 'appointment' : '';
+}
+
+function linkAppointmentCorrections(units) {
+    const facts = units.map(unit => ({ unit, text: withoutQuoted(unit.text), objects: namedObjects(unit.text),
+        kind: appointmentKind(unit.text), dates: appointmentDates(unit.text) }));
+    for (let index = 0; index < units.length; index++) {
+        const { unit: update, text } = facts[index];
+        const marker = /取消|作废|撤回|更正|纠正|变更|改一下|改约|改(?:成|为|到|在)|调整(?:到|为)/.exec(text);
+        if (!marker || /如果|假如|假设|要是|举例|比如|小说|台词|另一次|另一场|另外的|另约|其他约定|[?？]/.test(text) || pendingQuestion(text)
+            || /(?:不(?:要|会|能|打算|想|必)?|没(?:有)?|并未|并非|不是|不用|无需|别)(?:再|真的|随便|贸然)?\s*$/.test(text.slice(0, marker.index))) continue;
+        const kind = appointmentKind(text);
+        if (!kind) continue;
+        const before = text.slice(0, marker.index);
+        const knownObjects = [...new Set(facts.slice(0, index).flatMap(fact => fact.objects))];
+        const beforeObjects = knownObjects.filter(object => before.includes(object));
+        const targets = beforeObjects.length ? beforeObjects : knownObjects.filter(object => text.includes(object));
+        if (!targets.length) continue;
+        const beforeDates = appointmentDates(before), dates = beforeDates.length ? beforeDates : appointmentDates(text);
+        if (dates.some(date => date.startsWith('relative:'))) continue;
+        const roots = new Map();
+        for (const { unit: old, objects: oldObjects, kind: oldKind, dates: oldDates } of facts.slice(0, index)) {
+            if (old.sourceKey === update.sourceKey || !oldKind || oldDates.some(date => date.startsWith('relative:'))) continue;
+            if ((!old.correctionRoot && oldObjects.length !== 1) || !oldObjects.some(object => targets.includes(object))) continue;
+            if (kind !== 'appointment' && kind !== oldKind) continue;
+            if (dates.length && oldDates.length && !dates.some(date => oldDates.includes(date))) continue;
+            const root = old.correctionRoot || old.id;
+            // Multiple statements in an already-linked chain are one candidate event.
+            if (!roots.has(root)) roots.set(root, old);
+        }
+        if (roots.size !== 1) continue;
+        const prior = roots.values().next().value;
+        const root = prior.correctionRoot || prior.id;
+        prior.correctionRoot = root;
+        update.correctionRoot = root;
+        update.objectKey = prior.objectKey;
+    }
+}
+
+function correctionSources(candidates, scan) {
+    const result = [], seen = new Set();
+    for (const candidate of candidates) {
+        if (!candidate.correctionRoot) { result.push(candidate); continue; }
+        if (seen.has(candidate.correctionRoot)) continue;
+        seen.add(candidate.correctionRoot);
+        const chain = scan.units.filter(unit => unit.correctionRoot === candidate.correctionRoot);
+        // Keep the complete correction chain or none; never select an obsolete
+        // intermediate version just because the newest text did not match BM25.
+        if (chain.length > MEMORY_LIMITS.maxUnits) return null;
+        const latest = chain.at(-1);
+        result.push(...[...chain].reverse().map(unit => ({ ...unit,
+            ...(unit.id === latest.id ? { completeCorrection: true } : { requiredCorrectionRef: latest.ref }) })));
+    }
+    return result;
+}
+
 export function scanSources(chat, { chatId = '', cutoff = chat?.length || 0 } = {}) {
     const list = Array.isArray(chat) ? chat : [];
     const boundary = Math.max(0, Math.min(list.length, Number.isInteger(cutoff) ? cutoff : 0));
@@ -305,6 +379,7 @@ export function scanSources(chat, { chatId = '', cutoff = chat?.length || 0 } = 
             unit.objectKey = unit.objects.length ? `${source.key}:${unit.objects.join('|')}` : source.key;
         }
     }
+    linkAppointmentCorrections(units);
     const signature = fingerprint(sources.map(s => `${s.key}|${s.blockFingerprint}|${JSON.stringify(s.msgIds)}`).join('\n'));
     return { chatId, cutoff: boundary, sources, units, issues, signature };
 }
@@ -421,6 +496,7 @@ export function validateSelection(selected, scan) {
     return (Array.isArray(selected) ? selected : []).filter(unit => {
         const valid = validRef(unit?.ref, scan);
         if (!valid || valid.text !== unit.text) return false;
+        if (unit.requiredCorrectionRef && !validRef(unit.requiredCorrectionRef, scan)) return false;
         return unit.fragments == null || arrayEvery(unit.fragments, fragment => fragment
             && Number.isInteger(fragment.start) && Number.isInteger(fragment.end)
             && fragment.start >= unit.ref.start && fragment.end <= unit.ref.end && fragment.end > fragment.start
@@ -557,7 +633,7 @@ function topicUnits(topic, scan) {
 
 function topicObject(topic, scan) {
     const unit = scan.units.find(item => item.sourceKey === topic.ref.sourceKey && item.start <= topic.ref.start && item.end >= topic.ref.end);
-    return { key: unit?.objectKey || topic.ref.sourceKey, ambiguous: (unit?.objects.length || 0) > 1 };
+    return { key: unit?.objectKey || topic.ref.sourceKey, ambiguous: (unit?.objects.length || 0) > 1 && !unit?.correctionRoot };
 }
 
 function effectiveMatch(unit, query, roleNames) {
@@ -669,7 +745,7 @@ function hybridCandidates(scan, lexical, semanticCandidates, classification, rol
     // Compare cosine confidence and the original BM25 confidence independently.
     // Applying the BM25 0.9 ratio to reciprocal ranks would mark virtually every
     // neighbouring result ambiguous, regardless of its actual similarity.
-    const ambiguous = (top.objects?.length > 1 && !explicitlyNamed(top))
+    const ambiguous = (top.objects?.length > 1 && !top.correctionRoot && !explicitlyNamed(top))
         || (!explicitUnique && !explicitBoth && ((semanticClose && second)
             || (keywordAmbiguous && !semanticResolves)));
     return { candidates: merged, ambiguous, multipleRequested, explicitlyNamed,
@@ -743,7 +819,7 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
                 || top.matches.some(term => term.length >= 3 && !second?.matches.includes(term));
             const explicitBoth = multipleRequested && explicitlyNamed(top) && explicitlyNamed(second)
                 && top.objects.some(object => !second.objects.includes(object));
-            if ((top.objects?.length > 1 && !explicitlyNamed(top))
+            if ((top.objects?.length > 1 && !top.correctionRoot && !explicitlyNamed(top))
                 || (second && second.score >= top.score * 0.9 && !explicitUnique && !explicitBoth)) return { ...decision, reason: 'AMBIGUOUS', candidates };
             decision.kind = 'DIRECT';
             // Two units may come from the same event, or from separately and explicitly named
@@ -773,7 +849,7 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
             const multipleRequested = /和|以及|还有|分别|各自|两[个家处]/.test(classification.demandText);
             const explicitBoth = multipleRequested && named.length && tail.every(unit => unit.objects?.some(object => named.includes(object)));
             if ((new Set(tail.map(objectKey)).size > 1 && !explicitBoth)
-                || tail.some(unit => unit.objects?.length > 1 && !unit.objects.some(object => named.includes(object)))) {
+                || tail.some(unit => unit.objects?.length > 1 && !unit.correctionRoot && !unit.objects.some(object => named.includes(object)))) {
                 return { ...decision, reason: 'AMBIGUOUS', candidates: tail };
             }
             candidates = tail; decision.kind = 'JOIN';
@@ -784,6 +860,8 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
         decision.topicRefs = decision.topicRefs.filter(topic => topic.unsupportedTurns < 2);
         return decision;
     }
+    candidates = correctionSources(candidates, scan);
+    if (!candidates) return { ...decision, kind: 'NONE', reason: 'BUDGET', selected: [] };
     const deduped = [];
     for (const unit of candidates) if (!deduped.some(existing => overlappingUnits(existing, unit))) deduped.push(unit);
     if (decision.kind === 'DIRECT' && /和|以及|还有|分别|各自|两[个家处]/.test(classification.demandText)) {
@@ -800,9 +878,10 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
     decision.topicRefs = supportedTopics(deduped.slice(0, 2), topics, userFloor);
     const recent = recentReceipts(validReceipts, chat, receiptCutoff);
     const selected = deduped.filter(unit => decision.kind === 'MANUAL' || classification.reconfirm || !recent.some(receipt => receipt.sources.some(ref =>
-        (decision.kind === 'FOLLOW' || decision.kind === 'JOIN')
+        (unit.requiredCorrectionRef && coversReference(ref, unit.requiredCorrectionRef)) ||
+        ((decision.kind === 'FOLLOW' || decision.kind === 'JOIN')
             ? ref.sourceKey === unit.ref.sourceKey && ref.blockFingerprint === unit.ref.blockFingerprint
-            : coversReference(ref, excerptUnit(unit, { query: classification.demandText })?.ref || unit.ref))));
+            : coversReference(ref, excerptUnit(unit, { query: classification.demandText })?.ref || unit.ref)))));
     decision.selected = validateSelection(selected.slice(0, 2), scan);
     decision.reason = decision.selected.length ? decision.kind : deduped.length ? 'RECENT' : 'NO_NEED';
     return decision;
@@ -833,6 +912,7 @@ function sentenceRanges(text) {
 export function excerptUnit(unit, { query = '', maxChars = 600 } = {}) {
     if (!unit || typeof unit.text !== 'string' || !unit.text.trim()) return null;
     if (unit.text.length <= maxChars) return unit;
+    if (unit.completeCorrection) return null;
     if (!unit.ref || !Number.isInteger(unit.ref.start)) return null;
     // A document-level embedding cannot identify which sentence carries its
     // meaning. Weak incidental bigrams must not pick an arbitrary sentence from
@@ -891,6 +971,7 @@ export async function fitBudget(selected, { countTokens, maxUnitChars = 600, max
     maxTokens = Math.min(MEMORY_LIMITS.maxTokens, Math.floor(maxTokens));
     let kept = (Array.isArray(selected) ? selected : []).filter(unit => unit && typeof unit.text === 'string' && unit.text.trim())
         .slice(0, MEMORY_LIMITS.maxUnits).map(unit => excerptUnit(unit, { query, maxChars: maxUnitChars })).filter(Boolean);
+    kept = kept.filter(unit => !unit.requiredCorrectionRef || kept.some(other => sameReference(other.ref, unit.requiredCorrectionRef)));
     while (kept.length) {
         const text = buildMemoryBlock(kept, { operationId });
         if (text.length > maxChars) { kept.pop(); continue; }

@@ -7,7 +7,7 @@
   "js": "tavern/st-launcher.js",
   "generate_interceptor": "uwuPhoneMemoryInterceptor",
   "author": "",
-  "version": "1.2.9",
+  "version": "1.3.0",
   "homePage": "",
   "auto_update": false,
   "minimum_client_version": "1.12.0",
