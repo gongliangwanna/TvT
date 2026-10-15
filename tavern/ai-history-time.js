@@ -244,9 +244,9 @@
                 </div>
                 <div class="kkt-item" id="setting-ai-history-time-interval-row" style="display:none;">
                     <label class="kkt-item-label" for="setting-ai-history-time-interval">标记间隔</label>
-                    <div class="kkt-item-control">
-                        <input type="number" id="setting-ai-history-time-interval" value="1" min="1" step="1" disabled style="width:50px; text-align:right; border:none; background:transparent; color:inherit; font:inherit;">
-                        <span>分钟</span>
+                    <div class="kkt-item-control" style="gap:4px;">
+                        <input type="number" id="setting-ai-history-time-interval" value="1" min="1" step="1" disabled style="width:66px;text-align:right;border:none;background:rgba(0,0,0,0.05);border-radius:4px;padding:4px 6px;">
+                        <span style="font-size:12px;color:#999;">分钟</span>
                     </div>
                 </div>`;
             anchor.parentNode.insertBefore(card, anchor);
