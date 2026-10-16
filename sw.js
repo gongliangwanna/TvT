@@ -208,11 +208,6 @@ async function tavernRefreshShell() {
     return tavernRefreshTask;
 }
 
-function tavernEscapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;',
-        '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
-}
-
 function tavernBrowserResponse(response) {
     // CacheStorage remains available offline; prevent a separate browser memory cache
     // from serving an older script without consulting the newly committed shell.
@@ -227,22 +222,11 @@ async function tavernRefreshNavigation(request) {
         const cached = await (await caches.open(shell.name)).match(new URL('index.html', OVO_SCOPE).href);
         if (!cached) throw new Error('小手机首页下载不完整，请刷新重试');
         return tavernBrowserResponse(cached);
-    } catch (error) {
+    } catch (_) {
         const shell = await readShell();
         const cached = await (await caches.open(shell.name)).match(new URL('index.html', OVO_SCOPE).href);
-        const reason = error && error.name === 'AbortError' ? '检查更新超时，请检查网络后刷新重试'
-            : error && error.name === 'TypeError' ? '无法连接酒馆，请检查网络后刷新重试'
-            : error && error.name === 'SyntaxError' ? '更新文件清单格式有误，请等待扩展更新完成后刷新重试'
-            : error && error.message || '无法连接酒馆，请检查网络后刷新重试';
-        const message = tavernEscapeHtml(reason);
-        const banner = '<div role="alert" id="tavern-refresh-update-error" style="position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:12px 16px;background:#fff3cd;color:#664d03;font:14px/1.5 sans-serif;">'
-            + '小手机本次未能更新' + (cached ? '，当前显示旧版本' : '') + '：' + message
-            + '。<a style="color:inherit;text-decoration:underline;" href="' + tavernEscapeHtml(request.url) + '">重新检查更新</a></div>';
-        const html = cached ? await cached.text() : '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>小手机更新失败</title></head><body></body></html>';
-        const body = /<body\b[^>]*>/i.test(html) ? html.replace(/<body\b[^>]*>/i, tag => tag + banner) : banner + html;
-        const headers = cached ? [...cached.headers].filter(([name]) => !['content-length', 'content-encoding', 'content-type', 'cache-control'].includes(name.toLowerCase())) : [];
-        headers.push(['Content-Type', 'text/html; charset=utf-8'], ['Cache-Control', 'no-store']);
-        return new Response(body, { status: cached ? 200 : 503, headers });
+        // Opening the app remains usable when an automatic update cannot finish.
+        return cached ? tavernBrowserResponse(cached) : Response.error();
     }
 }
 // ===== Tavern refresh update end =====
