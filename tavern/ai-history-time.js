@@ -94,7 +94,7 @@
         };
     }
 
-    const replyTimeStart = '<reply_time>\n本次回复的当前时间：';
+    const replyTimeStart = '<reply_time>\n本次回复必须以 ';
     const replyTimeEnd = '\n</reply_time>';
 
     function replyTimeBlock(chat) {
@@ -108,7 +108,7 @@
         const seconds = padNumber(new Date(time).getSeconds());
         // 历史时区可能带有秒偏移，当前时钟也使用同一 formatter 的秒数。
         const wallSeconds = formatter ? formatter.formatToParts(new Date(time)).find(part => part.type === 'second').value : seconds;
-        return `${replyTimeStart}${parts.day} ${parts.clock}:${wallSeconds}（${zone || '设备本地时区'}，${utcOffset}）。` + replyTimeEnd;
+        return `${replyTimeStart}${parts.day} ${parts.clock}:${wallSeconds}（${zone || '设备本地时区'}，${utcOffset}）为当前时间，不得把历史消息时间当作现在。` + replyTimeEnd;
     }
 
     function appendReplyTime(payload, block, gemini = false) {
