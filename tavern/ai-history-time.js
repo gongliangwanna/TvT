@@ -113,7 +113,7 @@
 
     function appendReplyTime(payload, block, gemini = false) {
         if (typeof payload === 'string') {
-            // 只替换本补丁在系统区末尾生成的块，保留原提示词中的时间文字。
+            // 只替换本补丁在请求文本末尾生成的块，保留正文中的时间文字。
             const start = payload.lastIndexOf(replyTimeStart);
             if (start >= 0 && payload.endsWith(replyTimeEnd)) {
                 const separator = start >= 2 && payload.slice(start - 2, start) === '\n\n' ? 2 : 0;
@@ -121,29 +121,60 @@
             }
             return (payload ? payload + '\n\n' : '') + block;
         }
-        if (payload != null && !Array.isArray(payload)) throw new Error('系统提示词格式已改变，无法添加本次回复时间');
+        if (payload != null && !Array.isArray(payload)) throw new Error('请求文本格式已改变，无法添加本次回复时间');
         const parts = (payload || []).filter(part => !(part && typeof part.text === 'string'
             && (gemini || part.type === 'text') && part.text.startsWith(replyTimeStart) && part.text.endsWith(replyTimeEnd)));
         return [...parts, gemini ? { text: block } : { type: 'text', text: block }];
+    }
+
+    function lastOrdinaryInput(entries, gemini) {
+        for (let index = entries.length - 1; index >= 0; index--) {
+            const entry = entries[index];
+            if (!entry || entry.role !== 'user') continue;
+            const payload = gemini ? entry.parts : entry.content;
+            if (gemini && !Array.isArray(payload)) continue;
+            if (Array.isArray(payload) && payload.some(part => part && (gemini ? part.functionResponse : part.type === 'tool_result'))) continue;
+            return index;
+        }
+        return -1;
     }
 
     function addReplyTime(body, chat, settings) {
         if (!body || typeof body !== 'object') throw new Error('请求格式已改变，无法添加本次回复时间');
         const block = replyTimeBlock(chat);
         if (Array.isArray(body.contents)) {
+            // 时间放在最近的普通输入末尾，让它位于历史之后；工具结果保持原样。
+            const contents = body.contents.slice();
+            const index = lastOrdinaryInput(contents, true);
+            if (index >= 0) {
+                contents[index] = { ...contents[index], parts: appendReplyTime(contents[index].parts, block, true) };
+                body.contents = contents;
+                return;
+            }
             const key = body.systemInstruction ? 'systemInstruction' : body.system_instruction ? 'system_instruction' : 'systemInstruction';
             const instruction = body[key];
             body[key] = { ...instruction, parts: appendReplyTime(instruction && instruction.parts, block, true) };
-        } else if ((settings && settings.apiProtocol === 'anthropic') || Object.prototype.hasOwnProperty.call(body, 'system')) {
-            body.system = appendReplyTime(body.system == null ? '' : body.system, block);
         } else if (Array.isArray(body.messages)) {
             const messages = body.messages.slice();
+            const input = lastOrdinaryInput(messages, false);
+            if (input >= 0) {
+                messages[input] = { ...messages[input], content: appendReplyTime(messages[input].content == null ? '' : messages[input].content, block) };
+                body.messages = messages;
+                return;
+            }
+            // 无普通输入时仍能提供时间，不额外制造用户消息或打断 assistant 预填。
+            if ((settings && settings.apiProtocol === 'anthropic') || Object.prototype.hasOwnProperty.call(body, 'system')) {
+                body.system = appendReplyTime(body.system == null ? '' : body.system, block);
+                return;
+            }
             // 旧 Claude 兼容接口已把系统提示词转换为 user，沿用同一个容器，不能重加 system 角色。
             const role = settings && settings.provider === 'claude' ? 'user' : 'system';
             const index = messages.findIndex(message => message && message.role === role);
             if (index >= 0) messages[index] = { ...messages[index], content: appendReplyTime(messages[index].content, block) };
             else messages.unshift({ role, content: block });
             body.messages = messages;
+        } else if (Object.prototype.hasOwnProperty.call(body, 'system')) {
+            body.system = appendReplyTime(body.system == null ? '' : body.system, block);
         } else throw new Error('请求格式已改变，无法添加本次回复时间');
     }
 
