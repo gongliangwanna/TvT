@@ -1,4 +1,4 @@
-// 小手机 AI 上文时间外挂：只处理序列化后的请求，不改消息存储、界面时间或酒馆推送。
+// 小手机 AI 上文时间外挂：只处理请求副本，不改消息存储、界面时间或酒馆推送。
 (function () {
     if (window.TavernAIHistoryTime) return;
 
@@ -92,6 +92,77 @@
             day: `${formatYear(date.getFullYear())}-${padNumber(date.getMonth() + 1)}-${padNumber(date.getDate())}`,
             clock: `${padNumber(date.getHours())}:${padNumber(date.getMinutes())}`, offset: -date.getTimezoneOffset() * 60
         };
+    }
+
+    const replyTimeStart = '<reply_time>\n本次回复的当前时间：';
+    const replyTimeEnd = '\n</reply_time>';
+
+    function replyTimeBlock(chat) {
+        // 发送前重新取时，不能沿用最后一条消息的时间或提示词组装前的时间。
+        const time = Date.now(), formatter = timeFormatter(chat);
+        const parts = dateParts(time, formatter);
+        const offset = Math.abs(parts.offset);
+        const utcOffset = `UTC${parts.offset < 0 ? '-' : '+'}${padNumber(Math.floor(offset / 3600))}:${padNumber(Math.floor(offset % 3600 / 60))}`
+            + (offset % 60 ? ':' + padNumber(offset % 60) : '');
+        const zone = formatter ? formatter.resolvedOptions().timeZone : Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const seconds = padNumber(new Date(time).getSeconds());
+        // 历史时区可能带有秒偏移，当前时钟也使用同一 formatter 的秒数。
+        const wallSeconds = formatter ? formatter.formatToParts(new Date(time)).find(part => part.type === 'second').value : seconds;
+        return `${replyTimeStart}${parts.day} ${parts.clock}:${wallSeconds}（${zone || '设备本地时区'}，${utcOffset}）。` + replyTimeEnd;
+    }
+
+    function appendReplyTime(payload, block, gemini = false) {
+        if (typeof payload === 'string') {
+            // 只替换本补丁在系统区末尾生成的块，保留原提示词中的时间文字。
+            const start = payload.lastIndexOf(replyTimeStart);
+            if (start >= 0 && payload.endsWith(replyTimeEnd)) {
+                const separator = start >= 2 && payload.slice(start - 2, start) === '\n\n' ? 2 : 0;
+                payload = payload.slice(0, start - separator);
+            }
+            return (payload ? payload + '\n\n' : '') + block;
+        }
+        if (payload != null && !Array.isArray(payload)) throw new Error('系统提示词格式已改变，无法添加本次回复时间');
+        const parts = (payload || []).filter(part => !(part && typeof part.text === 'string'
+            && (gemini || part.type === 'text') && part.text.startsWith(replyTimeStart) && part.text.endsWith(replyTimeEnd)));
+        return [...parts, gemini ? { text: block } : { type: 'text', text: block }];
+    }
+
+    function addReplyTime(body, chat, settings) {
+        if (!body || typeof body !== 'object') throw new Error('请求格式已改变，无法添加本次回复时间');
+        const block = replyTimeBlock(chat);
+        if (Array.isArray(body.contents)) {
+            const key = body.systemInstruction ? 'systemInstruction' : body.system_instruction ? 'system_instruction' : 'systemInstruction';
+            const instruction = body[key];
+            body[key] = { ...instruction, parts: appendReplyTime(instruction && instruction.parts, block, true) };
+        } else if ((settings && settings.apiProtocol === 'anthropic') || Object.prototype.hasOwnProperty.call(body, 'system')) {
+            body.system = appendReplyTime(body.system == null ? '' : body.system, block);
+        } else if (Array.isArray(body.messages)) {
+            const messages = body.messages.slice();
+            // 旧 Claude 兼容接口已把系统提示词转换为 user，沿用同一个容器，不能重加 system 角色。
+            const role = settings && settings.provider === 'claude' ? 'user' : 'system';
+            const index = messages.findIndex(message => message && message.role === role);
+            if (index >= 0) messages[index] = { ...messages[index], content: appendReplyTime(messages[index].content, block) };
+            else messages.unshift({ role, content: block });
+            body.messages = messages;
+        } else throw new Error('请求格式已改变，无法添加本次回复时间');
+    }
+
+    function hookReplyTime() {
+        // 宿主在普通回复、后台回复、API 回退/重试及每一轮 MCP 工具请求的
+        // fetch 之前同步调用此入口。此时格式转换、识图等等待均已结束，且有明确的角色归属。
+        // 在原统计之前补时间，让统计也包含实际发出的文字；不拦截其他网络请求。
+        const original = window.recordChatTokenRequest;
+        if (typeof original !== 'function') return report('找不到发送前入口 recordChatTokenRequest，无法更新本次回复时间');
+        if (original.__tavernAIHistoryTime) return;
+        const wrapped = function (chat, chatType, body, settings, meta) {
+            if (chatType === 'private' && getSettings(chat).enabled && meta && ['chat', 'background', 'tools'].includes(meta.scope)) {
+                try { addReplyTime(body, chat, settings); }
+                catch (error) { report(error.message); }
+            }
+            return original.apply(this, arguments);
+        };
+        wrapped.__tavernAIHistoryTime = true;
+        window.recordChatTokenRequest = wrapped;
     }
 
     // 只移除原序列化器本次确实会生成的前缀，不扫描、改写正文中的时间文字。
@@ -347,6 +418,7 @@
     function install() {
         hookSerializer('serializeChatHistoryMessages', false);
         hookSerializer('serializeChatHistoryForGemini', true);
+        hookReplyTime();
         installCard();
     }
 
