@@ -19,7 +19,8 @@ const REASONS = {
     CANCELLED: '生成已取消，没有记录采用', NOT_RETAINED: '组装数据没有保留本次补充',
     CONCURRENT_INTERNAL: '后台生成与本次组装重叠，无法确认归属，已省略本次补充',
     SAVE_FAILED: '采用标记未确认保存，刷新后可能无法沿用这次重复抑制',
-    ERROR: '本次补充遇到问题，正常聊天继续',
+    SOURCE_ISSUES: '部分手机来源无法读取，详情见“查看本次补充”',
+    ERROR: '本次补充处理出错，正常聊天继续；详情见“查看本次补充”',
 };
 
 function ordinaryText(message) {
@@ -43,7 +44,7 @@ function prefixSnapshot(chat, cutoff, allowGreetingMacros = false) {
 }
 function prefixMetadata(m) {
     return JSON.stringify([m?.is_user, m?.swipe_id ?? 0, m?.extra?.from_uwu, m?.extra?.bbs_omit,
-        m?.extra?.uwu_msg_ids, m?.extra?.uwu_line_lens, m?.extra?.uwu_summary,
+        m?.extra?.uwu_msg_ids, m?.extra?.uwu_line_lens, m?.extra?.uwu_summary, m?.extra?.uwu_summary_length,
         m?.extra?.uwu_created, m?.extra?.uwu_internal, m?.extra?.isSmallSys, m?.name,
         core.isTypedSystemMessage(m)]);
 }
@@ -63,7 +64,7 @@ function replyStartSnapshot(message, floor) {
 function messageText(message) { return contentTexts(message?.mes ?? message?.content).join(''); }
 function messageVersion(message) { return JSON.stringify([messageText(message), message?.swipe_id ?? 0]); }
 function phoneSourceMetadata(extra) {
-    return JSON.stringify([!!extra.uwu_summary, Array.isArray(extra.uwu_msg_ids) ? extra.uwu_msg_ids : [],
+    return JSON.stringify([!!extra.uwu_summary, extra.uwu_summary_length, Array.isArray(extra.uwu_msg_ids) ? extra.uwu_msg_ids : [],
         Array.isArray(extra.uwu_line_lens) ? extra.uwu_line_lens : null, extra.uwu_push_time || 0]);
 }
 function capturePhoneSources(chat, cutoff) {
@@ -161,7 +162,8 @@ export function createPhoneMemoryAdapter(host = {}) {
     const getContext = host.getContext || (() => globalThis.SillyTavern?.getContext?.());
     const getDocument = () => host.document === undefined ? globalThis.document : host.document;
     let active = null, sequence = 0, topicRefs = [], topicChat = null, topicScope = null, manual = null, assemblyOwner = null;
-    let initialized = false, disposed = false, preview = { stage: 'idle', reason: 'NO_NEED', selected: [], chars: 0, tokens: 0 };
+    let initialized = false, disposed = false, preview = { stage: 'idle', reason: 'NO_NEED', selected: [], chars: 0, tokens: 0,
+        sourceIssues: [], error: null };
     let trialJob = null;
     let sourceScanCache = null;
     let vectorIndexSnapshot = null;
@@ -246,6 +248,18 @@ export function createPhoneMemoryAdapter(host = {}) {
         const code = privateSafeText(value);
         return /^[A-Z_]{1,64}$/.test(code) ? code : 'UNKNOWN';
     }
+    function describePreparationError(error) {
+        const type = ['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError',
+            'EvalError', 'AggregateError', 'DOMException'].includes(error?.name) ? error.name : 'Error';
+        let message;
+        try {
+            message = privateSafeText(error?.message ?? error ?? '未提供具体错误信息')
+                .replace(/https?:\/\/[^\s<>"']+/gi, '[接口地址已隐藏]')
+                .replace(/\bBearer\s+\S+|\bsk-[\w-]+/gi, '[密钥已隐藏]')
+                .replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 400);
+        } catch { message = '无法读取具体错误信息'; }
+        return { code: 'MEMORY_PREPARATION_FAILED', type, message };
+    }
     function getRecallEvaluation() {
         const config = vectorSettings(), entry = recallProfile(config);
         return clone({ threshold: config.threshold, margin: config.margin, evaluations: entry?.evaluations || [] });
@@ -273,6 +287,10 @@ export function createPhoneMemoryAdapter(host = {}) {
         return JSON.stringify({ format: 'uwu-recall-diagnostic-v1', at: new Date().toISOString(),
             stage: /^[a-z]{1,32}$/.test(privateSafeText(current.stage)) ? privateSafeText(current.stage) : 'unknown',
             reason: reasonCode(current.reason), vectorReason: reasonCode(state.reason),
+            queryVectorReason: reasonCode(current.vector?.reason || 'NO_NEED'),
+            sourceIssues: (current.sourceIssues || []).map(issue => ({ floor: issue.floor, reason: issue.reason })),
+            // Raw exception messages can contain chat text; share only fixed error categories.
+            error: current.error ? { code: current.error.code, type: current.error.type } : null,
             index: { cached: Number(state.cached) || 0, total: Number(state.total) || 0 },
             provider: ['openai', 'ollama', 'gemini'].includes(config.provider) ? config.provider : 'unknown',
             model: privateSafeText(config.model).replace(/https?:\/\/\S+|(?:sk-|key[=:])\S+/gi, '[已隐藏]').split(/[?#]/)[0].slice(0, 256),
@@ -444,13 +462,13 @@ export function createPhoneMemoryAdapter(host = {}) {
         await vectors.clearCache(chatId);
         renderVectorStatus();
     }
-    function warn(reason, detail) {
+    function warn(reason, detail, message = REASONS[reason] || reason) {
         if (disposed) return;
         const key = `${reason}:${detail || ''}`;
         if (warnings.has(key)) return;
         warnings.add(key);
         console.warn('[小手机记忆]', REASONS[reason] || reason, detail || '');
-        (host.notify || globalThis.toastr?.warning)?.(REASONS[reason] || reason, '小手机剧情补充');
+        (host.notify || globalThis.toastr?.warning)?.(message, '小手机剧情补充');
     }
     function clearSlot() {
         if (disposed) return;
@@ -461,6 +479,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         preview = { ...preview, ...changes };
         const status = getDocument()?.getElementById?.('uwu-phone-memory-status');
         if (status) status.textContent = REASONS[preview.reason] || preview.reason;
+        renderRecallDiagnostics();
         host.onPreview?.(getPreview());
     }
     function getPreview() {
@@ -483,7 +502,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         clearSlot();
         updatePreview({ stage: 'idle', reason: reason === 'DISABLED' ? reason : 'SOURCE_CHANGED',
             selected: [], chars: 0, tokens: 0, persistence: null, vector: null, retrieval: null,
-            query: '', kind: null, operationId: null, saveError: null });
+            query: '', kind: null, operationId: null, saveError: null, sourceIssues: [], error: null });
         if (reindex) scheduleVectorIndex();
         else {
             if (indexTimer !== null) clearTimeout(indexTimer);
@@ -550,7 +569,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         assemblyOwner = eligible ? active.id : null;
         updatePreview({ stage: 'started', reason: eligible ? 'NO_NEED' : 'INTERNAL',
             selected: [], chars: 0, tokens: 0, persistence: null, vector: null, retrieval: null,
-            query: '', kind: null, saveError: null, operationId: active.id });
+            query: '', kind: null, saveError: null, operationId: active.id, sourceIssues: [], error: null });
         const startedOp = active;
         const signal = options?.signal;
         const onAbort = () => { if (active === startedOp) stop(); };
@@ -689,7 +708,16 @@ export function createPhoneMemoryAdapter(host = {}) {
                 ? messageVersion(ctx.chat[target.replyFloor]) : null });
         try {
             const scan = scanSourcesCached(ctx.chat, { chatId: op.chatId, cutoff: op.cutoff });
-            if (scan.issues?.length) warn('ERROR', '有损坏的手机来源已跳过');
+            const sourceIssues = (scan.issues || []).filter(issue => Number.isInteger(issue.floor)
+                && ['MALFORMED_SOURCE', 'STALE_LENGTHS'].includes(issue.reason))
+                .map(issue => ({ floor: issue.floor, reason: issue.reason }));
+            updatePreview({ sourceIssues });
+            const skippedFloors = sourceIssues.filter(issue => issue.reason === 'MALFORMED_SOURCE').map(issue => issue.floor + 1);
+            if (skippedFloors.length) {
+                const floors = skippedFloors.slice(0, 8).join('、') + (skippedFloors.length > 8 ? '等' : '');
+                warn('SOURCE_ISSUES', skippedFloors.join(','),
+                    `聊天第 ${floors} 楼的手机内容无法读取，已跳过；详情见“查看本次补充”`);
+            }
             let refs = topicChat === op.chatId && topicScope === op.scope && !['regenerate', 'swipe'].includes(op.mode)
                 ? topicRefs : core.restoreTopicRefs(ctx.chat, scan, { cutoff: op.cutoff });
             const receipts = core.collectValidReceipts(ctx.chat, scan, {
@@ -745,9 +773,12 @@ export function createPhoneMemoryAdapter(host = {}) {
                 chars: op.block.length, tokens: op.tokens, query: op.query });
         } catch (error) {
             if (active !== op) return;
-            op.selected = []; clearSlot();
-            updatePreview({ stage: 'empty', reason: 'ERROR', selected: [], chars: 0, tokens: 0 });
-            warn('ERROR', error.message);
+            op.selected = [];
+            const failure = describePreparationError(error);
+            // Keep diagnostics even if the host prompt interface itself failed.
+            try { clearSlot(); } catch { /* The original failure is the useful diagnostic. */ }
+            updatePreview({ stage: 'empty', reason: 'ERROR', selected: [], chars: 0, tokens: 0, error: failure });
+            warn('ERROR', failure.message);
         }
     }
     function knownRanges(text) {
@@ -1078,6 +1109,26 @@ export function createPhoneMemoryAdapter(host = {}) {
         wrap.innerHTML = MEMORY_ICON_SVG;
         return wrap;
     }
+    function previewStatusText() {
+        const stages = { manual: '已指定下一次补充来源', cancelled: '本次生成已取消', selected: '已预选，等待组装', assembled: '组装中保留，等待发送检查',
+            retained: '发送数据中保留', completed: '本次回复已完成', empty: '本次没有补充', removed: '本次补充已移除' };
+        return `${stages[preview.stage] || '本次没有发送补充'} · ${REASONS[preview.reason] || preview.reason}（${preview.chars} 字符 / ${preview.tokens} tokens）`;
+    }
+    function renderRecallDiagnostics() {
+        const doc = getDocument();
+        const notes = doc?.getElementById?.('uwu-phone-memory-diagnostics');
+        if (!notes) return;
+        const lines = (preview.sourceIssues || []).map(issue => `聊天第 ${issue.floor + 1} 楼：${issue.reason === 'STALE_LENGTHS'
+            ? '消息分段信息与正文不一致，已按现有正文兼容读取，仍可参与查找。'
+            : '未找到完整、非空的手机内容块，本次已跳过；其他有效来源仍可使用。'}`);
+        if (preview.error) lines.push(`本次补充处理失败（${preview.error.type}）：${preview.error.message || '未提供具体错误信息'}`);
+        notes.textContent = lines.join('\n');
+        notes.hidden = !lines.length;
+        const banner = doc.getElementById('uwu-phone-memory-preview-status');
+        if (banner) banner.textContent = previewStatusText();
+        const technical = doc.getElementById('uwu-phone-memory-technical-data');
+        if (technical) technical.textContent = JSON.stringify({ ...preview, explanation: REASONS[preview.reason] || preview.reason }, null, 2);
+    }
     function showPreview() {
         const doc = getDocument();
         if (!doc?.body || disposed) return;
@@ -1102,10 +1153,11 @@ export function createPhoneMemoryAdapter(host = {}) {
         const panel = doc.createElement('div'); panel.className = 'uwu-memory-panel'; dialog.append(panel);
         const summaryCard = doc.createElement('section'); summaryCard.className = 'uwu-memory-card';
         const description = doc.createElement('p'); description.className = 'uwu-memory-status-banner';
-        const stageNames = { manual: '已指定下一次补充来源', cancelled: '本次生成已取消', selected: '已预选，等待组装', assembled: '组装中保留，等待发送检查',
-            retained: '发送数据中保留', completed: '本次回复已完成', empty: '本次没有补充', removed: '本次补充已移除' };
-        description.textContent = `${stageNames[preview.stage] || '本次没有发送补充'} · ${REASONS[preview.reason] || preview.reason}（${preview.chars} 字符 / ${preview.tokens} tokens）`;
+        description.id = 'uwu-phone-memory-preview-status'; description.textContent = previewStatusText();
         summaryCard.append(description);
+        const diagnosticNotes = doc.createElement('pre'); diagnosticNotes.id = 'uwu-phone-memory-diagnostics';
+        diagnosticNotes.className = 'uwu-memory-snippet uwu-memory-help'; diagnosticNotes.setAttribute?.('role', 'status');
+        diagnosticNotes.hidden = true; summaryCard.append(diagnosticNotes);
         if (preview.vector) {
             const p = doc.createElement('p'); p.className = 'uwu-memory-help';
             p.textContent = preview.vector.explanation || VECTOR_REASONS[preview.vector.reason] || preview.vector.reason;
@@ -1124,6 +1176,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         const details = doc.createElement('details'), summary = doc.createElement('summary'), data = doc.createElement('pre');
         details.className = 'uwu-memory-advanced';
         summary.textContent = '技术明细'; data.className = 'uwu-memory-snippet';
+        data.id = 'uwu-phone-memory-technical-data';
         data.textContent = JSON.stringify(getPreview(), null, 2);
         details.append(summary, data); summaryCard.append(details);
         const diagnosticButton = doc.createElement('button'); diagnosticButton.type = 'button';
@@ -1353,7 +1406,7 @@ export function createPhoneMemoryAdapter(host = {}) {
             trialUiEpoch++; cancelDialogTrial(); dialog.remove();
         });
         footerBtns.append(use, close); footer.append(footerBtns); dialog.append(footer);
-        doc.body.append(dialog); dialog.showModal();
+        doc.body.append(dialog); renderRecallDiagnostics(); dialog.showModal();
     }
     function mountMemoryStyles(doc) {
         if (doc.getElementById('uwu-phone-memory-ui-style')) return;

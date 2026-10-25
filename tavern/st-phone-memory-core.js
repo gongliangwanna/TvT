@@ -47,7 +47,7 @@ function phoneBlockSpans(value) {
         }
     }
     if (depth) { malformedTail = true; removals.push({ start, end: value.length }); }
-    return { blocks, removals, malformedTail };
+    return { blocks, removals, malformedTail, depth };
 }
 
 export function stripPhoneBlocks(text) {
@@ -57,9 +57,55 @@ export function stripPhoneBlocks(text) {
     return value.trim();
 }
 
-export function getLastPhoneBlock(text) {
+function lengthLocatedPhoneBlock(value, extra) {
+    const ids = extra?.uwu_msg_ids, lens = extra?.uwu_line_lens;
+    const candidates = [];
+    if (Array.isArray(ids) && Array.isArray(lens) && ids.length === lens.length
+        && arrayEvery(ids, id => id != null)
+        && arrayEvery(lens, n => Number.isSafeInteger(n) && n >= 0)) {
+        const filled = lens.filter(n => n > 0);
+        candidates.push({ filled, characters: filled.reduce((sum, n) => sum + n, 0) });
+    }
+    if (extra?.uwu_summary && Number.isSafeInteger(extra.uwu_summary_length) && extra.uwu_summary_length >= 0)
+        candidates.push({ filled: null, characters: extra.uwu_summary_length });
+    for (const { filled, characters } of candidates) {
+        for (const separator of ['\n', '\r\n']) {
+            const length = characters + (filled ? Math.max(0, filled.length - 1) * separator.length : 0);
+            if (!Number.isSafeInteger(length) || length > value.length) continue;
+            const head = `<phone_chat>${separator}`, tail = `${separator}</phone_chat>`;
+            const bodyEnd = value.lastIndexOf(tail), bodyStart = bodyEnd - length, start = bodyStart - head.length;
+            if (start < 0 || value.slice(start, bodyStart) !== head) continue;
+            const end = bodyEnd + tail.length;
+            // Metadata may be stale: never attach it to an earlier block when a
+            // later phone fragment exists, or to an inner tag inside an open block.
+            if (/<\/?phone_chat>/.test(value.slice(end)) || phoneBlockSpans(value.slice(0, start)).depth) continue;
+            // Lengths also need the original separators at every message boundary;
+            // an equal total alone must not turn stale metadata into trusted text.
+            if (filled) {
+                let position = bodyStart, valid = true;
+                for (let i = 0; i < filled.length; i++) {
+                    if (i) {
+                        if (value.slice(position, position + separator.length) !== separator) { valid = false; break; }
+                        position += separator.length;
+                    }
+                    position += filled[i];
+                }
+                if (!valid || position !== bodyEnd) continue;
+            }
+            return { start, end, bodyStart, bodyEnd, text: value.slice(start, end), body: value.slice(bodyStart, bodyEnd) };
+        }
+    }
+    return null;
+}
+
+export function getLastPhoneBlock(text, extra) {
     if (typeof text !== 'string') return null;
     const value = text;
+    // The saved lengths locate the pushed wrapper even when a normal message
+    // discusses a literal opening/closing tag. Without exact evidence, keep the
+    // conservative parser rather than guessing which unmatched tag is content.
+    const located = lengthLocatedPhoneBlock(value, extra);
+    if (located) return located;
     // The pushed wrapper is the final outer block. Literal nested tag examples stay
     // inside its full original message instead of becoming a new authoritative source.
     const parsed = phoneBlockSpans(value), block = parsed.blocks.at(-1);
@@ -104,7 +150,9 @@ function stripInternalBlocks(value) {
 
 export function ordinaryText(message) {
     if (!message || message.is_system || isTypedSystemMessage(message) || message.extra?.bbs_omit || message.extra?.isSmallSys || message.extra?.uwu_internal) return '';
-    const text = stripPhoneBlocks(contentText(message.mes ?? message.content));
+    const value = contentText(message.mes ?? message.content);
+    const phone = message.extra?.from_uwu ? getLastPhoneBlock(value, message.extra) : null;
+    const text = stripPhoneBlocks(phone ? value.slice(0, phone.start) + value.slice(phone.end) : value);
     return stripInternalBlocks(text).trim();
 }
 
@@ -139,7 +187,7 @@ export function tokenize(text, options = {}) {
 function lineSegments(body, extra) {
     const ids = extra?.uwu_msg_ids, lens = extra?.uwu_line_lens;
     if (Array.isArray(ids) && Array.isArray(lens) && ids.length === lens.length
-        && arrayEvery(ids, id => id != null) && arrayEvery(lens, n => Number.isInteger(n) && n >= 0)) {
+        && arrayEvery(ids, id => id != null) && arrayEvery(lens, n => Number.isSafeInteger(n) && n >= 0)) {
         const filled = lens.filter(Boolean);
         const characters = filled.reduce((sum, n) => sum + n, 0);
         for (const separator of ['\n', '\r\n']) {
@@ -332,7 +380,7 @@ export function scanSources(chat, { chatId = '', cutoff = chat?.length || 0 } = 
     for (let floor = 0; floor < boundary; floor++) {
         const message = list[floor], extra = message?.extra;
         if (!extra?.from_uwu || extra.bbs_omit) continue;
-        const block = getLastPhoneBlock(message.mes);
+        const block = getLastPhoneBlock(message.mes, extra);
         if (!block || !block.body.trim()) { issues.push({ floor, reason: 'MALFORMED_SOURCE' }); continue; }
         const source = { chatId, key: `${chatId}:${floor}`, floor, body: block.body, block, blockFingerprint: fingerprint(block.text),
             summary: !!extra.uwu_summary, msgIds: Array.isArray(extra.uwu_msg_ids) ? [...extra.uwu_msg_ids] : [], pushTime: extra.uwu_push_time || 0 };
