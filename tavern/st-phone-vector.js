@@ -244,7 +244,7 @@ function snapshotScan(scan) {
     if (!scan || typeof scan.chatId !== 'string' || !scan.chatId || !Array.isArray(scan.sources) || !Array.isArray(scan.units)) throw fault('NO_SOURCE');
     const sources = new Map(scan.sources.filter(source => source && typeof source.key === 'string' && source.key)
         .map(source => [source.key, source]));
-    const units = [], idCounts = new Map(); let oversized = 0;
+    const units = [], idCounts = new Map(), sourceVersions = new Map(), sourceMessageIds = new Map(); let oversized = 0;
     for (const unit of scan.units) {
         if (!unit || typeof unit !== 'object') continue;
         const source = sources.get(unit.sourceKey);
@@ -257,17 +257,27 @@ function snapshotScan(scan) {
             || (unit.ref.end !== undefined && unit.ref.end !== unit.end)
             || (unit.ref.floor !== undefined && unit.ref.floor !== source.floor)
             || (unit.ref.textFingerprint !== undefined && unit.ref.textFingerprint !== hash(unit.text))) continue;
+        if (!sourceMessageIds.has(source)) sourceMessageIds.set(source, Array.isArray(source.msgIds) ? new Set(source.msgIds) : null);
+        const messageIds = sourceMessageIds.get(source);
         if (unit.ref.msgIds !== undefined && (!Array.isArray(unit.ref.msgIds)
-            || Array.from(unit.ref.msgIds).some(id => id == null || !Array.isArray(source.msgIds) || !source.msgIds.includes(id)
+            || Array.from(unit.ref.msgIds).some(id => id == null || !messageIds?.has(id)
                 || (Array.isArray(unit.msgIds) && !unit.msgIds.includes(id))))) continue;
         idCounts.set(unit.id, (idCounts.get(unit.id) || 0) + 1);
         if (unit.text.length > MAX_TEXT) { oversized++; continue; }
-        const sourceText = typeof source.block?.text === 'string' ? source.block.text : source.body;
-        const sourceVersion = JSON.stringify({ text: sourceText, body: source.body, floor: source.floor, summary: !!source.summary, msgIds: source.msgIds || [] });
-        units.push({ id: unit.id, text: unit.text, sourceVersion, start: unit.start, end: unit.end });
+        if (!sourceVersions.has(source)) {
+            const sourceText = typeof source.block?.text === 'string' ? source.block.text : source.body;
+            const version = JSON.stringify({ text: sourceText, body: source.body, floor: source.floor,
+                summary: !!source.summary, msgIds: source.msgIds || [] });
+            sourceVersions.set(source, { version, fingerprint: hash(version) });
+        }
+        // Every segment in a pushed floor has the same exact source version.
+        // Retain one shared string instead of serializing the whole floor for each segment.
+        const sourceVersion = sourceVersions.get(source);
+        units.push({ id: unit.id, text: unit.text, sourceVersion: sourceVersion.version,
+            sourceFingerprint: sourceVersion.fingerprint, start: unit.start, end: unit.end });
     }
     const uniqueUnits = units.filter(unit => idCounts.get(unit.id) === 1);
-    return { chatId: scan.chatId, signature: JSON.stringify(uniqueUnits), units: uniqueUnits, oversized };
+    return { chatId: scan.chatId, units: uniqueUnits, oversized };
 }
 
 /**
@@ -281,8 +291,25 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
     let cacheMode = cache?.mode || 'indexeddb', cacheWarning = '', loaded, syncing = null, pendingSync = null, active = 0, indexActive = false, reason = 'DISABLED';
     let currentProfile = '', currentChat = '', currentTotal = 0, currentContext, currentSnapshot, previewOrder = 0;
     let persistenceTail = Promise.resolve();
-    const records = new Map(), discardedRecords = new Map(), controllers = new Set(), operationControllers = new Set(), queue = [];
+    const records = new Map(), recordsByUnit = new Map(), discardedRecords = new Map(), controllers = new Set(), operationControllers = new Set(), queue = [];
     const persistence = cache || indexedCache(indexedDB);
+
+    const recordUnitKey = record => JSON.stringify([record.scope, record.profile, record.chatId, record.id]);
+    function forgetRecord(key) {
+        const record = records.get(key);
+        if (!record) return;
+        records.delete(key);
+        const unitKey = recordUnitKey(record), bucket = recordsByUnit.get(unitKey);
+        bucket?.delete(record);
+        if (!bucket?.size) recordsByUnit.delete(unitKey);
+    }
+    function rememberRecord(record) {
+        forgetRecord(record.key);
+        records.set(record.key, record);
+        const unitKey = recordUnitKey(record);
+        if (!recordsByUnit.has(unitKey)) recordsByUnit.set(unitKey, new Set());
+        recordsByUnit.get(unitKey).add(record);
+    }
 
     function browserScope() {
         let value;
@@ -454,7 +481,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                         // The cache adapter may return live record objects. Keep
                         // the validated index independent of later cache edits.
                         const used = typeof record.used === 'number' && Number.isFinite(record.used) && record.used >= 0 ? record.used : 0;
-                        records.set(record.key, { ...record, vector, used });
+                        rememberRecord({ ...record, vector, used });
                         discardedRecords.delete(record.key);
                     } catch { /* corrupt index is rebuildable */ }
                 }
@@ -472,7 +499,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
             // the abandoned worker must not start another cache deletion.
             if (ctx) assertCurrent(ctx);
             if (records.get(key) !== record) continue;
-            records.delete(key); await persistent('delete', key);
+            forgetRecord(key); await persistent('delete', key);
             if (ctx) assertCurrent(ctx);
         }
     }
@@ -483,20 +510,29 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         for (const record of ordered) {
             if (ctx) assertCurrent(ctx);
             if (records.size <= MAX_ENTRIES && size <= MAX_BYTES) break;
-            records.delete(record.key); size -= bytes(record); await persistent('delete', record.key);
+            forgetRecord(record.key); size -= bytes(record); await persistent('delete', record.key);
             if (ctx) assertCurrent(ctx);
         }
     }
     function identity(ctx, snapshot, unit) {
         if (ctx.descriptors.has(unit)) return ctx.descriptors.get(unit);
         const descriptor = { scope: ctx.scope, profile: ctx.profile, chatId: snapshot.chatId, id: unit.id, text: unit.text, sourceVersion: unit.sourceVersion };
-        const result = { ...descriptor, key: hash(JSON.stringify(descriptor)) };
+        // Hash the shared source once in snapshotScan. The complete version remains
+        // on the record and is compared below, so a hash collision cannot reuse text.
+        const key = 'v2:' + hash(JSON.stringify([ctx.scope, ctx.profile, snapshot.chatId, unit.id, unit.text, unit.sourceFingerprint]));
+        const result = { ...descriptor, key };
         ctx.descriptors.set(unit, result); return result;
     }
     function cachedRecord(ctx, snapshot, unit) {
         const wanted = identity(ctx, snapshot, unit), record = records.get(wanted.key);
-        // Complete text/version comparisons protect against collisions and stale edits.
-        return record && Object.entries(wanted).every(([key, value]) => record[key] === value) ? record : null;
+        const matches = candidate => candidate && candidate.scope === wanted.scope && candidate.profile === wanted.profile
+            && candidate.chatId === wanted.chatId && candidate.id === wanted.id && candidate.text === wanted.text
+            && candidate.sourceVersion === wanted.sourceVersion;
+        if (matches(record)) return record;
+        // Old cache keys hashed the full source for every segment. Reuse their
+        // exact records through a bounded identity lookup instead of re-embedding.
+        for (const candidate of recordsByUnit.get(recordUnitKey(wanted)) || []) if (matches(candidate)) return candidate;
+        return null;
     }
     async function refresh(ctx, timeoutMs = 3000) {
         assertCurrent(ctx, false);
@@ -776,7 +812,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                         if (required > MAX_BYTES) { skippedLarge = true; continue; }
                         if (required > remaining) { capacityLimited = true; continue; }
                         const descriptor = identity(ctx, snapshot, unit);
-                        units.push(unit); keys.add(descriptor.key); remaining -= required;
+                        units.push(unit); keys.add(cachedRecord(ctx, snapshot, unit)?.key || descriptor.key); remaining -= required;
                     }
                     selectedDimensions = knownDimensions;
                     selectedWorkingSet = { units, keys };
@@ -811,7 +847,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                     if (!afterResponse.keys.has(descriptor.key)) continue;
                     const record = { ...descriptor, vector: vectors[0], used: Date.now() };
                     if (bytes(record) > MAX_BYTES) { skippedLarge = true; continue; }
-                    records.set(record.key, record);
+                    rememberRecord(record);
                     discardedRecords.delete(record.key);
                     try {
                         await persistent('put', record); assertCurrent(ctx);
@@ -820,7 +856,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                         // Only revoke this worker's publication; a newer operation
                         // may already own the same content key or have cleared it.
                         if (records.get(record.key) === record) {
-                            records.delete(record.key); await persistent('delete', record.key);
+                            forgetRecord(record.key); await persistent('delete', record.key);
                         }
                         throw error;
                     }

@@ -321,10 +321,15 @@ function appointmentKind(text) {
     return /见面|碰头|约会|约定|约好|集合|会面|聚餐|吃饭|聚会|等你|(?:点|时|店|馆|园|院|站)[^。！？!?\n]{0,12}见/.test(text) ? 'appointment' : '';
 }
 
-function linkAppointmentCorrections(units) {
-    const facts = units.map(unit => ({ unit, text: withoutQuoted(unit.text), objects: namedObjects(unit.text),
-        kind: appointmentKind(unit.text), dates: appointmentDates(unit.text) }));
+function* linkAppointmentCorrectionSteps(units) {
+    const facts = [];
+    for (const unit of units) {
+        facts.push({ unit, text: withoutQuoted(unit.text), objects: namedObjects(unit.text),
+            kind: appointmentKind(unit.text), dates: appointmentDates(unit.text) });
+        yield;
+    }
     for (let index = 0; index < units.length; index++) {
+        yield;
         const { unit: update, text } = facts[index];
         const marker = /取消|作废|撤回|更正|纠正|变更|改一下|改约|改(?:成|为|到|在)|调整(?:到|为)/.exec(text);
         if (!marker || /如果|假如|假设|要是|举例|比如|小说|台词|另一次|另一场|另外的|另约|其他约定|[?？]/.test(text) || pendingQuestion(text)
@@ -339,7 +344,9 @@ function linkAppointmentCorrections(units) {
         const beforeDates = appointmentDates(before), dates = beforeDates.length ? beforeDates : appointmentDates(text);
         if (dates.some(date => date.startsWith('relative:'))) continue;
         const roots = new Map();
-        for (const { unit: old, objects: oldObjects, kind: oldKind, dates: oldDates } of facts.slice(0, index)) {
+        for (let priorIndex = 0; priorIndex < index; priorIndex++) {
+            yield;
+            const { unit: old, objects: oldObjects, kind: oldKind, dates: oldDates } = facts[priorIndex];
             if (old.sourceKey === update.sourceKey || !oldKind || oldDates.some(date => date.startsWith('relative:'))) continue;
             if ((!old.correctionRoot && oldObjects.length !== 1) || !oldObjects.some(object => targets.includes(object))) continue;
             if (kind !== 'appointment' && kind !== oldKind) continue;
@@ -373,11 +380,12 @@ function correctionSources(candidates, scan) {
     return result;
 }
 
-export function scanSources(chat, { chatId = '', cutoff = chat?.length || 0 } = {}) {
+function* scanSourceSteps(chat, { chatId = '', cutoff = chat?.length || 0 } = {}) {
     const list = Array.isArray(chat) ? chat : [];
     const boundary = Math.max(0, Math.min(list.length, Number.isInteger(cutoff) ? cutoff : 0));
     const sources = [], units = [], issues = [];
     for (let floor = 0; floor < boundary; floor++) {
+        yield;
         const message = list[floor], extra = message?.extra;
         if (!extra?.from_uwu || extra.bbs_omit) continue;
         const block = getLastPhoneBlock(message.mes, extra);
@@ -394,6 +402,7 @@ export function scanSources(chat, { chatId = '', cutoff = chat?.length || 0 } = 
         source.tailQuestion = pendingQuestion(source.tailText);
         const groups = [];
         for (let i = 0; i < split.lines.length; i++) {
+            yield;
             const first = split.lines[i];
             if (!first.text.trim()) continue;
             const next = split.lines[i + 1];
@@ -408,27 +417,101 @@ export function scanSources(chat, { chatId = '', cutoff = chat?.length || 0 } = 
                     relation: { questionStart: first.start + (question?.start || 0), answerEnd: next.end } }); i++;
             } else groups.push(first);
         }
+        const sourceUnits = [];
         for (const group of groups) {
+            yield;
             const text = source.body.slice(group.start, group.end);
             const tokenized = tokenize(text);
             const ref = makeRef(source, group.start, group.end, group.msgIds, text);
-            units.push({ id: `${source.key}:${group.start}:${group.end}`, sourceKey: source.key, floor, text, ref,
+            const unit = { id: `${source.key}:${group.start}:${group.end}`, sourceKey: source.key, floor, text, ref,
                 summary: source.summary, speaker: speakerOf(text), terms: tokenized.terms, words: tokenized.words,
                 bigrams: tokenized.bigrams, msgIds: [...group.msgIds], coveredMsgIds: source.msgIds, start: group.start, end: group.end,
-                ...(group.relation ? { relation: group.relation } : {}) });
+                ...(group.relation ? { relation: group.relation } : {}) };
+            units.push(unit); sourceUnits.push(unit);
         }
-        const sourceUnits = units.filter(unit => unit.sourceKey === source.key);
-        const anchors = sourceUnits.map(unit => ({ start: unit.start, objects: namedObjects(unit.text) })).filter(anchor => anchor.objects.length);
+        const anchors = [];
         for (const unit of sourceUnits) {
-            const direct = namedObjects(unit.text);
-            const anchor = anchors.filter(item => item.start <= unit.start).at(-1) || anchors[0];
-            unit.objects = direct.length ? direct : anchor?.objects || [];
+            yield;
+            unit.objects = namedObjects(unit.text);
+            if (unit.objects.length) anchors.push({ start: unit.start, objects: unit.objects });
+        }
+        let anchorIndex = 0;
+        for (const unit of sourceUnits) {
+            yield;
+            while (anchorIndex + 1 < anchors.length && anchors[anchorIndex + 1].start <= unit.start) anchorIndex++;
+            unit.objects = unit.objects.length ? unit.objects : anchors[anchorIndex]?.objects || [];
             unit.objectKey = unit.objects.length ? `${source.key}:${unit.objects.join('|')}` : source.key;
         }
     }
-    linkAppointmentCorrections(units);
+    yield* linkAppointmentCorrectionSteps(units);
     const signature = fingerprint(sources.map(s => `${s.key}|${s.blockFingerprint}|${JSON.stringify(s.msgIds)}`).join('\n'));
     return { chatId, cutoff: boundary, sources, units, issues, signature };
+}
+
+export function scanSources(chat, options = {}) {
+    const steps = scanSourceSteps(chat, options);
+    let step;
+    do { step = steps.next(); } while (!step.done);
+    return step.value;
+}
+
+function scanSourcesInWorker(chat, options, isCurrent) {
+    return new Promise(resolve => {
+        let worker, poll, timeout, settled = false;
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            clearInterval(poll); clearTimeout(timeout);
+            worker?.terminate(); resolve(value);
+        };
+        try {
+            // Reuse this deployed module as the dedicated parser entry point.
+            // A very long single utterance cannot yield inside Intl.Segmenter.
+            const url = new URL(import.meta.url); url.searchParams.set('uwu-source-worker', '1');
+            worker = new Worker(url, { type: 'module', name: 'uwu-phone-sources' });
+            worker.onmessage = event => finish(!isCurrent() ? null : event.data?.scan);
+            worker.onerror = event => { event.preventDefault?.(); finish(undefined); };
+            worker.onmessageerror = () => finish(undefined);
+            poll = setInterval(() => { if (!isCurrent()) finish(null); }, 25);
+            // A blocked/missing worker falls back to cooperative parsing. It
+            // must never leave startup waiting for an unanswered worker message.
+            timeout = setTimeout(() => finish(undefined), 15000);
+            worker.postMessage({ chat, options });
+        } catch { finish(undefined); }
+    });
+}
+
+// Background startup scans share the exact synchronous parser, but return the
+// main thread to input and painting between small batches of source work.
+export async function scanSourcesAsync(chat, { isCurrent = () => true, ...options } = {}) {
+    if (!isCurrent()) return null;
+    if (typeof Worker === 'function' && Array.isArray(chat)
+        && chat.some(message => typeof message?.mes === 'string' && message.mes.length > 64 * 1024)) {
+        const result = await scanSourcesInWorker(chat, options, isCurrent);
+        if (result !== undefined) return result;
+    }
+    const steps = scanSourceSteps(chat, options);
+    const now = () => globalThis.performance?.now?.() ?? Date.now();
+    while (isCurrent()) {
+        const deadline = now() + 8;
+        do {
+            const step = steps.next();
+            if (step.done) return isCurrent() ? step.value : null;
+        } while (now() < deadline);
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    steps.return();
+    return null;
+}
+
+// The flag alone has no effect in a page or when another worker imports this
+// module normally. Only our dedicated worker URL installs the message handler.
+if (typeof WorkerGlobalScope !== 'undefined' && globalThis instanceof WorkerGlobalScope
+    && new URL(import.meta.url).searchParams.get('uwu-source-worker') === '1') {
+    globalThis.addEventListener('message', event => {
+        try { globalThis.postMessage({ scan: scanSources(event.data.chat, event.data.options) }); }
+        catch { globalThis.postMessage({}); }
+    });
 }
 
 export function rankBM25(units, queryTerms, { k1 = 1.2, b = 0.75 } = {}) {

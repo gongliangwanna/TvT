@@ -75,6 +75,18 @@ function capturePhoneSources(chat, cutoff) {
     }
     return sources;
 }
+function snapshotPhoneSourceChat(sources, cutoff) {
+    const chat = new Array(cutoff);
+    for (const source of sources) {
+        // Keep background batches on one immutable source version. UI events
+        // can edit the live messages and their ID/length arrays between batches.
+        const [summary, summaryLength, ids, lengths, pushTime] = JSON.parse(source.metadata);
+        chat[source.floor] = { mes: source.text, extra: { from_uwu: true,
+            uwu_summary: summary, uwu_summary_length: summaryLength, uwu_msg_ids: ids,
+            uwu_line_lens: lengths, uwu_push_time: pushTime } };
+    }
+    return chat;
+}
 function phoneSourcesMatch(sources, chat, cutoff) {
     if (!Array.isArray(chat) || cutoff > chat.length) return false;
     let index = 0;
@@ -382,15 +394,23 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (!chatId) return vectors.getState();
         const sourceScope = userScope();
         const profile = vectorProfileSnapshot();
-        const scan = scanSourcesCached(ctx.chat, { chatId });
         // 非手机普通对话增减不使内容索引失效；每个来源的原文版本必须保持一致。
-        const sources = sourceScanCache.sources;
+        const chat = Array.isArray(ctx.chat) ? ctx.chat : [], cutoff = chat.length;
+        const cached = sourceScanCache?.chatId === chatId && sourceScanCache.scope === sourceScope
+            && phoneSourcesMatch(sourceScanCache.sources, chat, cutoff) ? sourceScanCache : null;
+        const sources = cached?.sources || capturePhoneSources(chat, cutoff);
         const indexing = { chatId, scope: sourceScope, profile, sources, pending: true, ready: false, retryAfter: 0 };
         vectorIndexSnapshot = indexing;
-        const isCurrent = () => !disposed && settings().enabled && vectorSettings().enabled
+        const isCurrent = () => !disposed && vectorIndexSnapshot === indexing && settings().enabled && vectorSettings().enabled
             && userScope() === sourceScope && chatIdentity(getContext()) === chatId && vectorProfileSnapshot() === profile
             && phoneSourcesMatch(sources, getContext().chat, getContext().chat?.length || 0);
         try {
+            let scan = cached ? { ...cached.scan, cutoff }
+                : await core.scanSourcesAsync(snapshotPhoneSourceChat(sources, cutoff), { chatId, cutoff, isCurrent });
+            if (!scan || !isCurrent()) return vectors.getState();
+            const currentCutoff = getContext().chat?.length || 0;
+            if (scan.cutoff !== currentCutoff) scan = { ...scan, cutoff: currentCutoff };
+            if (!cached) sourceScanCache = { chatId, scope: sourceScope, sources, scan };
             const result = await vectors.sync(scan, { isCurrent });
             indexing.ready = result?.ok === true;
             renderVectorStatus(); return vectors.getState();
@@ -1621,7 +1641,8 @@ export function createPhoneMemoryAdapter(host = {}) {
     function mountSettings() {
         const doc = getDocument();
         if (!doc?.body || disposed) return;
-        mountVectorDialog();
+        // The host may inspect every extension's controls when opening its
+        // menu. Build the full settings form only when our own entry is used.
         const menu = doc.getElementById('extensionsMenu');
         if (menu && !doc.getElementById('uwu-phone-vector-menu')) {
             const container = doc.createElement('div'); container.id = 'uwu-phone-vector-menu-container';
@@ -1630,6 +1651,13 @@ export function createPhoneMemoryAdapter(host = {}) {
             entry.className = 'list-group-item flex-container flexGap5 interactable'; entry.tabIndex = 0;
             const icon = createMemoryIcon(doc);
             const label = doc.createElement('span'); label.className = 'uwu-memory-menu-label'; label.textContent = '小手机剧情召回';
+            // Keep the small menu row aligned before the dialog stylesheet is
+            // mounted; native theme rules can otherwise enlarge its SVG.
+            Object.assign(entry.style, { alignItems: 'center', flexWrap: 'nowrap' });
+            Object.assign(icon.style, { display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                color: 'inherit', flex: '0 0 auto', alignSelf: 'center' });
+            Object.assign(icon.querySelector?.('svg')?.style || {}, { width: '18px', height: '18px', flex: '0 0 18px', display: 'block' });
+            Object.assign(label.style, { display: 'block', alignSelf: 'center' });
             entry.append(icon, label); entry.title = '设置手机剧情的查找与召回'; entry.setAttribute?.('role', 'button');
             entry.addEventListener('click', showVectorSettings);
             entry.addEventListener('keydown', event => {
