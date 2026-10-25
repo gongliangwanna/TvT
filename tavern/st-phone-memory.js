@@ -1217,7 +1217,7 @@ export function createPhoneMemoryAdapter(host = {}) {
                 page = Math.max(0, Math.min(page, pageCount - 1));
                 const start = page * pageSize, end = Math.min(start + pageSize, matches.length);
                 sourceCount.textContent = `${search.value.trim() ? `找到 ${matches.length} 段（共 ${sources.length} 段）` : `共 ${sources.length} 段`}，最近的排在前面，每页 ${pageSize} 段。`;
-                pageStatus.textContent = pageCount ? `第 ${page + 1} / ${pageCount} 页 · ${start + 1}—${end} 段` : '没有匹配结果';
+                pageStatus.textContent = pageCount ? `第 ${page + 1} / ${pageCount} 页 · ${start + 1}-${end} 段` : '没有匹配结果';
                 previous.disabled = page === 0; next.disabled = !pageCount || page >= pageCount - 1;
                 list.textContent = ''; visibleChecks.clear();
                 if (!matches.length) {
