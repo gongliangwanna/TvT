@@ -761,7 +761,10 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                 let skippedLarge = snapshot.oversized > 0, capacityLimited = false;
                 let responseDimensions = ctx.config.dimensions || [...records.values()].find(record => record.scope === ctx.scope && record.profile === ctx.profile)?.vector.length || 0;
                 let knownDimensions = responseDimensions || MAX_DIMENSIONS, rebuiltDimensions = false;
+                let selectedWorkingSet = null, selectedDimensions = null;
+                let lastYield = Date.now(), lastProgress = Date.now();
                 function workingSet() {
+                    if (selectedWorkingSet && selectedDimensions === knownDimensions) return selectedWorkingSet;
                     let remaining = MAX_BYTES;
                     const units = [], keys = new Set();
                     skippedLarge = snapshot.oversized > 0; capacityLimited = false;
@@ -775,12 +778,20 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                         const descriptor = identity(ctx, snapshot, unit);
                         units.push(unit); keys.add(descriptor.key); remaining -= required;
                     }
-                    return { units, keys };
+                    selectedDimensions = knownDimensions;
+                    selectedWorkingSet = { units, keys };
+                    return selectedWorkingSet;
                 }
                 // Choose a bounded working set before issuing requests, then protect it
                 // when older profiles/chats are evicted. Repeated sync is incremental.
                 while (true) {
                     assertCurrent(ctx);
+                    // Cached/mocked providers can resolve through microtasks only.
+                    // Give input, keyboard resizing and painting a turn during indexing.
+                    if (Date.now() - lastYield >= 8) {
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                        assertCurrent(ctx); lastYield = Date.now();
+                    }
                     const selected = workingSet();
                     const unit = selected.units.find(item => !cachedRecord(ctx, snapshot, item));
                     if (!unit) break;
@@ -813,7 +824,9 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                         }
                         throw error;
                     }
-                    report('INDEXING', ctx);
+                    if (Date.now() - lastProgress >= 100) {
+                        report('INDEXING', ctx); lastProgress = Date.now();
+                    }
                 }
                 const cached = snapshot.units.filter(unit => cachedRecord(ctx, snapshot, unit)).length;
                 const total = snapshot.units.length + snapshot.oversized;

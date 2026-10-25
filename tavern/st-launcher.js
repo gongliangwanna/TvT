@@ -48,6 +48,9 @@ let phoneMemoryGenerationEpoch = 0;
 let phoneMemoryCancellationEpoch = 0;
 let phoneMemoryBridgeReady = false;
 let phoneMemoryBridgeSource = null, phoneMemoryBridgeSignature = null, phoneMemoryBridgeEpoch = 0;
+// Full chat snapshots only protect starts waiting for the memory module. Once
+// an adapter exists, its synchronous start and own lifecycle checks take over.
+const phoneMemoryPendingStarts = new Set();
 let phoneMemoryObservedSnapshot = null;
 
 function disposePhoneMemoryAdapter(adapter) {
@@ -110,7 +113,6 @@ function installPhoneMemoryLifecycleBridge() {
     if (typeof events?.on !== 'function' || !types?.GENERATION_STARTED) return false;
     const bridgeEpoch = ++phoneMemoryBridgeEpoch;
     try {
-    phoneMemoryObservedSnapshot = phoneMemoryChatSnapshot();
     observePhoneReloadChatIdentity();
     const on = (type, callback) => {
         // 某些事件实现会先加监听再抛错，先记录才能完整回滚。
@@ -122,14 +124,19 @@ function installPhoneMemoryLifecycleBridge() {
         const primary = isPrimaryPhoneMemoryGeneration(...args);
         const epoch = primary ? ++phoneMemoryGenerationEpoch : phoneMemoryGenerationEpoch;
         const cancellationEpoch = phoneMemoryCancellationEpoch;
-        const snapshot = phoneMemoryChatSnapshot();
-        // 后台开始不能掩盖等待中的主生成所要观察的来源变更。
-        if (primary) phoneMemoryObservedSnapshot = snapshot;
+        let pending = null;
         try {
             // 模块就绪后同步进入适配器；无须再让出微任务给并行后台的结束事件。
-            const adapter = phoneMemoryAdapter || await phoneMemoryLoadTask;
+            let adapter = phoneMemoryAdapter;
+            if (!adapter) {
+                pending = { primary, epoch, cancellationEpoch, snapshot: phoneMemoryChatSnapshot() };
+                if (primary || phoneMemoryObservedSnapshot === null) phoneMemoryObservedSnapshot = pending.snapshot;
+                phoneMemoryPendingStarts.add(pending);
+                adapter = await phoneMemoryLoadTask;
+            }
             if ((primary && epoch !== phoneMemoryGenerationEpoch) || cancellationEpoch !== phoneMemoryCancellationEpoch
-                || snapshot !== phoneMemoryChatSnapshot()
+                || phoneLauncherClosed || bridgeEpoch !== phoneMemoryBridgeEpoch
+                || (pending && pending.snapshot !== phoneMemoryChatSnapshot())
                 || args[1]?.signal?.aborted) return;
             // 宿主会 await 开始事件，再删除 regenerate 的目标楼；必须在此处捕获目标。
             // 适配器使用 managed 模式，不在本次 emit 过程中追加第二个开始监听。
@@ -140,6 +147,9 @@ function installPhoneMemoryLifecycleBridge() {
             clearPhoneMemorySlotAfterFailure();
             console.warn('[小手机] 手机剧情生成准备失败:', error);
             if (globalThis.toastr) globalThis.toastr.error('本次手机剧情补充失败，已清理临时补充；酒馆仍可正常回复。');
+        } finally {
+            if (pending) phoneMemoryPendingStarts.delete(pending);
+            if (!phoneMemoryPendingStarts.size) phoneMemoryObservedSnapshot = null;
         }
     });
     for (const name of ['GENERATION_STOPPED', 'GENERATION_ENDED', 'CHAT_CHANGED',
@@ -150,11 +160,19 @@ function installPhoneMemoryLifecycleBridge() {
             if (name === 'CHAT_CHANGED') observePhoneReloadChatIdentity();
             phoneMemoryGenerationEpoch++;
             phoneMemoryCancellationEpoch++;
-            phoneMemoryObservedSnapshot = phoneMemoryChatSnapshot();
+            // The epoch change already revokes every waiting start. Rebuilding
+            // its old full-chat snapshot cannot make that cancellation safer.
+            phoneMemoryObservedSnapshot = null;
         });
     }
     if (types.MESSAGE_UPDATED) on(types.MESSAGE_UPDATED, () => {
         if (phoneLauncherClosed || bridgeEpoch !== phoneMemoryBridgeEpoch) return;
+        // Native UI, streaming and other extensions may send many update events.
+        // Only starts crossing the module-load await need this guard. A quiet
+        // start must never replace the last observed primary/source snapshot.
+        const pending = [...phoneMemoryPendingStarts].find(start => (!start.primary || start.epoch === phoneMemoryGenerationEpoch)
+            && start.cancellationEpoch === phoneMemoryCancellationEpoch);
+        if (!pending) return;
         const snapshot = phoneMemoryChatSnapshot();
         if (snapshot === phoneMemoryObservedSnapshot) return;
         phoneMemoryObservedSnapshot = snapshot;
@@ -175,6 +193,8 @@ function installPhoneMemoryLifecycleBridge() {
 
 function detachPhoneMemoryLifecycleBridge() {
     phoneMemoryBridgeEpoch++; phoneMemoryGenerationEpoch++; phoneMemoryCancellationEpoch++;
+    phoneMemoryPendingStarts.clear();
+    phoneMemoryObservedSnapshot = null;
     for (const [events, type, callback] of phoneMemoryBridgeBindings) {
         try { (events.removeListener || events.off)?.call(events, type, callback); } catch (e) { /* 旧宿主不支持解绑时，epoch 仍阻止旧回调 */ }
     }

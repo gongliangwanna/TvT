@@ -36,12 +36,25 @@ function chatIdentity(ctx) {
 function prefixSnapshot(chat, cutoff, allowGreetingMacros = false) {
     // 原文和版本直接比对，不依赖短哈希判断请求归属。
     // 自动隐藏只是提示可见性变化；不把同一原文的隐藏标记当成来源删除。
-    return JSON.stringify(chat.slice(0, cutoff).map((m, floor) => [
-        allowGreetingMacros && floor === 0 && !m?.is_user && !m?.extra?.from_uwu ? null : messageText(m), m?.is_user,
-        m?.swipe_id ?? 0, m?.extra?.from_uwu, m?.extra?.bbs_omit,
+    return chat.slice(0, cutoff).map((message, floor) => ({
+        text: allowGreetingMacros && floor === 0 && !message?.is_user && !message?.extra?.from_uwu ? null : messageText(message),
+        metadata: prefixMetadata(message),
+    }));
+}
+function prefixMetadata(m) {
+    return JSON.stringify([m?.is_user, m?.swipe_id ?? 0, m?.extra?.from_uwu, m?.extra?.bbs_omit,
         m?.extra?.uwu_msg_ids, m?.extra?.uwu_line_lens, m?.extra?.uwu_summary,
         m?.extra?.uwu_created, m?.extra?.uwu_internal, m?.extra?.isSmallSys, m?.name,
-        core.isTypedSystemMessage(m)]));
+        core.isTypedSystemMessage(m)]);
+}
+function prefixMatches(snapshot, chat, cutoff, allowGreetingMacros = false) {
+    if (!Array.isArray(snapshot) || !Array.isArray(chat) || snapshot.length !== cutoff || chat.length < cutoff) return false;
+    for (let floor = 0; floor < cutoff; floor++) {
+        const message = chat[floor];
+        const text = allowGreetingMacros && floor === 0 && !message?.is_user && !message?.extra?.from_uwu ? null : messageText(message);
+        if (snapshot[floor].text !== text || snapshot[floor].metadata !== prefixMetadata(message)) return false;
+    }
+    return true;
 }
 function replyStartSnapshot(message, floor) {
     // 宿主会展开首楼招呼宏；目标时间字段也会在正常 Continue 中更新。
@@ -49,6 +62,31 @@ function replyStartSnapshot(message, floor) {
 }
 function messageText(message) { return contentTexts(message?.mes ?? message?.content).join(''); }
 function messageVersion(message) { return JSON.stringify([messageText(message), message?.swipe_id ?? 0]); }
+function phoneSourceMetadata(extra) {
+    return JSON.stringify([!!extra.uwu_summary, Array.isArray(extra.uwu_msg_ids) ? extra.uwu_msg_ids : [],
+        Array.isArray(extra.uwu_line_lens) ? extra.uwu_line_lens : null, extra.uwu_push_time || 0]);
+}
+function capturePhoneSources(chat, cutoff) {
+    const sources = [];
+    for (let floor = 0; floor < cutoff; floor++) {
+        const message = chat[floor], extra = message?.extra;
+        if (extra?.from_uwu && !extra.bbs_omit) sources.push({ floor, text: message.mes, metadata: phoneSourceMetadata(extra) });
+    }
+    return sources;
+}
+function phoneSourcesMatch(sources, chat, cutoff) {
+    if (!Array.isArray(chat) || cutoff > chat.length) return false;
+    let index = 0;
+    for (let floor = 0; floor < cutoff; floor++) {
+        const message = chat[floor], extra = message?.extra;
+        if (!extra?.from_uwu || extra.bbs_omit) continue;
+        const source = sources[index++];
+        // Exact source text comparisons avoid re-parsing and segmenting the
+        // whole history on every asynchronous index validity check.
+        if (!source || source.floor !== floor || source.text !== message.mes || source.metadata !== phoneSourceMetadata(extra)) return false;
+    }
+    return index === sources.length;
+}
 function contentTexts(content) {
     if (typeof content === 'string') return [content];
     if (Array.isArray(content)) return content.flatMap(part => typeof part === 'string'
@@ -125,6 +163,8 @@ export function createPhoneMemoryAdapter(host = {}) {
     let active = null, sequence = 0, topicRefs = [], topicChat = null, topicScope = null, manual = null, assemblyOwner = null;
     let initialized = false, disposed = false, preview = { stage: 'idle', reason: 'NO_NEED', selected: [], chars: 0, tokens: 0 };
     let trialJob = null;
+    let sourceScanCache = null;
+    let vectorIndexSnapshot = null;
     const trialEvidence = new WeakMap();
     let boundEvents = null, boundTypes = null;
     let previewOwner = null;
@@ -246,9 +286,16 @@ export function createPhoneMemoryAdapter(host = {}) {
         return accountModule.accountsEnabled ? accountModule.currentUser?.handle || '' : 'default-user';
     }
     function vectorProfileSnapshot() { return JSON.stringify(vectorSettings()); }
-    function indexSourceSnapshot(scan) {
-        return JSON.stringify([scan.sources.map(s => [s.key, s.floor, s.blockFingerprint, s.body, s.summary, s.msgIds]),
-            scan.units.map(unit => [unit.id, unit.start, unit.end, unit.msgIds])]);
+    function scanSourcesCached(chat, { chatId, cutoff = chat?.length || 0 } = {}) {
+        const list = Array.isArray(chat) ? chat : [];
+        const boundary = Math.max(0, Math.min(list.length, Number.isInteger(cutoff) ? cutoff : 0));
+        const scope = userScope();
+        if (!sourceScanCache || sourceScanCache.chatId !== chatId || sourceScanCache.scope !== scope
+            || !phoneSourcesMatch(sourceScanCache.sources, list, boundary)) {
+            sourceScanCache = { chatId, scope, sources: capturePhoneSources(list, boundary),
+                scan: core.scanSources(list, { chatId, cutoff: boundary }) };
+        }
+        return sourceScanCache.scan.cutoff === boundary ? sourceScanCache.scan : { ...sourceScanCache.scan, cutoff: boundary };
     }
     const vectors = host.vectorService || createPhoneVectorService({
         getSettings: vectorSettings, fetch: host.fetch || globalThis.fetch,
@@ -279,22 +326,33 @@ export function createPhoneMemoryAdapter(host = {}) {
                 });
             } catch { /* An incomplete address has no matching saved credential. */ }
         }
-        key.placeholder = matches ? '密钥已保存' : '输入 API Key';
+        const placeholder = matches ? '密钥已保存' : '输入 API Key';
+        if (key.placeholder !== placeholder) key.placeholder = placeholder;
     }
-    function renderVectorStatus(state = vectors.getState()) {
+    function renderVectorStatus(state) {
         if (disposed) return;
+        // Background indexing must not keep mutating a closed dialog. Host DOM
+        // observers can otherwise do work for every invisible progress update.
+        if (!getDocument()?.getElementById?.('uwu-phone-vector-dialog')?.open) return;
+        state ??= vectors.getState();
         renderVectorKeyStatus();
         const status = getDocument()?.getElementById?.('uwu-phone-vector-status');
         if (!status) return;
-        status.textContent = `${VECTOR_REASONS[state.reason] || state.reason || '向量尚未准备'}。${Number(state.cached) || 0}/${Number(state.total) || 0} 段已缓存。`
+        const text = `${VECTOR_REASONS[state.reason] || state.reason || '向量尚未准备'}。${Number(state.cached) || 0}/${Number(state.total) || 0} 段已缓存。`
             + (state.available ? (state.hasKey
                 ? ' 当前账号已保存 Key；更改地址后需重新保存。' : ' 当前账号尚未保存 Key。') : '')
             + (state.cacheWarning ? ` ${VECTOR_REASONS[state.cacheWarning] || state.cacheWarning}` : '');
+        if (status.textContent !== text) status.textContent = text;
     }
     function scheduleVectorIndex() {
         if (indexTimer !== null) clearTimeout(indexTimer);
         indexTimer = null;
         if (disposed || !initialized || !settings().enabled || !vectorSettings().enabled) return;
+        const ctx = getContext(), chatId = chatIdentity(ctx);
+        if (vectorIndexSnapshot && vectorIndexSnapshot.chatId === chatId
+            && vectorIndexSnapshot.scope === userScope() && vectorIndexSnapshot.profile === vectorProfileSnapshot()
+            && phoneSourcesMatch(vectorIndexSnapshot.sources, ctx?.chat, ctx?.chat?.length || 0)
+            && (vectorIndexSnapshot.pending || vectorIndexSnapshot.ready || Date.now() < vectorIndexSnapshot.retryAfter)) return;
         indexTimer = setTimeout(() => {
             indexTimer = null;
             prepareVectorIndex().catch(() => renderVectorStatus());
@@ -304,15 +362,24 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (disposed || !settings().enabled || !vectorSettings().enabled) return vectors.getState();
         const ctx = getContext(), chatId = chatIdentity(ctx);
         if (!chatId) return vectors.getState();
+        const sourceScope = userScope();
         const profile = vectorProfileSnapshot();
-        const scan = core.scanSources(ctx.chat, { chatId });
+        const scan = scanSourcesCached(ctx.chat, { chatId });
         // 非手机普通对话增减不使内容索引失效；每个来源的原文版本必须保持一致。
-        const sources = indexSourceSnapshot(scan);
+        const sources = sourceScanCache.sources;
+        const indexing = { chatId, scope: sourceScope, profile, sources, pending: true, ready: false, retryAfter: 0 };
+        vectorIndexSnapshot = indexing;
         const isCurrent = () => !disposed && settings().enabled && vectorSettings().enabled
-            && chatIdentity(getContext()) === chatId && vectorProfileSnapshot() === profile
-            && indexSourceSnapshot(core.scanSources(getContext().chat, { chatId })) === sources;
-        await vectors.sync(scan, { isCurrent });
-        renderVectorStatus(); return vectors.getState();
+            && userScope() === sourceScope && chatIdentity(getContext()) === chatId && vectorProfileSnapshot() === profile
+            && phoneSourcesMatch(sources, getContext().chat, getContext().chat?.length || 0);
+        try {
+            const result = await vectors.sync(scan, { isCurrent });
+            indexing.ready = result?.ok === true;
+            renderVectorStatus(); return vectors.getState();
+        } finally {
+            indexing.pending = false;
+            if (!indexing.ready) indexing.retryAfter = Date.now() + 5000;
+        }
     }
     function setVectorSettings(changes) {
         if (disposed) throw Object.assign(new Error('CANCELLED'), { reason: 'CANCELLED' });
@@ -409,6 +476,8 @@ export function createPhoneMemoryAdapter(host = {}) {
         vectors.cancel();
         if (active) { active.invalid = true; active.vectorAbort?.abort(); active.abortCleanup?.(); }
         active = null; assemblyOwner = null;
+        sourceScanCache = null;
+        vectorIndexSnapshot = null;
         topicRefs = []; topicChat = null; topicScope = null; manual = null;
         previewOwner = { scope: userScope(), chatId: chatIdentity(getContext()) };
         clearSlot();
@@ -535,7 +604,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (disposed || !op || active !== op || op.invalid || !settings().enabled || chatIdentity(ctx) !== op.chatId
             || userScope() !== op.scope) return false;
         if (op.vectorProfile !== vectorProfileSnapshot()) return false;
-        if (!Array.isArray(ctx.chat) || prefixSnapshot(ctx.chat, op.cutoff) !== op.prefix) return false;
+        if (!prefixMatches(op.prefix, ctx.chat, op.cutoff)) return false;
         if (!allowReply) {
             const expected = ['swipe', 'continue'].includes(op.mode) ? op.cutoff + 1 : op.baseLength;
             if (ctx.chat.length !== expected) return false;
@@ -608,7 +677,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         const removedTarget = op.mode === 'regenerate' && Number.isInteger(op.initialTarget)
             && ctx.chat.length === op.startLength - 1;
         if ((ctx.chat.length !== op.startLength && !appendedUser && !removedTarget)
-            || prefixSnapshot(ctx.chat, op.startCutoff, true) !== op.startPrefix
+            || !prefixMatches(op.startPrefix, ctx.chat, op.startCutoff, true)
             || (op.startTargetVersion !== null && ctx.chat[op.initialTarget]
                 && replyStartSnapshot(ctx.chat[op.initialTarget], op.initialTarget) !== op.startTargetVersion)) {
             invalidate(); return;
@@ -619,7 +688,7 @@ export function createPhoneMemoryAdapter(host = {}) {
             targetVersion: ['swipe', 'continue'].includes(op.mode)
                 ? messageVersion(ctx.chat[target.replyFloor]) : null });
         try {
-            const scan = core.scanSources(ctx.chat, { chatId: op.chatId, cutoff: op.cutoff });
+            const scan = scanSourcesCached(ctx.chat, { chatId: op.chatId, cutoff: op.cutoff });
             if (scan.issues?.length) warn('ERROR', '有损坏的手机来源已跳过');
             let refs = topicChat === op.chatId && topicScope === op.scope && !['regenerate', 'swipe'].includes(op.mode)
                 ? topicRefs : core.restoreTopicRefs(ctx.chat, scan, { cutoff: op.cutoff });
@@ -775,7 +844,7 @@ export function createPhoneMemoryAdapter(host = {}) {
             return;
         }
         // 在实际组装和发送数据上重复检查；只能删本扩展内容。
-        const scan = core.scanSources(getContext().chat, { chatId: op.chatId, cutoff: op.cutoff });
+        const scan = scanSourcesCached(getContext().chat, { chatId: op.chatId, cutoff: op.cutoff });
         const valid = core.validateSelection(op.selected, scan);
         const covered = core.filterCovered(valid, texts.map(withoutKnown));
         const kept = covered.selected;
@@ -878,7 +947,7 @@ export function createPhoneMemoryAdapter(host = {}) {
                 || !core.isCompletedReply(message)
                 || messageVersion(message) !== op.replyVersion
                 || ctx.chat.length !== op.replyFloor + 1) return;
-            const scan = core.scanSources(ctx.chat, { chatId: op.chatId, cutoff: op.cutoff });
+            const scan = scanSourcesCached(ctx.chat, { chatId: op.chatId, cutoff: op.cutoff });
             const previous = (op.priorReceipt?.sources || []).map(ref => {
                 const source = scan.sources.find(s => s.key === ref.sourceKey);
                 return { ref, floor: ref.floor, text: source?.body.slice(ref.start, ref.end) || '' };
@@ -928,7 +997,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         const ctx = getContext(), chatId = chatIdentity(ctx);
         if (!chatId) return [];
         const words = String(query).trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-        const units = core.scanSources(ctx.chat, { chatId }).units.filter(source =>
+        const units = scanSourcesCached(ctx.chat, { chatId }).units.filter(source =>
             words.every(word => source.text.toLocaleLowerCase().includes(word)));
         if (recentFirst) units.sort((a, b) => b.floor - a.floor || b.start - a.start);
         return units.map(source => ({ ref: source.ref, text: source.text }));
@@ -968,7 +1037,7 @@ export function createPhoneMemoryAdapter(host = {}) {
             // 只给副本追加试查输入。手选、主题和采用记录均只读，不消费下一次正式补充。
             const chat = clone(ctx.chat);
             chat.push({ name: ctx.name1 || '我', is_user: true, mes: query, extra: {} });
-            const scan = core.scanSources(chat, { chatId });
+            const scan = scanSourcesCached(chat, { chatId });
             const decisionInput = { scan, chat, query, userFloor: chat.length - 1, mode: 'normal',
                 topicRefs: clone(topicChat === chatId && topicScope === scope ? topicRefs : core.restoreTopicRefs(chat, scan)),
                 receipts: core.collectValidReceipts(chat, scan), manualRefs: [],
