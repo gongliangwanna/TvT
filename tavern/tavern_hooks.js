@@ -15,40 +15,153 @@
     const activeAiReplyCounts = new Map();
     const deferredAiPushes = new Map();
     const automaticSyncJobs = new Map();
+    const autoPushControlHosts = new Set();
+    function notifyAutoPushState() {
+        try { window.TavernSync?._notifyData?.(); }
+        catch (error) { console.warn(`${TAG} 更新自动推送状态失败：`, error); }
+    }
+    function sameBindingTarget(a, b) {
+        return a && b && a.binding === b.binding && a.avatar === b.avatar && a.file === b.file && a.charId === b.charId;
+    }
+    function automaticPushEnabled(binding) {
+        const sync = window.TavernSync;
+        const cfg = sync?.getConfig?.();
+        return (!cfg || cfg.enabled) && (typeof sync?.isAuto === 'function'
+            ? sync.isAuto(binding, 'autoPush') : binding.autoPush !== false);
+    }
+    function getAutoPushState(binding) {
+        const job = automaticSyncJobs.get(aiReplyKey(binding?.uwuCharId, 'push'));
+        if (!job || !bindingTargetIsCurrent(job.bindingTarget) || job.bindingTarget.binding !== binding
+            || !db.characters.includes(job.char)) return { state: 'idle', attempts: 0 };
+        return { state: job.state, attempts: job.attempts, kind: job.kind };
+    }
+    function retryPendingPush(binding) {
+        const target = captureBindingTarget(binding?.uwuCharId);
+        const char = db.characters.find(c => c?.id === binding?.uwuCharId);
+        if (!char || target?.binding !== binding || !bindingTargetIsCurrent(target)) {
+            return Promise.resolve({ ok: false, error: '绑定已经更换，请重新打开当前绑定后重试' });
+        }
+        return startAutomaticSync('push', char, target, { manual: true, recovery: true });
+    }
+    function installAutoPushControls() {
+        const sync = window.TavernSync;
+        if (!sync || autoPushControlHosts.has(sync)) return;
+        sync.getAutoPushState = getAutoPushState;
+        sync.retryPendingPush = retryPendingPush;
+        autoPushControlHosts.add(sync);
+    }
+    function recoverPendingPushes() {
+        if (hooksClosed || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+        let sync, bindings;
+        try {
+            installAutoPushControls();
+            sync = window.TavernSync;
+            const cfg = sync?.getConfig?.();
+            bindings = Array.isArray(cfg?.bindings) ? cfg.bindings
+                : [...automaticSyncJobs.values()].filter(job => job.kind === 'push' || job.kind === 'delete').map(job => job.bindingTarget.binding);
+        } catch (error) { reportPushRecoveryIssue(null, error); return; }
+        for (const binding of new Set(bindings)) { try {
+            const target = captureBindingTarget(binding?.uwuCharId);
+            const char = db.characters.find(c => c?.id === binding?.uwuCharId);
+            if (!char || target?.binding !== binding || !bindingTargetIsCurrent(target) || !automaticPushEnabled(binding)) continue;
+            const previous = automaticSyncJobs.get(aiReplyKey(char.id, 'push'));
+            // 换绑使旧失败任务作废；不能借“恢复网络”把旧发送事件转移给新绑定。
+            if (previous && (!sameBindingTarget(previous.bindingTarget, target) || previous.char !== char)) {
+                cancelHookTimer(previous.timer); automaticSyncJobs.delete(previous.key); notifyAutoPushState(); continue;
+            }
+            const pendingSave = sync._pushPendingSaves?.has(binding);
+            const pendingPush = pendingSave || (typeof sync.getPendingPushCount === 'function'
+                ? sync.getPendingPushCount(binding) > 0 : previous?.kind === 'push');
+            // 删除没有新增消息可计数，失败任务仍需按原来的“只同步删除”接口恢复。
+            if (!pendingPush && previous?.kind !== 'delete') continue;
+            const scope = sync.issueScope?.(binding) || binding;
+            Promise.resolve(startAutomaticSync(pendingPush ? 'push' : 'delete', char, target, { recovery: true }))
+                .catch(error => reportPushRecoveryIssue(scope, error));
+        } catch (error) { reportPushRecoveryIssue(binding, error); } }
+    }
+    function reportPushRecoveryIssue(binding, error) {
+        console.warn(`${TAG} 恢复待推送消息失败：`, error);
+        try { window.TavernSync?.reportIssue?.('恢复待推送消息失败：' + (error?.message || String(error)), 'push', binding); }
+        catch (reportError) { console.warn(`${TAG} 记录恢复推送问题失败：`, reportError); }
+    }
+    function recoverVisiblePushes() { if (!document.hidden) recoverPendingPushes(); }
     function aiReplyKey(chatId, chatType) { return String(chatType) + ':' + String(chatId); }
     function chatIsGenerating(chatId) {
         return activeAiReplyCounts.has(aiReplyKey(chatId, 'private'))
             || (!activeAiReplyCounts.size && (typeof isGenerating !== 'undefined') && isGenerating);
     }
-    function startAutomaticSync(kind, char, bindingTarget) {
-        const key = aiReplyKey(char.id, kind);
+    function startAutomaticSync(kind, char, bindingTarget, options = {}) {
+        installAutoPushControls();
+        // 推送本身包含删除；共用写入任务，避免网络恢复和新发送各启动一次写入。
+        const key = aiReplyKey(char.id, kind === 'delete' ? 'push' : kind);
         const previous = automaticSyncJobs.get(key);
+        if (previous && sameBindingTarget(previous.bindingTarget, bindingTarget) && previous.char === char) {
+            const promoteDeletion = previous.kind === 'delete' && kind === 'push';
+            if (previous.running) {
+                // 恢复事件和重复点击只合并；新发送/回复需在本次结束后再核对一次。
+                if (!options.recovery || promoteDeletion) previous.rerun = true;
+                if (promoteDeletion) {
+                    previous.kind = 'push';
+                    if (options.manual) previous.manual = true;
+                }
+                return Promise.resolve({ ok: true, pending: true });
+            }
+            if (options.recovery && !options.manual && previous.state === 'retrying') {
+                if (promoteDeletion) previous.kind = 'push';
+                return Promise.resolve({ ok: true, pending: true });
+            }
+            if (previous.kind === 'push' && kind === 'delete') kind = 'push';
+        }
         if (previous) cancelHookTimer(previous.timer);
-        const job = { key, kind, char, bindingTarget, attempts: 0, timer: null };
+        const job = { key, kind, char, bindingTarget, attempts: 0, timer: null,
+            state: 'retrying', running: false, rerun: false, manual: !!options.manual
+                || !!(previous?.manual && previous.char === char && sameBindingTarget(previous.bindingTarget, bindingTarget)),
+            scope: window.TavernSync?.issueScope?.(bindingTarget.binding) };
         automaticSyncJobs.set(key, job);
         return runAutomaticSync(job);
     }
     function runAutomaticSync(job) {
         const current = () => automaticSyncJobs.get(job.key) === job && bindingTargetIsCurrent(job.bindingTarget)
             && db.characters.includes(job.char);
-        const finish = () => { if (automaticSyncJobs.get(job.key) === job) automaticSyncJobs.delete(job.key); };
-        if (!current()) { finish(); return Promise.resolve(); }
+        const isWrite = () => job.kind === 'push' || job.kind === 'delete';
+        const setState = state => { job.state = state; if (isWrite()) notifyAutoPushState(); };
+        const finish = () => { if (automaticSyncJobs.get(job.key) === job) { automaticSyncJobs.delete(job.key); if (isWrite()) notifyAutoPushState(); } };
+        if (!current()) { finish(); return Promise.resolve({ ok: true, skipped: true }); }
+        if (job.running) return Promise.resolve({ ok: true, pending: true });
+        job.timer = null;
         if (job.kind === 'push' && chatIsGenerating(job.char.id)) {
-            job.timer = scheduleHookTimer(() => runAutomaticSync(job), 1500); return Promise.resolve();
+            setState('retrying');
+            job.timer = scheduleHookTimer(() => runAutomaticSync(job), 1500); return Promise.resolve({ ok: true, pending: true });
         }
         const failed = () => {
-            if (current() && job.attempts < 3) job.timer = scheduleHookTimer(() => runAutomaticSync(job), 1500 * job.attempts);
+            if (!current()) { finish(); return; }
+            if (job.attempts < 3) {
+                setState('retrying'); job.timer = scheduleHookTimer(() => runAutomaticSync(job), 1500 * job.attempts);
+            } else if (isWrite()) setState('stopped');
             else finish();
         };
         const methods = { push: 'autoPushIfNeeded', pull: 'autoPullIfNeeded', delete: 'autoDeletionSyncIfNeeded' };
-        job.attempts++;
+        job.attempts++; job.running = true; setState('running');
         let operation;
-        try { operation = window.TavernSync[methods[job.kind]](job.char.id); }
+        try {
+            operation = job.manual ? Promise.resolve(window.TavernSync.pushToTavern(job.bindingTarget.binding))
+                .then(result => ({ ok: true, result })) : window.TavernSync[methods[job.kind]](job.char.id);
+        }
         catch (e) { operation = Promise.reject(e); }
         return Promise.resolve(operation).then(result => {
+            job.running = false;
+            if (!current()) { finish(); return { ok: true, skipped: true }; }
             // undefined 兼容旧外挂；新接口只有明确 ok:false 才重试，skipped/0条仍是成功。
-            if (result?.ok === false) failed(); else finish();
-        }, error => { console.warn(`${TAG} 自动${job.kind}失败：`, error); failed(); });
+            if (result?.ok === false) failed();
+            else if (job.rerun) { job.rerun = false; job.attempts = 0; return runAutomaticSync(job); }
+            else finish();
+            return result || { ok: true };
+        }, error => {
+            job.running = false;
+            console.warn(`${TAG} 自动${job.kind}失败：`, error);
+            if (job.manual && current()) window.TavernSync.reportIssue?.('补推到酒馆失败：' + error.message, 'push', job.scope || job.bindingTarget.binding);
+            failed(); return { ok: false, error: error?.message || String(error) };
+        });
     }
     function flushDeferredAiPush(generationKey) {
         const pending = deferredAiPushes.get(generationKey);
@@ -87,7 +200,7 @@
         } catch (e) { console.warn(`${TAG} 核对延迟操作的酒馆绑定失败：`, e); return false; }
     }
     // 文件版本：界面上已不显示，排查时可以临时显示出来（见 tavern_sync.js 的 SYNC_VERSION）
-    const HOOKS_VERSION = '2026-09-22 f';
+    const HOOKS_VERSION = '2026-10-21 a';
     if (window.TavernSync) window.TavernSync.HOOKS_VERSION = HOOKS_VERSION;
     function fail(what) {
         const text = `挂载失败：${what}。可能是小手机更新后改了结构，需要调整 tavern/tavern_hooks.js。`;
@@ -1063,6 +1176,9 @@
         // 否则一次操作会被执行两遍（例如改一条酒馆剧情会往酒馆写两次）
         if (hooksClosed || window.__tavernHooksApplied) return;
         window.__tavernHooksApplied = true;
+        installAutoPushControls();
+        window.addEventListener?.('online', recoverPendingPushes);
+        document.addEventListener('visibilitychange', recoverVisiblePushes);
         registerSettingKey();
         hookShowPanel();
         hookSystemPrompt();
@@ -1089,6 +1205,13 @@
         if (typeof clearInterval === 'function') clearInterval(chatWatcherTimer);
         for (const observer of hookObservers) observer.disconnect();
         hookObservers.clear();
+        window.removeEventListener?.('online', recoverPendingPushes);
+        document.removeEventListener?.('visibilitychange', recoverVisiblePushes);
+        for (const sync of autoPushControlHosts) {
+            if (sync.getAutoPushState === getAutoPushState) delete sync.getAutoPushState;
+            if (sync.retryPendingPush === retryPendingPush) delete sync.retryPendingPush;
+        }
+        autoPushControlHosts.clear();
         document.removeEventListener?.('DOMContentLoaded', applyHooks);
     });
 })();

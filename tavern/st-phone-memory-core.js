@@ -1,5 +1,5 @@
 /* Pure, local rules for already-pushed phone history. No host calls or storage. */
-export const MEMORY_LIMITS = Object.freeze({ maxUnits: 2, maxUnitChars: 600, maxChars: 1800, maxTokens: 1200 });
+export const MEMORY_LIMITS = Object.freeze({ maxUnitChars: 600, maxChars: 1800, maxTokens: 1200 });
 export const REASON_TEXT = Object.freeze({
     NO_NEED: '当前没有涉及手机旧事', NO_SOURCE: '没有可用的已推送手机记录',
     AMBIGUOUS: '不确定你指的是哪件事', COVERED: '这段已经在本次对话里',
@@ -318,7 +318,6 @@ function correctionSources(candidates, scan) {
         const chain = scan.units.filter(unit => unit.correctionRoot === candidate.correctionRoot);
         // Keep the complete correction chain or none; never select an obsolete
         // intermediate version just because the newest text did not match BM25.
-        if (chain.length > MEMORY_LIMITS.maxUnits) return null;
         const latest = chain.at(-1);
         result.push(...[...chain].reverse().map(unit => ({ ...unit,
             ...(unit.id === latest.id ? { completeCorrection: true } : { requiredCorrectionRef: latest.ref }) })));
@@ -599,7 +598,7 @@ export function restoreTopicRefs(chat, scan, { cutoff = scan.cutoff } = {}) {
     const receipts = collectValidReceipts(chat, scan, { cutoff });
     const latest = receipts.at(-1);
     if (!latest || !Number.isInteger(latest.userFloor) || !userSupportText(chat[latest.userFloor])) return [];
-    let topics = latest.sources.slice(0, 2).map(ref => ({ ref: { ...ref }, userFloor: latest.userFloor, supportedAt: latest.userFloor, unsupportedTurns: 0 }));
+    let topics = latest.sources.map(ref => ({ ref: { ...ref }, userFloor: latest.userFloor, supportedAt: latest.userFloor, unsupportedTurns: 0 }));
     for (let floor = latest.userFloor + 1; floor < cutoff; floor++) {
         const query = userSupportText(chat[floor]);
         if (!query) continue;
@@ -619,7 +618,7 @@ function topicsForCurrent(topicRefs, scan, chat, userFloor) {
     return (Array.isArray(topicRefs) ? topicRefs : []).filter(topic => validRef(topic?.ref, scan)).filter(topic => {
         const support = topic.supportedAt ?? topic.userFloor;
         return Number.isInteger(support) && support >= 0 && support <= userFloor && userTurns(chat || [], support, userFloor - 1) < 2;
-    }).slice(0, 2);
+    });
 }
 
 function topicUnits(topic, scan) {
@@ -673,7 +672,7 @@ function recentReceipts(receipts, chat, cutoff) {
 
 function supportedTopics(selected, oldTopics, userFloor) {
     if (!selected.length) return oldTopics;
-    return selected.slice(0, 2).map(unit => ({ ref: { ...unit.ref }, userFloor, supportedAt: userFloor, unsupportedTurns: 0 }));
+    return selected.map(unit => ({ ref: { ...unit.ref }, userFloor, supportedAt: userFloor, unsupportedTurns: 0 }));
 }
 
 // Embedding similarity is evidence for a current request, never a way to create
@@ -822,8 +821,8 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
             if ((top.objects?.length > 1 && !top.correctionRoot && !explicitlyNamed(top))
                 || (second && second.score >= top.score * 0.9 && !explicitUnique && !explicitBoth)) return { ...decision, reason: 'AMBIGUOUS', candidates };
             decision.kind = 'DIRECT';
-            // Two units may come from the same event, or from separately and explicitly named
-            // objects. Close scores alone never turn two uncertain places into one fact.
+            // Relevant units may come from the same event, or from separately and explicitly
+            // named objects. Close scores alone never turn uncertain places into one fact.
             candidates = candidates.filter(unit => objectKey(unit) === objectKey(top) || overlappingUnits(unit, top)
                 || (multipleRequested && explicitlyNamed(unit))
                 || (!unit.objects?.length && unit.matches.some(term => classification.tokens.words.includes(term) && !top.matches.includes(term))));
@@ -832,10 +831,12 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
     if (decision.kind === 'NONE' && !classification.exit && !classification.independent && classification.follow && topics.length) {
         if (topics.length > 1) {
             const narrowed = topics.filter(topic => topicUnits(topic, scan).some(unit => effectiveMatch(unit, classification, roleNames)));
-            const objects = topics.map(topic => topicObject(topic, scan));
-            const sameObject = objects.every(object => !object.ambiguous && object.key === objects[0].key);
-            if (narrowed.length === 1) topics = narrowed;
-            else if (!sameObject) return { ...decision, reason: 'AMBIGUOUS' };
+            const sameObject = refs => {
+                const objects = refs.map(topic => topicObject(topic, scan));
+                return objects.length && objects.every(object => !object.ambiguous && object.key === objects[0].key);
+            };
+            if (narrowed.length && sameObject(narrowed)) topics = narrowed;
+            else if (!sameObject(topics)) return { ...decision, reason: 'AMBIGUOUS' };
         }
         if (topics.length === 1 && topicObject(topics[0], scan).ambiguous && !named.length) return { ...decision, reason: 'AMBIGUOUS' };
         candidates = topics.flatMap(topic => topicUnits(topic, scan));
@@ -843,8 +844,22 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
         decision.kind = 'FOLLOW';
     }
     if (decision.kind === 'NONE' && !classification.exit && !classification.independent) {
-        const tail = scan.units.filter(unit => unit.sourceKey === source.key).slice(-2).filter(matchesNamed);
-        const tailMatches = tail.some(unit => effectiveMatch(unit, classification, roleNames));
+        const sourceUnits = scan.units.filter(unit => unit.sourceKey === source.key);
+        // The nearest utterances establish what the user is answering, not how
+        // many related utterances may be sent. Expand their contiguous object context.
+        const anchors = sourceUnits.slice(-2).filter(matchesNamed);
+        let tail = anchors;
+        if (anchors.length) {
+            const keys = new Set(anchors.map(objectKey));
+            const end = sourceUnits.indexOf(anchors.at(-1)) + 1;
+            let start = end - 1;
+            while (start > 0 && keys.has(objectKey(sourceUnits[start - 1])) && matchesNamed(sourceUnits[start - 1])) start--;
+            // Unnamed leading chatter can inherit the first place's key during
+            // scanning. Do not pull that chatter in before its explicit anchor.
+            const namedStart = sourceUnits.findIndex((unit, index) => index >= start && index < end && namedObjects(unit.text).length);
+            if (namedStart >= 0) tail = sourceUnits.slice(Math.min(namedStart, sourceUnits.indexOf(anchors[0])), end).filter(matchesNamed);
+        }
+        const tailMatches = anchors.some(unit => effectiveMatch(unit, classification, roleNames));
         if (tail.length && permitted && !repliesAfter && ((classification.follow && (classification.genericFollow || tailMatches || /我们|过去|那里|那家|那个|怎么|然后/.test(classification.text))) || answeringTail || (!classification.text && pendingTail))) {
             const multipleRequested = /和|以及|还有|分别|各自|两[个家处]/.test(classification.demandText);
             const explicitBoth = multipleRequested && named.length && tail.every(unit => unit.objects?.some(object => named.includes(object)));
@@ -861,7 +876,6 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
         return decision;
     }
     candidates = correctionSources(candidates, scan);
-    if (!candidates) return { ...decision, kind: 'NONE', reason: 'BUDGET', selected: [] };
     const deduped = [];
     for (const unit of candidates) if (!deduped.some(existing => overlappingUnits(existing, unit))) deduped.push(unit);
     if (decision.kind === 'DIRECT' && /和|以及|还有|分别|各自|两[个家处]/.test(classification.demandText)) {
@@ -875,14 +889,14 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
     decision.candidates = deduped;
     // Keep user-supported references even when a repeated or already-covered supplement is
     // removed. An assistant's own mentions can never create or renew these references.
-    decision.topicRefs = supportedTopics(deduped.slice(0, 2), topics, userFloor);
+    decision.topicRefs = supportedTopics(deduped, topics, userFloor);
     const recent = recentReceipts(validReceipts, chat, receiptCutoff);
     const selected = deduped.filter(unit => decision.kind === 'MANUAL' || classification.reconfirm || !recent.some(receipt => receipt.sources.some(ref =>
         (unit.requiredCorrectionRef && coversReference(ref, unit.requiredCorrectionRef)) ||
         ((decision.kind === 'FOLLOW' || decision.kind === 'JOIN')
             ? ref.sourceKey === unit.ref.sourceKey && ref.blockFingerprint === unit.ref.blockFingerprint
             : coversReference(ref, excerptUnit(unit, { query: classification.demandText })?.ref || unit.ref)))));
-    decision.selected = validateSelection(selected.slice(0, 2), scan);
+    decision.selected = validateSelection(selected, scan);
     decision.reason = decision.selected.length ? decision.kind : deduped.length ? 'RECENT' : 'NO_NEED';
     return decision;
 }
@@ -969,9 +983,18 @@ export async function fitBudget(selected, { countTokens, maxUnitChars = 600, max
     maxUnitChars = Math.min(MEMORY_LIMITS.maxUnitChars, Math.floor(maxUnitChars));
     maxChars = Math.min(MEMORY_LIMITS.maxChars, Math.floor(maxChars));
     maxTokens = Math.min(MEMORY_LIMITS.maxTokens, Math.floor(maxTokens));
-    let kept = (Array.isArray(selected) ? selected : []).filter(unit => unit && typeof unit.text === 'string' && unit.text.trim())
-        .slice(0, MEMORY_LIMITS.maxUnits).map(unit => excerptUnit(unit, { query, maxChars: maxUnitChars })).filter(Boolean);
+    let kept = (Array.isArray(selected) ? selected : []).filter(unit => unit && typeof unit.text === 'string' && unit.text.trim());
+    kept = kept.map(unit => excerptUnit(unit, { query, maxChars: maxUnitChars })).filter(Boolean);
     kept = kept.filter(unit => !unit.requiredCorrectionRef || kept.some(other => sameReference(other.ref, unit.requiredCorrectionRef)));
+    // Find the longest prefix within the character budget before token checks.
+    // Large candidate sets must not rebuild thousands of oversized suffixes.
+    let lo = 0, hi = kept.length;
+    while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (buildMemoryBlock(kept.slice(0, mid), { operationId }).length <= maxChars) lo = mid;
+        else hi = mid - 1;
+    }
+    kept = kept.slice(0, lo);
     while (kept.length) {
         const text = buildMemoryBlock(kept, { operationId });
         if (text.length > maxChars) { kept.pop(); continue; }

@@ -125,6 +125,7 @@ export function createPhoneMemoryAdapter(host = {}) {
     let active = null, sequence = 0, topicRefs = [], topicChat = null, topicScope = null, manual = null, assemblyOwner = null;
     let initialized = false, disposed = false, preview = { stage: 'idle', reason: 'NO_NEED', selected: [], chars: 0, tokens: 0 };
     let trialJob = null;
+    const trialEvidence = new WeakMap();
     let boundEvents = null, boundTypes = null;
     let previewOwner = null;
     // 独有前缀与递增编号可识别任意久以前的自有块，不必无限保存整段原文。
@@ -157,7 +158,87 @@ export function createPhoneMemoryAdapter(host = {}) {
         // 旧连接配置也使用浏览器直连；服务端凭据不会迁入扩展设置。
         const normalized = { ...VECTOR_DEFAULTS, ...stored.vector, transport: 'browser' };
         delete normalized.key; delete normalized.apiKey; delete normalized.secret;
+        const entry = recallProfile(normalized);
+        if (entry) { normalized.threshold = entry.threshold; normalized.margin = entry.margin; }
         return normalized;
+    }
+    function recallProfileKey(config) {
+        try {
+            if (!String(config.model || '').trim()) return null;
+            return JSON.stringify([userScope(), phoneBrowserCredentialProfile(config),
+                String(config.model).trim().replace(config.provider === 'gemini' ? /^models\// : /^$/, ''), Number(config.dimensions) || 0]);
+        } catch { return null; }
+    }
+    function recallProfile(config, create = true) {
+        const key = recallProfileKey(config);
+        if (!key) return null;
+        const stored = settings();
+        const migrating = !stored.recallProfiles || stored.recallProfiles.version !== 1
+            || !stored.recallProfiles.profiles || typeof stored.recallProfiles.profiles !== 'object'
+            || Array.isArray(stored.recallProfiles.profiles);
+        if (migrating && create) stored.recallProfiles = { version: 1, profiles: {} };
+        const profiles = stored.recallProfiles?.profiles;
+        if (!profiles || typeof profiles !== 'object' || Array.isArray(profiles)) return null;
+        if ((!Object.hasOwn(profiles, key) || !profiles[key] || typeof profiles[key] !== 'object'
+            || Array.isArray(profiles[key])) && create) {
+            const value = (name, fallback) => migrating && config[name] !== null && config[name] !== ''
+                && ['number', 'string'].includes(typeof config[name]) && Number.isFinite(Number(config[name]))
+                ? Math.min(1, Math.max(0, Number(config[name]))) : fallback;
+            profiles[key] = { threshold: value('threshold', .72), margin: value('margin', .06), evaluations: [],
+                origin: migrating ? 'migrated' : 'default' };
+        }
+        const entry = Object.hasOwn(profiles, key) ? profiles[key] : null;
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+        for (const [name, fallback] of [['threshold', .72], ['margin', .06]]) {
+            if (typeof entry[name] !== 'number' || !Number.isFinite(entry[name])) entry[name] = fallback;
+            else entry[name] = Math.min(1, Math.max(0, entry[name]));
+        }
+        if (!Array.isArray(entry.evaluations)) entry.evaluations = [];
+        return entry;
+    }
+    function privateSafeText(value) {
+        let text = String(value ?? '');
+        const key = settings().browserCredential?.key;
+        if (typeof key === 'string' && key) text = text.replaceAll(key, '[已隐藏]');
+        return text;
+    }
+    function reasonCode(value) {
+        const code = privateSafeText(value);
+        return /^[A-Z_]{1,64}$/.test(code) ? code : 'UNKNOWN';
+    }
+    function getRecallEvaluation() {
+        const config = vectorSettings(), entry = recallProfile(config);
+        return clone({ threshold: config.threshold, margin: config.margin, evaluations: entry?.evaluations || [] });
+    }
+    function recordTrialEvaluation(result, { expected = 'recall', correctSource = false } = {}) {
+        const evidence = trialEvidence.get(result), config = vectorSettings();
+        if (disposed || !evidence || evidence.profile !== recallProfileKey(config)
+            || evidence.chatId !== chatIdentity(getContext()) || evidence.snapshot !== JSON.stringify(getContext()?.chat)
+            || evidence.threshold !== config.threshold || evidence.margin !== config.margin
+            || !['recall', 'omit'].includes(expected)) return false;
+        const entry = recallProfile(config);
+        if (!entry) return false;
+        const actual = result.selected.length ? 'recall' : 'omit';
+        const record = { at: new Date().toISOString(), expected, actual,
+            correct: expected === actual && (expected === 'omit' || correctSource === true),
+            reason: reasonCode(result.reason), vectorReason: reasonCode(result.vector?.reason || 'NO_NEED'),
+            threshold: evidence.threshold, margin: evidence.margin, elapsedMs: evidence.elapsedMs,
+            vectorQueried: evidence.vectorQueried };
+        entry.evaluations = [...(entry.evaluations || []), record].slice(-40);
+        trialEvidence.delete(result);
+        contextCall('saveSettingsDebounced'); return true;
+    }
+    function getDiagnosticSummary() {
+        const config = vectorSettings(), state = vectors.getState(), current = getPreview();
+        return JSON.stringify({ format: 'uwu-recall-diagnostic-v1', at: new Date().toISOString(),
+            stage: /^[a-z]{1,32}$/.test(privateSafeText(current.stage)) ? privateSafeText(current.stage) : 'unknown',
+            reason: reasonCode(current.reason), vectorReason: reasonCode(state.reason),
+            index: { cached: Number(state.cached) || 0, total: Number(state.total) || 0 },
+            provider: ['openai', 'ollama', 'gemini'].includes(config.provider) ? config.provider : 'unknown',
+            model: privateSafeText(config.model).replace(/https?:\/\/\S+|(?:sk-|key[=:])\S+/gi, '[已隐藏]').split(/[?#]/)[0].slice(0, 256),
+            dimensions: config.dimensions, threshold: config.threshold, margin: config.margin,
+            chars: Number(current.chars) || 0, tokens: Number.isFinite(current.tokens) ? current.tokens : null,
+            evaluationCount: getRecallEvaluation().evaluations.length }, null, 2);
     }
     function userScope() {
         if (host.getUserScope) return host.getUserScope();
@@ -253,6 +334,12 @@ export function createPhoneMemoryAdapter(host = {}) {
         next.dimensions = dimensions;
         next.threshold = Number.isFinite(Number(next.threshold)) ? Math.min(1, Math.max(0, Number(next.threshold))) : 0.72;
         next.margin = Number.isFinite(Number(next.margin)) ? Math.min(1, Math.max(0, Number(next.margin))) : 0.06;
+        const entry = recallProfile(next);
+        if (entry) {
+            if (!Object.hasOwn(changes, 'threshold')) next.threshold = entry.threshold;
+            if (!Object.hasOwn(changes, 'margin')) next.margin = entry.margin;
+            entry.threshold = next.threshold; entry.margin = next.margin;
+        }
         // Key 单独绑定账号及端点，不混入普通连接配置或补充预览。
         delete next.key; delete next.apiKey; delete next.secret;
         settings().vector = next;
@@ -493,7 +580,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (result.candidates?.length) decision = core.decideMemory({ ...decisionInput,
             semanticCandidates: result.candidates, semanticThreshold: config.threshold, semanticMargin: config.margin });
         return { decision, vector: { reason: result.reason, explanation: VECTOR_REASONS[result.reason] || result.reason,
-            candidateCount: result.candidates?.length || 0 } };
+            candidateCount: result.candidates?.length || 0, queried: true } };
     }
     async function interceptor(_coreChat, contextSize, _abort, type) {
         if (disposed) return;
@@ -852,6 +939,7 @@ export function createPhoneMemoryAdapter(host = {}) {
     }
     async function trialRecall(query, { contextSize = 1200 } = {}) {
         cancelTrial();
+        const startedAt = Date.now();
         const empty = reason => ({ stage: 'trial', adopted: false, reason,
             explanation: REASONS[reason] || ({ EMPTY_QUERY: '请先输入一句要试查的话', BUSY: '角色正在生成，请等本次回复结束后试查' }[reason]) || reason,
             selected: [], chars: 0, tokens: 0 });
@@ -860,6 +948,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (!query) return empty('EMPTY_QUERY');
         if (!settings().enabled) return empty('DISABLED');
         const ctx = getContext(), chatId = chatIdentity(ctx), scope = userScope();
+        const trialConfig = vectorSettings();
         if (isGroupChat(ctx)) return empty('GROUP');
         if (!chatId) return empty('TARGET_UNKNOWN');
         if (active?.eligible && !active.invalid) return empty('BUSY');
@@ -869,6 +958,12 @@ export function createPhoneMemoryAdapter(host = {}) {
         const isCurrent = () => !disposed && trialJob === job && !job.vectorAbort.signal.aborted
             && settings().enabled && chatIdentity(getContext()) === chatId && userScope() === scope
             && vectorProfileSnapshot() === job.profile && JSON.stringify(getContext()?.chat) === job.snapshot;
+        const finish = result => {
+            trialEvidence.set(result, { profile: recallProfileKey(trialConfig), chatId, snapshot: job.snapshot,
+                threshold: trialConfig.threshold, margin: trialConfig.margin,
+                elapsedMs: Math.max(0, Date.now() - startedAt), vectorQueried: result.vector?.queried === true });
+            return result;
+        };
         try {
             // 只给副本追加试查输入。手选、主题和采用记录均只读，不消费下一次正式补充。
             const chat = clone(ctx.chat);
@@ -884,16 +979,16 @@ export function createPhoneMemoryAdapter(host = {}) {
             const result = { ...empty(decision.reason || 'NO_NEED'), query, kind: decision.kind,
                 vector, retrieval: decision.retrieval || { mode: 'keyword' },
                 candidateCount: decision.candidates?.length || 0 };
-            if (!decision.selected?.length) return result;
+            if (!decision.selected?.length) return finish(result);
             const budget = await core.fitBudget(decision.selected, {
                 countTokens: text => isCurrent() ? countOperationTokens(job, text) : Promise.reject(new Error('CANCELLED')),
                 maxTokens: Math.min(1200, Number.isFinite(contextSize) ? Math.max(0, contextSize) : 1200),
                 operationId: 'trial', query });
             if (!isCurrent()) return empty('SOURCE_CHANGED');
-            return { ...result, reason: budget.selected?.length ? decision.kind : budget.reason || 'BUDGET',
+            return finish({ ...result, reason: budget.selected?.length ? decision.kind : budget.reason || 'BUDGET',
                 explanation: REASONS[budget.selected?.length ? decision.kind : budget.reason || 'BUDGET'] || budget.reason,
                 selected: (budget.selected || []).map(source => ({ ref: clone(source.ref), text: source.text })),
-                chars: budget.chars || 0, tokens: budget.tokens };
+                chars: budget.chars || 0, tokens: budget.tokens });
         } catch { return empty(isCurrent() ? 'ERROR' : 'SOURCE_CHANGED'); }
         finally { if (trialJob === job) trialJob = null; }
     }
@@ -902,7 +997,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         getPreview();
         const ctx = getContext(), chatId = chatIdentity(ctx);
         if (!chatId || !settings().enabled || !Array.isArray(refs)) return false;
-        manual = { chatId, scope: userScope(), refs: clone(refs.slice(0, 2)) };
+        manual = { chatId, scope: userScope(), refs: clone(refs) };
         previewOwner = { scope: manual.scope, chatId };
         updatePreview({ stage: 'manual', reason: 'MANUAL' }); return true;
     }
@@ -962,6 +1057,30 @@ export function createPhoneMemoryAdapter(host = {}) {
         summary.textContent = '技术明细'; data.className = 'uwu-memory-snippet';
         data.textContent = JSON.stringify(getPreview(), null, 2);
         details.append(summary, data); summaryCard.append(details);
+        const diagnosticButton = doc.createElement('button'); diagnosticButton.type = 'button';
+        diagnosticButton.id = 'uwu-phone-memory-copy-diagnostic'; diagnosticButton.className = 'menu_button';
+        diagnosticButton.textContent = '复制召回诊断摘要';
+        const diagnosticStatus = doc.createElement('p'); diagnosticStatus.className = 'uwu-memory-help';
+        diagnosticStatus.setAttribute?.('role', 'status');
+        diagnosticButton.addEventListener('click', async () => {
+            const summaryText = getDiagnosticSummary();
+            try {
+                const clipboard = host.clipboard === undefined ? globalThis.navigator?.clipboard : host.clipboard;
+                if (typeof clipboard?.writeText !== 'function') throw new Error('NO_CLIPBOARD');
+                await clipboard.writeText(summaryText);
+                diagnosticStatus.textContent = '已复制，不含 Key、接口地址、查询或聊天原文。';
+            } catch {
+                let fallback = doc.getElementById('uwu-phone-memory-diagnostic-text');
+                if (!fallback) {
+                    fallback = doc.createElement('textarea'); fallback.id = 'uwu-phone-memory-diagnostic-text';
+                    fallback.className = 'text_pole uwu-memory-search'; fallback.readOnly = true;
+                    fallback.setAttribute?.('aria-label', '可手动复制的脱敏诊断摘要'); summaryCard.append(fallback);
+                }
+                fallback.value = summaryText; fallback.focus?.(); fallback.select?.();
+                diagnosticStatus.textContent = '浏览器未允许自动复制，请长按下方摘要全选并复制。摘要不含聊天原文或 Key。';
+            }
+        });
+        summaryCard.append(diagnosticButton, diagnosticStatus);
         panel.append(summaryCard);
 
         const trialCard = doc.createElement('section'); trialCard.className = 'uwu-memory-card';
@@ -976,6 +1095,36 @@ export function createPhoneMemoryAdapter(host = {}) {
         const trialResult = doc.createElement('div'); trialResult.id = 'uwu-phone-memory-trial-result';
         trialResult.className = 'uwu-memory-source-list'; trialResult.setAttribute?.('role', 'status');
         const trialActions = doc.createElement('div'); trialActions.className = 'uwu-memory-actions'; trialActions.append(trialButton);
+        const expected = doc.createElement('select'); expected.id = 'uwu-phone-memory-trial-expected'; expected.className = 'text_pole';
+        expected.setAttribute?.('aria-label', '这条样例预期是否补充');
+        for (const [value, caption] of [['recall', '预期：应找到旧事'], ['omit', '预期：不应补充']]) {
+            const option = doc.createElement('option'); option.value = value; option.textContent = caption; expected.append(option);
+        }
+        expected.value = 'recall';
+        const correctLabel = doc.createElement('label'); correctLabel.className = 'uwu-memory-field';
+        const correct = doc.createElement('select'); correct.className = 'text_pole'; correct.id = 'uwu-phone-memory-trial-correct';
+        const correctText = doc.createElement('span'); correctText.className = 'uwu-memory-field-title'; correctText.textContent = '人工核对来源';
+        for (const [value, caption] of [['unchecked', '尚未核对 / 找错旧事'], ['correct', '已核对，是正确旧事']]) {
+            const option = doc.createElement('option'); option.value = value; option.textContent = caption; correct.append(option);
+        }
+        correct.value = 'unchecked'; correctLabel.append(correctText, correct);
+        const record = doc.createElement('button'); record.type = 'button'; record.className = 'menu_button';
+        record.id = 'uwu-phone-memory-trial-record'; record.textContent = '记录本次对照'; record.disabled = true;
+        const evaluationStatus = doc.createElement('p'); evaluationStatus.className = 'uwu-memory-help';
+        evaluationStatus.setAttribute?.('role', 'status');
+        const showEvaluation = () => {
+            const records = getRecallEvaluation().evaluations;
+            evaluationStatus.textContent = `当前模型记录 ${records.length} 次对照，${records.filter(item => item.correct).length} 次符合预期。只记录编号、预期、结果和参数，不保存查询或原文；这是人工对照记录，不是已完成真实验收。`;
+        };
+        showEvaluation();
+        const evaluationHelp = doc.createElement('p'); evaluationHelp.className = 'uwu-memory-help';
+        evaluationHelp.textContent = '校准：先选预期，再分别试查相关改写和无关问题；核对来源后记录。误补时提高门槛，漏补时先检查索引再小幅调整，保存后重试。仅点“试查”才查询，不自动批量运行。';
+        let latestTrial = null;
+        record.addEventListener('click', () => {
+            if (recordTrialEvaluation(latestTrial, { expected: expected.value, correctSource: correct.value === 'correct' })) {
+                record.disabled = true; showEvaluation();
+            } else { record.disabled = true; evaluationStatus.textContent = '设置、聊天或样例已改变，请重新试查后记录。'; }
+        });
         let trialUiEpoch = 0, dialogTrialJob = null;
         const cancelDialogTrial = () => {
             if (dialogTrialJob && trialJob === dialogTrialJob) cancelTrial();
@@ -983,13 +1132,16 @@ export function createPhoneMemoryAdapter(host = {}) {
         };
         trialInput.addEventListener('input', () => {
             trialUiEpoch++; cancelDialogTrial(); trialResult.textContent = ''; trialButton.disabled = !settings().enabled;
+            latestTrial = null; record.disabled = true; correct.value = 'unchecked';
         });
         trialButton.addEventListener('click', async () => {
             const epoch = ++trialUiEpoch;
+            latestTrial = null; record.disabled = true; correct.value = 'unchecked';
             trialButton.disabled = true; trialResult.textContent = '正在试查，尚未采用…';
             const pending = trialRecall(trialInput.value); dialogTrialJob = trialJob;
             const result = await pending;
             if (disposed || !dialog.open || trialUiEpoch !== epoch) return;
+            latestTrial = result; record.disabled = !trialEvidence.has(result);
             trialResult.textContent = '';
             const status = doc.createElement('p'); status.className = 'uwu-memory-help';
             status.textContent = `试查结果，未发送、未采用：${result.explanation}。${result.chars} 字符 / ${result.tokens ?? '未确认'} tokens。`;
@@ -1004,51 +1156,115 @@ export function createPhoneMemoryAdapter(host = {}) {
             }
             trialButton.disabled = !settings().enabled;
         });
-        trialCard.append(trialTitle, trialHelp, trialInput, trialActions, trialResult); panel.append(trialCard);
+        trialCard.append(trialTitle, trialHelp, evaluationHelp, expected, trialInput, trialActions, trialResult,
+            correctLabel, record, evaluationStatus); panel.append(trialCard);
 
         const manualCard = doc.createElement('section'); manualCard.className = 'uwu-memory-card';
         const manualTitle = doc.createElement('h4'); manualTitle.textContent = '手动指定下一次补充来源';
         const help = doc.createElement('p'); help.className = 'uwu-memory-help';
-        help.textContent = '自动定位失败时，可从下面选至多两段，只用于下一次主回复。仍会检查来源、已有内容和长度。';
+        help.textContent = '自动定位失败时，展开来源列表，搜索并勾选所需片段，再点「下次补充所选来源」。手动选择不限段数，只用于下一次主回复。补充总长仍不超过 1800 字符、1200 tokens，超出时可能省略部分所选内容；仍会检查来源和已有内容。';
         if (!settings().enabled) help.textContent = '剧情补充已关闭，开启「按需补充手机剧情」后可手动指定来源。';
         manualCard.append(manualTitle, help);
-        const checks = [];
+        const selectedSources = new Map();
         const sources = availableSources({ recentFirst: true });
         if (sources.length) {
+            const browser = doc.createElement('details'); browser.id = 'uwu-phone-memory-source-browser';
+            browser.className = 'uwu-memory-source-browser';
+            const browserTitle = doc.createElement('summary');
+            browserTitle.textContent = `展开来源列表（共 ${sources.length} 段）`;
+            const browserBody = doc.createElement('div'); browserBody.className = 'uwu-memory-source-browser-body';
             const search = doc.createElement('input'); search.type = 'search'; search.className = 'text_pole uwu-memory-search';
             search.id = 'uwu-phone-memory-source-search'; search.placeholder = '输入关键词找来源，多个词用空格分开';
             search.setAttribute?.('aria-label', '搜索已推送手机来源');
             const sourceCount = doc.createElement('p'); sourceCount.className = 'uwu-memory-help'; sourceCount.setAttribute?.('role', 'status');
-            sourceCount.textContent = `共 ${sources.length} 段，最近的排在前面。`;
-            manualCard.append(search, sourceCount);
+            sourceCount.id = 'uwu-phone-memory-source-count';
             const list = doc.createElement('div'); list.className = 'uwu-memory-source-list';
-            const rows = [];
-            for (const source of sources) {
-                const row = doc.createElement('div'); row.className = 'uwu-memory-source-row';
-                const label = doc.createElement('label'), input = doc.createElement('input'), textSpan = doc.createElement('span');
-                label.className = 'uwu-memory-check';
-                input.type = 'checkbox'; input.addEventListener('change', () => {
-                    if (checks.filter(x => x.input.checked).length > 2) input.checked = false;
-                    use.disabled = !settings().enabled || !checks.some(x => x.input.checked);
-                });
-                textSpan.className = 'uwu-memory-check-text';
-                textSpan.textContent = `第 ${source.ref?.floor + 1} 楼：${source.text.slice(0, 180)}`;
-                label.append(input, textSpan);
-                const full = doc.createElement('details'); full.className = 'uwu-memory-advanced';
-                const caption = doc.createElement('summary'); caption.textContent = '查看完整片段';
-                const body = doc.createElement('pre'); body.className = 'uwu-memory-snippet'; body.textContent = source.text;
-                full.append(caption, body); row.append(label, full);
-                rows.push({ row, text: source.text.toLocaleLowerCase() });
-                checks.push({ input, ref: source.ref }); list.append(row);
-            }
+            list.id = 'uwu-phone-memory-source-list';
+            const pagination = doc.createElement('div'); pagination.className = 'uwu-memory-source-pagination';
+            const previous = doc.createElement('button'); previous.type = 'button'; previous.className = 'menu_button';
+            previous.id = 'uwu-phone-memory-source-prev'; previous.textContent = '上一页';
+            const pageStatus = doc.createElement('span'); pageStatus.id = 'uwu-phone-memory-source-page';
+            pageStatus.setAttribute?.('role', 'status');
+            const next = doc.createElement('button'); next.type = 'button'; next.className = 'menu_button';
+            next.id = 'uwu-phone-memory-source-next'; next.textContent = '下一页';
+            pagination.append(previous, pageStatus, next);
+            const selection = doc.createElement('p'); selection.className = 'uwu-memory-help';
+            selection.id = 'uwu-phone-memory-source-selection'; selection.setAttribute?.('role', 'status');
+            selection.textContent = '已选 0 段。翻页、搜索或收起列表都会保留选择。';
+            const selectedList = doc.createElement('div'); selectedList.className = 'uwu-memory-selected-sources';
+            const entries = sources.map((source, index) => ({ source, index, text: source.text.toLocaleLowerCase() }));
+            const pageSize = 20, visibleChecks = new Map();
+            let matches = entries, page = 0, rendered = false;
+            const updateSelection = () => {
+                const count = selectedSources.size;
+                selection.textContent = `已选 ${count} 段。翻页、搜索或收起列表都会保留选择。`;
+                use.disabled = !settings().enabled || !count;
+                selectedList.textContent = '';
+                for (const [index, source] of selectedSources) {
+                    const item = doc.createElement('div'); item.className = 'uwu-memory-selected-source';
+                    const text = doc.createElement('span');
+                    text.textContent = `第 ${source.ref?.floor + 1} 楼：${source.text.slice(0, 60)}${source.text.length > 60 ? '…' : ''}`;
+                    const remove = doc.createElement('button'); remove.type = 'button'; remove.className = 'menu_button';
+                    remove.textContent = '移除'; remove.setAttribute?.('aria-label', `移除第 ${source.ref?.floor + 1} 楼的所选来源`);
+                    remove.addEventListener('click', () => { selectedSources.delete(index); updateSelection(); });
+                    item.append(text, remove); selectedList.append(item);
+                }
+                for (const [index, input] of visibleChecks) input.checked = selectedSources.has(index);
+            };
+            const renderSources = () => {
+                rendered = true;
+                const pageCount = Math.ceil(matches.length / pageSize);
+                page = Math.max(0, Math.min(page, pageCount - 1));
+                const start = page * pageSize, end = Math.min(start + pageSize, matches.length);
+                sourceCount.textContent = `${search.value.trim() ? `找到 ${matches.length} 段（共 ${sources.length} 段）` : `共 ${sources.length} 段`}，最近的排在前面，每页 ${pageSize} 段。`;
+                pageStatus.textContent = pageCount ? `第 ${page + 1} / ${pageCount} 页 · ${start + 1}—${end} 段` : '没有匹配结果';
+                previous.disabled = page === 0; next.disabled = !pageCount || page >= pageCount - 1;
+                list.textContent = ''; visibleChecks.clear();
+                if (!matches.length) {
+                    const empty = doc.createElement('p'); empty.className = 'uwu-memory-help';
+                    empty.textContent = '没有匹配来源，换个关键词试试。已勾选的来源仍会保留。'; list.append(empty);
+                }
+                for (const { source, index } of matches.slice(start, end)) {
+                    const row = doc.createElement('div'); row.className = 'uwu-memory-source-row';
+                    const label = doc.createElement('label'), input = doc.createElement('input'), textSpan = doc.createElement('span');
+                    label.className = 'uwu-memory-check'; input.type = 'checkbox';
+                    input.checked = selectedSources.has(index); input.disabled = !settings().enabled;
+                    input.addEventListener('change', () => {
+                        if (input.checked) selectedSources.set(index, source);
+                        else if (!input.checked) selectedSources.delete(index);
+                        updateSelection();
+                    });
+                    visibleChecks.set(index, input);
+                    const shortened = source.text.length > 180;
+                    textSpan.className = 'uwu-memory-check-text';
+                    textSpan.textContent = `第 ${source.ref?.floor + 1} 楼：${source.text.slice(0, 180)}${shortened ? '…' : ''}`;
+                    label.append(input, textSpan); row.append(label);
+                    if (shortened) {
+                        const full = doc.createElement('details'); full.className = 'uwu-memory-advanced';
+                        const caption = doc.createElement('summary'); caption.textContent = `展开全文（共 ${source.text.length} 字符）`;
+                        const body = doc.createElement('pre'); body.className = 'uwu-memory-snippet'; body.textContent = source.text;
+                        full.append(caption, body); row.append(full);
+                    }
+                    list.append(row);
+                }
+            };
+            browser.addEventListener('toggle', () => {
+                browserTitle.textContent = `${browser.open ? '收起' : '展开'}来源列表（共 ${sources.length} 段）`;
+                if (browser.open && !rendered) renderSources();
+            });
             search.addEventListener('input', () => {
                 const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-                for (const { row, text } of rows) row.hidden = !words.every(word => text.includes(word));
-                const count = rows.filter(item => !item.row.hidden).length;
-                sourceCount.textContent = count ? `找到 ${count} 段，最近的排在前面。已勾选的来源仍会保留。`
-                    : '没有匹配来源，换个关键词试试。已勾选的来源仍会保留。';
+                matches = entries.filter(({ text }) => words.every(word => text.includes(word)));
+                page = 0; renderSources();
             });
-            manualCard.append(list);
+            previous.addEventListener('click', () => {
+                if (page > 0) { page--; renderSources(); list.scrollIntoView?.({ block: 'start' }); }
+            });
+            next.addEventListener('click', () => {
+                if ((page + 1) * pageSize < matches.length) { page++; renderSources(); list.scrollIntoView?.({ block: 'start' }); }
+            });
+            browserBody.append(search, sourceCount, list, pagination); browser.append(browserTitle, browserBody);
+            manualCard.append(browser, selection, selectedList);
         } else {
             const emptyHint = doc.createElement('p'); emptyHint.className = 'uwu-memory-help';
             emptyHint.textContent = '当前聊天暂无可选的已推送手机记录。';
@@ -1061,7 +1277,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         const use = doc.createElement('button'); use.className = 'menu_button uwu-memory-primary'; use.textContent = '下次补充所选来源';
         use.id = 'uwu-phone-memory-use-sources'; use.disabled = true;
         use.addEventListener('click', () => {
-            if (selectManual(checks.filter(x => x.input.checked).map(x => x.ref))) dialog.close();
+            if (selectManual([...selectedSources.values()].map(source => source.ref))) dialog.close();
         });
         const close = doc.createElement('button'); close.className = 'menu_button uwu-dialog-close'; close.textContent = '关闭';
         close.addEventListener('click', () => dialog.close()); dialog.addEventListener('close', () => {
@@ -1235,6 +1451,21 @@ export function createPhoneMemoryAdapter(host = {}) {
             .uwu-memory-dialog .uwu-memory-search { width:100%;min-width:0;box-sizing:border-box; }
             .uwu-memory-dialog .uwu-memory-source-list .uwu-memory-check { align-items:flex-start; }
             .uwu-memory-dialog .uwu-memory-source-list input[type="checkbox"] { margin-top:2px !important; }
+            .uwu-memory-dialog .uwu-memory-source-browser { min-width:0; }
+            .uwu-memory-dialog .uwu-memory-source-browser > summary {
+                padding:8px 0;font-size:13px;font-weight:600;cursor:pointer;overflow-wrap:anywhere;
+            }
+            .uwu-memory-dialog .uwu-memory-source-browser-body { display:flex;flex-direction:column;gap:8px;padding-top:6px; }
+            .uwu-memory-dialog .uwu-memory-source-browser .uwu-memory-source-list { scroll-margin-top:72px; }
+            .uwu-memory-dialog .uwu-memory-source-pagination {
+                display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:6px;
+            }
+            .uwu-memory-dialog .uwu-memory-source-pagination > span { min-width:0;text-align:center;font-size:12px;overflow-wrap:anywhere; }
+            .uwu-memory-dialog .uwu-memory-source-pagination .menu_button:disabled { cursor:default; }
+            .uwu-memory-dialog .uwu-memory-selected-sources { display:flex;flex-direction:column;gap:6px; }
+            .uwu-memory-dialog .uwu-memory-selected-source { display:flex;align-items:center;gap:8px;min-width:0; }
+            .uwu-memory-dialog .uwu-memory-selected-source > span { flex:1;min-width:0;font-size:12px;overflow-wrap:anywhere; }
+            .uwu-memory-dialog .uwu-memory-selected-source > button { flex-shrink:0; }
             #uwu-phone-vector-dialog .uwu-memory-story-actions { margin:0 !important; }
             :is(#uwu-phone-vector-dialog,.uwu-memory-dialog) .uwu-memory-footer {
                 position:sticky;bottom:0;z-index:2;padding:12px 18px;
@@ -1384,7 +1615,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         });
         modelOptions.addEventListener('change', () => {
             if (modelListOwner !== modelContext()) { clearModelOptions(); return; }
-            if (modelOptions.value) { model.value = modelOptions.value; model.focus?.(); }
+            if (modelOptions.value) { model.value = modelOptions.value; loadDraftProfile(); model.focus?.(); }
         });
         const retrieval = card('召回设置');
         const enabled = addField('enabled', '启用向量辅助查找', 'checkbox'); retrieval.append(enabled.parentNode);
@@ -1400,7 +1631,22 @@ export function createPhoneMemoryAdapter(host = {}) {
             parameters.append(input.parentNode);
         }
         const calibration = doc.createElement('p'); calibration.className = 'uwu-memory-help';
-        calibration.textContent = '门槛需要用当前模型的相关和无关样例校准；连接测试只验证接口，不能证明剧情召回效果。';
+        calibration.id = 'uwu-phone-vector-calibration-status';
+        let draftProfileKey = recallProfileKey(config);
+        function loadDraftProfile() {
+            const draft = { provider: provider.value, url: url.value, model: model.value, dimensions: controls.dimensions.value };
+            const identity = recallProfileKey(draft), entry = recallProfile(draft, false);
+            if (identity !== draftProfileKey) {
+                controls.threshold.value = String(entry?.threshold ?? .72);
+                controls.margin.value = String(entry?.margin ?? .06);
+                draftProfileKey = identity;
+            }
+            calibration.textContent = `${entry ? '使用本接口、本模型和维度保存的门槛。' : '新模型使用默认门槛。'}${entry?.evaluations?.length ? '已有本地人工对照记录，仍需真实聊天验证。' : '尚待相关和无关样例验证。'}请在“查看本次补充”里试查后记录；连接测试不能证明召回效果。`;
+        }
+        for (const control of [provider, url, model, controls.dimensions]) {
+            for (const event of ['input', 'change']) control.addEventListener(event, loadDraftProfile);
+        }
+        controls.loadDraftProfile = loadDraftProfile; loadDraftProfile();
         advanced.append(calibration); retrieval.append(advanced);
         const maintenance = card('索引状态');
         const vectorStatus = doc.createElement('p'); vectorStatus.id = 'uwu-phone-vector-status'; vectorStatus.setAttribute?.('role', 'status');
@@ -1413,6 +1659,7 @@ export function createPhoneMemoryAdapter(host = {}) {
             dimensions: controls.dimensions.value, threshold: controls.threshold.value, margin: controls.margin.value });
         const saveForm = async () => {
             setVectorSettings(readForm());
+            loadDraftProfile();
             if (key.value.trim()) {
                 const result = await saveVectorKey(key.value);
                 if (!result.ok) return false;
@@ -1546,6 +1793,7 @@ export function createPhoneMemoryAdapter(host = {}) {
             }
             vectorControls.credential.value = ''; vectorControls.credential.type = 'password';
             getDocument().getElementById('uwu-phone-vector-reveal-key').textContent = '显示输入的 Key';
+            vectorControls.loadDraftProfile?.();
         }
         if (!dialog.open) dialog.showModal();
         return vectors.refreshStatus().then(() => renderVectorStatus()).catch(() => renderVectorStatus());
@@ -1616,6 +1864,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         for (const id of ['uwu-phone-memory-preview-dialog', 'uwu-phone-memory-settings', 'uwu-phone-vector-dialog', 'uwu-phone-vector-menu-container', 'uwu-phone-vector-menu', 'uwu-phone-memory-ui-style']) getDocument()?.getElementById?.(id)?.remove();
     }
     return { initialize, startGeneration: start, interceptor, invalidate, setEnabled, getPreview, selectManual, availableSources, trialRecall, dispose,
+        getRecallEvaluation, recordTrialEvaluation, getDiagnosticSummary,
         getVectorSettings: () => clone(vectorSettings()), setVectorSettings,
         getVectorState: () => clone(vectors.getState()),
         refreshVectorStatus: () => disposed ? Promise.resolve({ reason: 'CANCELLED' }) : vectors.refreshStatus(),
