@@ -290,6 +290,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
     let epoch = 0, statusVersion = 0, statusRequest = 0, lastStatusApplied = 0, scope = '', available = false, hasKey = false, browserKeyProfile = '';
     let cacheMode = cache?.mode || 'indexeddb', cacheWarning = '', loaded, syncing = null, pendingSync = null, active = 0, indexActive = false, reason = 'DISABLED';
     let currentProfile = '', currentChat = '', currentTotal = 0, currentContext, currentSnapshot, previewOrder = 0;
+    let recordsRevision = 0, removalRevision = 0, cachedCount = null;
     let persistenceTail = Promise.resolve();
     const records = new Map(), recordsByUnit = new Map(), discardedRecords = new Map(), controllers = new Set(), operationControllers = new Set(), queue = [];
     const persistence = cache || indexedCache(indexedDB);
@@ -299,6 +300,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
         const record = records.get(key);
         if (!record) return;
         records.delete(key);
+        recordsRevision++; removalRevision++;
         const unitKey = recordUnitKey(record), bucket = recordsByUnit.get(unitKey);
         bucket?.delete(record);
         if (!bucket?.size) recordsByUnit.delete(unitKey);
@@ -306,6 +308,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
     function rememberRecord(record) {
         forgetRecord(record.key);
         records.set(record.key, record);
+        recordsRevision++;
         const unitKey = recordUnitKey(record);
         if (!recordsByUnit.has(unitKey)) recordsByUnit.set(unitKey, new Set());
         recordsByUnit.get(unitKey).add(record);
@@ -343,8 +346,17 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
             || (ctx.statusVersion + 1 === statusVersion && ctx.initialScope !== ctx.account && scope === ctx.account);
     }
     function state() {
-        const cached = currentContext?.scope === scope && currentSnapshot && liveBrowserAccount(currentContext)
-            ? currentSnapshot.units.filter(unit => cachedRecord(currentContext, currentSnapshot, unit)).length : 0;
+        let cached = 0;
+        // Account checks remain live even when the exact snapshot's count is reusable.
+        if (currentContext?.scope === scope && currentSnapshot && liveBrowserAccount(currentContext)) {
+            if (!cachedCount || cachedCount.context !== currentContext || cachedCount.snapshot !== currentSnapshot
+                || cachedCount.revision !== recordsRevision) {
+                let count = 0;
+                for (const unit of currentSnapshot.units) if (cachedRecord(currentContext, currentSnapshot, unit)) count++;
+                cachedCount = { context: currentContext, snapshot: currentSnapshot, revision: recordsRevision, count };
+            }
+            cached = cachedCount.count;
+        }
         return { available, scope, hasKey, status: reason, reason, cached, total: currentTotal, active, cacheMode, cacheWarning, profile: currentProfile };
     }
     function ownsPreview(ctx) {
@@ -815,7 +827,7 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                         units.push(unit); keys.add(cachedRecord(ctx, snapshot, unit)?.key || descriptor.key); remaining -= required;
                     }
                     selectedDimensions = knownDimensions;
-                    selectedWorkingSet = { units, keys };
+                    selectedWorkingSet = { units, keys, cursor: 0, removalRevision };
                     return selectedWorkingSet;
                 }
                 // Choose a bounded working set before issuing requests, then protect it
@@ -829,7 +841,13 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                         assertCurrent(ctx); lastYield = Date.now();
                     }
                     const selected = workingSet();
-                    const unit = selected.units.find(item => !cachedRecord(ctx, snapshot, item));
+                    // Completed prefixes stay cached while records are only added. A
+                    // concurrent dimension reset, eviction or rollback must recheck them.
+                    if (selected.removalRevision !== removalRevision) {
+                        selected.cursor = 0; selected.removalRevision = removalRevision;
+                    }
+                    while (selected.cursor < selected.units.length && cachedRecord(ctx, snapshot, selected.units[selected.cursor])) selected.cursor++;
+                    const unit = selected.units[selected.cursor];
                     if (!unit) break;
                     const descriptor = identity(ctx, snapshot, unit);
                     const vectors = await embed(ctx, [unit.text], 15000, 0);
@@ -844,7 +862,12 @@ export function createPhoneVectorService({ getSettings = () => ({}), fetch = glo
                     }
                     responseDimensions = knownDimensions = vectors[0].length;
                     const afterResponse = workingSet();
-                    if (!afterResponse.keys.has(descriptor.key)) continue;
+                    if (!afterResponse.keys.has(descriptor.key)) {
+                        if (!afterResponse.units.includes(unit)) continue;
+                        // A concurrently removed legacy record can be rebuilt under its
+                        // current key while the unit still belongs to this bounded set.
+                        afterResponse.keys.add(descriptor.key);
+                    }
                     const record = { ...descriptor, vector: vectors[0], used: Date.now() };
                     if (bytes(record) > MAX_BYTES) { skippedLarge = true; continue; }
                     rememberRecord(record);

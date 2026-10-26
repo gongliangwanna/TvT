@@ -212,7 +212,10 @@
         if (Array.isArray(body.tools)) body.tools = body.tools.filter(tool => tool?.type !== 'function' && !tool?.functionDeclarations);
         if (!body.tools?.length) delete body.tools;
         delete body.tool_choice; delete body.toolConfig;
-        if (snapshot.protocol !== 'gemini') body.stream = false;
+        if (snapshot.protocol !== 'gemini') {
+            body.stream = false;
+            delete body.stream_options;
+        }
         return body;
     }
 
@@ -232,6 +235,8 @@
         if (!events.length) throw new Error('歌词查询后的聊天接口返回了无法解析的内容');
         let content = '', reasoning = '';
         for (const data of events) {
+            // HTTP 200 的流式接口仍可能在正文后发送错误事件，不能把此前的半段回复保存为成功。
+            if (data?.error || data?.type === 'error') throw new Error('歌词查询后的聊天接口返回错误，回复未完成，请重试');
             if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(state.chat, data, record);
             const delta = !!(data.choices?.[0]?.delta || data.type === 'content_block_delta');
             const parsed = typeof extractAiProviderResponse === 'function'

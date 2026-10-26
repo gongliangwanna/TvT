@@ -178,6 +178,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         sourceIssues: [], error: null };
     let trialJob = null;
     let sourceScanCache = null;
+    let sourceScanJob = null, sourceScanEpoch = 0;
     let vectorIndexSnapshot = null;
     const trialEvidence = new WeakMap();
     let boundEvents = null, boundTypes = null;
@@ -327,6 +328,52 @@ export function createPhoneMemoryAdapter(host = {}) {
         }
         return sourceScanCache.scan.cutoff === boundary ? sourceScanCache.scan : { ...sourceScanCache.scan, cutoff: boundary };
     }
+    async function scanSourcesCachedAsync(chat, { chatId, cutoff = chat?.length || 0, isCurrent = () => true, retry = true } = {}) {
+        const list = Array.isArray(chat) ? chat : [];
+        const boundary = Math.max(0, Math.min(list.length, Number.isInteger(cutoff) ? cutoff : 0));
+        const scope = userScope(), epoch = sourceScanEpoch;
+        if (!isCurrent() || disposed) return null;
+        if (sourceScanCache?.chatId === chatId && sourceScanCache.scope === scope
+            && phoneSourcesMatch(sourceScanCache.sources, list, boundary))
+            return { ...sourceScanCache.scan, cutoff: boundary };
+        let job = sourceScanJob;
+        const consumer = { isCurrent };
+        if (!job || job.epoch !== epoch || job.chatId !== chatId || job.scope !== scope
+            || !phoneSourcesMatch(job.sources, list, boundary)) {
+            const sources = capturePhoneSources(list, boundary);
+            job = { epoch, chatId, scope, sources, consumers: new Set(), promise: null };
+            sourceScanJob = job;
+        }
+        job.consumers.add(consumer);
+        if (!job.promise) {
+            const owner = job;
+            const valid = () => {
+                const ctx = getContext(), live = Array.isArray(ctx?.chat) ? ctx.chat : [];
+                return !disposed && sourceScanEpoch === epoch && userScope() === scope
+                    && chatIdentity(ctx) === chatId && phoneSourcesMatch(owner.sources, live, Math.min(boundary, live.length))
+                    && [...owner.consumers].some(item => item.isCurrent());
+            };
+            owner.promise = core.scanSourcesAsync(snapshotPhoneSourceChat(owner.sources, boundary), {
+                chatId, cutoff: boundary, isCurrent: valid,
+            }).then(scan => {
+                if (!scan || !valid()) return null;
+                // An older cutoff can finish after a newer full-history job.
+                // Its consumer may use it, but it must not evict the newer cache.
+                if (sourceScanJob === owner) sourceScanCache = { chatId, scope, sources: owner.sources, scan };
+                return scan;
+            }).finally(() => { if (sourceScanJob === owner) sourceScanJob = null; });
+        }
+        try {
+            const scan = await job.promise;
+            if (!scan && retry && isCurrent() && !disposed && sourceScanEpoch === epoch && scope === userScope()
+                && chatIdentity(getContext()) === chatId && phoneSourcesMatch(job.sources, list, boundary)
+                && phoneSourcesMatch(job.sources, getContext()?.chat, Math.min(boundary, getContext()?.chat?.length || 0)))
+                return scanSourcesCachedAsync(list, { chatId, cutoff: boundary, isCurrent, retry: false });
+            return scan && isCurrent() && !disposed && sourceScanEpoch === epoch && scope === userScope()
+                && chatIdentity(getContext()) === chatId && phoneSourcesMatch(job.sources, list, boundary)
+                ? { ...scan, cutoff: boundary } : null;
+        } finally { job.consumers.delete(consumer); }
+    }
     const vectors = host.vectorService || createPhoneVectorService({
         getSettings: vectorSettings, fetch: host.fetch || globalThis.fetch,
         indexedDB: host.indexedDB === undefined ? globalThis.indexedDB : host.indexedDB,
@@ -377,10 +424,11 @@ export function createPhoneMemoryAdapter(host = {}) {
     function scheduleVectorIndex() {
         if (indexTimer !== null) clearTimeout(indexTimer);
         indexTimer = null;
-        if (disposed || !initialized || !settings().enabled || !vectorSettings().enabled) return;
+        if (disposed || !initialized || !settings().enabled) return;
+        const profile = vectorProfileSnapshot();
         const ctx = getContext(), chatId = chatIdentity(ctx);
         if (vectorIndexSnapshot && vectorIndexSnapshot.chatId === chatId
-            && vectorIndexSnapshot.scope === userScope() && vectorIndexSnapshot.profile === vectorProfileSnapshot()
+            && vectorIndexSnapshot.scope === userScope() && vectorIndexSnapshot.profile === profile
             && phoneSourcesMatch(vectorIndexSnapshot.sources, ctx?.chat, ctx?.chat?.length || 0)
             && (vectorIndexSnapshot.pending || vectorIndexSnapshot.ready || Date.now() < vectorIndexSnapshot.retryAfter)) return;
         indexTimer = setTimeout(() => {
@@ -389,11 +437,12 @@ export function createPhoneMemoryAdapter(host = {}) {
         }, 100);
     }
     async function prepareVectorIndex() {
-        if (disposed || !settings().enabled || !vectorSettings().enabled) return vectors.getState();
+        if (disposed || !settings().enabled) return vectors.getState();
         const ctx = getContext(), chatId = chatIdentity(ctx);
         if (!chatId) return vectors.getState();
         const sourceScope = userScope();
         const profile = vectorProfileSnapshot();
+        const vectorEnabled = vectorSettings().enabled;
         // 非手机普通对话增减不使内容索引失效；每个来源的原文版本必须保持一致。
         const chat = Array.isArray(ctx.chat) ? ctx.chat : [], cutoff = chat.length;
         const cached = sourceScanCache?.chatId === chatId && sourceScanCache.scope === sourceScope
@@ -401,16 +450,16 @@ export function createPhoneMemoryAdapter(host = {}) {
         const sources = cached?.sources || capturePhoneSources(chat, cutoff);
         const indexing = { chatId, scope: sourceScope, profile, sources, pending: true, ready: false, retryAfter: 0 };
         vectorIndexSnapshot = indexing;
-        const isCurrent = () => !disposed && vectorIndexSnapshot === indexing && settings().enabled && vectorSettings().enabled
+        const isCurrent = () => !disposed && vectorIndexSnapshot === indexing && settings().enabled
             && userScope() === sourceScope && chatIdentity(getContext()) === chatId && vectorProfileSnapshot() === profile
             && phoneSourcesMatch(sources, getContext().chat, getContext().chat?.length || 0);
         try {
             let scan = cached ? { ...cached.scan, cutoff }
-                : await core.scanSourcesAsync(snapshotPhoneSourceChat(sources, cutoff), { chatId, cutoff, isCurrent });
+                : await scanSourcesCachedAsync(chat, { chatId, cutoff, isCurrent });
             if (!scan || !isCurrent()) return vectors.getState();
             const currentCutoff = getContext().chat?.length || 0;
             if (scan.cutoff !== currentCutoff) scan = { ...scan, cutoff: currentCutoff };
-            if (!cached) sourceScanCache = { chatId, scope: sourceScope, sources, scan };
+            if (!vectorEnabled) { indexing.ready = true; return vectors.getState(); }
             const result = await vectors.sync(scan, { isCurrent });
             indexing.ready = result?.ok === true;
             renderVectorStatus(); return vectors.getState();
@@ -516,6 +565,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (active) { active.invalid = true; active.vectorAbort?.abort(); active.abortCleanup?.(); }
         active = null; assemblyOwner = null;
         sourceScanCache = null;
+        sourceScanEpoch++; sourceScanJob = null;
         vectorIndexSnapshot = null;
         topicRefs = []; topicChat = null; topicScope = null; manual = null;
         previewOwner = { scope: userScope(), chatId: chatIdentity(getContext()) };
@@ -727,7 +777,9 @@ export function createPhoneMemoryAdapter(host = {}) {
             targetVersion: ['swipe', 'continue'].includes(op.mode)
                 ? messageVersion(ctx.chat[target.replyFloor]) : null });
         try {
-            const scan = scanSourcesCached(ctx.chat, { chatId: op.chatId, cutoff: op.cutoff });
+            const scan = await scanSourcesCachedAsync(ctx.chat, { chatId: op.chatId, cutoff: op.cutoff,
+                isCurrent: () => currentValid(op) });
+            if (!scan || !currentValid(op)) return;
             const sourceIssues = (scan.issues || []).filter(issue => Number.isInteger(issue.floor)
                 && ['MALFORMED_SOURCE', 'STALE_LENGTHS'].includes(issue.reason))
                 .map(issue => ({ floor: issue.floor, reason: issue.reason }));
@@ -1053,6 +1105,20 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (recentFirst) units.sort((a, b) => b.floor - a.floor || b.start - a.start);
         return units.map(source => ({ ref: source.ref, text: source.text }));
     }
+    async function availableSourcesAsync({ query = '', recentFirst = false, isCurrent = () => true } = {}) {
+        const ctx = getContext(), chatId = chatIdentity(ctx);
+        if (!chatId) return [];
+        const scope = userScope(), epoch = sourceScanEpoch;
+        const sources = capturePhoneSources(ctx.chat || [], ctx.chat?.length || 0);
+        const scan = await scanSourcesCachedAsync(ctx.chat, { chatId, isCurrent });
+        const current = getContext();
+        if (!scan || disposed || !isCurrent() || epoch !== sourceScanEpoch || scope !== userScope()
+            || chatId !== chatIdentity(current) || !phoneSourcesMatch(sources, current?.chat, current?.chat?.length || 0)) return null;
+        const words = String(query).trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+        const units = scan.units.filter(source => words.every(word => source.text.toLocaleLowerCase().includes(word)));
+        if (recentFirst) units.sort((a, b) => b.floor - a.floor || b.start - a.start);
+        return units.map(source => ({ ref: source.ref, text: source.text }));
+    }
     function cancelTrial() {
         trialJob?.vectorAbort.abort();
         trialJob = null;
@@ -1088,7 +1154,8 @@ export function createPhoneMemoryAdapter(host = {}) {
             // 只给副本追加试查输入。手选、主题和采用记录均只读，不消费下一次正式补充。
             const chat = clone(ctx.chat);
             chat.push({ name: ctx.name1 || '我', is_user: true, mes: query, extra: {} });
-            const scan = scanSourcesCached(chat, { chatId });
+            const scan = await scanSourcesCachedAsync(chat, { chatId, isCurrent });
+            if (!scan || !isCurrent()) return empty('SOURCE_CHANGED');
             const decisionInput = { scan, chat, query, userFloor: chat.length - 1, mode: 'normal',
                 topicRefs: clone(topicChat === chatId && topicScope === scope ? topicRefs : core.restoreTopicRefs(chat, scan)),
                 receipts: core.collectValidReceipts(chat, scan), manualRefs: [],
@@ -1308,110 +1375,134 @@ export function createPhoneMemoryAdapter(host = {}) {
         if (!settings().enabled) help.textContent = '剧情补充已关闭，开启「按需补充手机剧情」后可手动指定来源。';
         manualCard.append(manualTitle, help);
         const selectedSources = new Map();
-        const sources = availableSources({ recentFirst: true });
-        if (sources.length) {
-            const browser = doc.createElement('details'); browser.id = 'uwu-phone-memory-source-browser';
-            browser.className = 'uwu-memory-source-browser';
-            const browserTitle = doc.createElement('summary');
-            browserTitle.textContent = `展开来源列表（共 ${sources.length} 段）`;
-            const browserBody = doc.createElement('div'); browserBody.className = 'uwu-memory-source-browser-body';
-            const search = doc.createElement('input'); search.type = 'search'; search.className = 'text_pole uwu-memory-search';
-            search.id = 'uwu-phone-memory-source-search'; search.placeholder = '输入关键词找来源，多个词用空格分开';
-            search.setAttribute?.('aria-label', '搜索已推送手机来源');
-            const sourceCount = doc.createElement('p'); sourceCount.className = 'uwu-memory-help'; sourceCount.setAttribute?.('role', 'status');
-            sourceCount.id = 'uwu-phone-memory-source-count';
-            const list = doc.createElement('div'); list.className = 'uwu-memory-source-list';
-            list.id = 'uwu-phone-memory-source-list';
-            const pagination = doc.createElement('div'); pagination.className = 'uwu-memory-source-pagination';
-            const previous = doc.createElement('button'); previous.type = 'button'; previous.className = 'menu_button';
-            previous.id = 'uwu-phone-memory-source-prev'; previous.textContent = '上一页';
-            const pageStatus = doc.createElement('span'); pageStatus.id = 'uwu-phone-memory-source-page';
-            pageStatus.setAttribute?.('role', 'status');
-            const next = doc.createElement('button'); next.type = 'button'; next.className = 'menu_button';
-            next.id = 'uwu-phone-memory-source-next'; next.textContent = '下一页';
-            pagination.append(previous, pageStatus, next);
-            const selection = doc.createElement('p'); selection.className = 'uwu-memory-help';
-            selection.id = 'uwu-phone-memory-source-selection'; selection.setAttribute?.('role', 'status');
-            selection.textContent = '已选 0 段。翻页、搜索或收起列表都会保留选择。';
-            const selectedList = doc.createElement('div'); selectedList.className = 'uwu-memory-selected-sources';
-            const entries = sources.map((source, index) => ({ source, index, text: source.text.toLocaleLowerCase() }));
-            const pageSize = 20, visibleChecks = new Map();
-            let matches = entries, page = 0, rendered = false;
-            const updateSelection = () => {
-                const count = selectedSources.size;
-                selection.textContent = `已选 ${count} 段。翻页、搜索或收起列表都会保留选择。`;
-                use.disabled = !settings().enabled || !count;
-                selectedList.textContent = '';
-                for (const [index, source] of selectedSources) {
-                    const item = doc.createElement('div'); item.className = 'uwu-memory-selected-source';
-                    const text = doc.createElement('span');
-                    text.textContent = `第 ${source.ref?.floor + 1} 楼：${source.text.slice(0, 60)}${source.text.length > 60 ? '…' : ''}`;
-                    const remove = doc.createElement('button'); remove.type = 'button'; remove.className = 'menu_button';
-                    remove.textContent = '移除'; remove.setAttribute?.('aria-label', `移除第 ${source.ref?.floor + 1} 楼的所选来源`);
-                    remove.addEventListener('click', () => { selectedSources.delete(index); updateSelection(); });
-                    item.append(text, remove); selectedList.append(item);
+        const browser = doc.createElement('details'); browser.id = 'uwu-phone-memory-source-browser';
+        browser.className = 'uwu-memory-source-browser';
+        const browserTitle = doc.createElement('summary'); browserTitle.textContent = '展开来源列表';
+        const browserBody = doc.createElement('div'); browserBody.className = 'uwu-memory-source-browser-body';
+        browser.append(browserTitle, browserBody); manualCard.append(browser);
+        const browserChat = chatIdentity(getContext()), browserScope = userScope(), browserEpoch = sourceScanEpoch;
+        const sourceBrowserCurrent = () => !disposed && dialog.open && doc.getElementById(dialog.id) === dialog
+            && browserChat === chatIdentity(getContext()) && browserScope === userScope() && browserEpoch === sourceScanEpoch;
+        let sourceLoading = null, sourcesLoaded = false;
+        const loadSourceBrowser = () => {
+            if (sourceLoading || sourcesLoaded) return sourceLoading;
+            const loading = doc.createElement('p'); loading.className = 'uwu-memory-help'; loading.textContent = '正在读取来源…';
+            browserBody.append(loading);
+            sourceLoading = (async () => {
+                const sources = await availableSourcesAsync({ recentFirst: true, isCurrent: sourceBrowserCurrent });
+                if (!sources || !sourceBrowserCurrent()) {
+                    if (dialog.open) loading.textContent = '聊天或来源已改变，请关闭后重新打开查看。';
+                    return;
                 }
-                for (const [index, input] of visibleChecks) input.checked = selectedSources.has(index);
-            };
-            const renderSources = () => {
-                rendered = true;
-                const pageCount = Math.ceil(matches.length / pageSize);
-                page = Math.max(0, Math.min(page, pageCount - 1));
-                const start = page * pageSize, end = Math.min(start + pageSize, matches.length);
-                sourceCount.textContent = `${search.value.trim() ? `找到 ${matches.length} 段（共 ${sources.length} 段）` : `共 ${sources.length} 段`}，最近的排在前面，每页 ${pageSize} 段。`;
-                pageStatus.textContent = pageCount ? `第 ${page + 1} / ${pageCount} 页 · ${start + 1}-${end} 段` : '没有匹配结果';
-                previous.disabled = page === 0; next.disabled = !pageCount || page >= pageCount - 1;
-                list.textContent = ''; visibleChecks.clear();
-                if (!matches.length) {
-                    const empty = doc.createElement('p'); empty.className = 'uwu-memory-help';
-                    empty.textContent = '没有匹配来源，换个关键词试试。已勾选的来源仍会保留。'; list.append(empty);
-                }
-                for (const { source, index } of matches.slice(start, end)) {
-                    const row = doc.createElement('div'); row.className = 'uwu-memory-source-row';
-                    const label = doc.createElement('label'), input = doc.createElement('input'), textSpan = doc.createElement('span');
-                    label.className = 'uwu-memory-check'; input.type = 'checkbox';
-                    input.checked = selectedSources.has(index); input.disabled = !settings().enabled;
-                    input.addEventListener('change', () => {
-                        if (input.checked) selectedSources.set(index, source);
-                        else if (!input.checked) selectedSources.delete(index);
-                        updateSelection();
-                    });
-                    visibleChecks.set(index, input);
-                    const shortened = source.text.length > 180;
-                    textSpan.className = 'uwu-memory-check-text';
-                    textSpan.textContent = `第 ${source.ref?.floor + 1} 楼：${source.text.slice(0, 180)}${shortened ? '…' : ''}`;
-                    label.append(input, textSpan); row.append(label);
-                    if (shortened) {
-                        const full = doc.createElement('details'); full.className = 'uwu-memory-advanced';
-                        const caption = doc.createElement('summary'); caption.textContent = `展开全文（共 ${source.text.length} 字符）`;
-                        const body = doc.createElement('pre'); body.className = 'uwu-memory-snippet'; body.textContent = source.text;
-                        full.append(caption, body); row.append(full);
-                    }
-                    list.append(row);
-                }
-            };
-            browser.addEventListener('toggle', () => {
+                sourcesLoaded = true; browserBody.textContent = '';
                 browserTitle.textContent = `${browser.open ? '收起' : '展开'}来源列表（共 ${sources.length} 段）`;
-                if (browser.open && !rendered) renderSources();
+                if (sources.length) {
+                    const search = doc.createElement('input'); search.type = 'search'; search.className = 'text_pole uwu-memory-search';
+                    search.id = 'uwu-phone-memory-source-search'; search.placeholder = '输入关键词找来源，多个词用空格分开';
+                    search.setAttribute?.('aria-label', '搜索已推送手机来源');
+                    const sourceCount = doc.createElement('p'); sourceCount.className = 'uwu-memory-help'; sourceCount.setAttribute?.('role', 'status');
+                    sourceCount.id = 'uwu-phone-memory-source-count';
+                    const list = doc.createElement('div'); list.className = 'uwu-memory-source-list';
+                    list.id = 'uwu-phone-memory-source-list';
+                    const pagination = doc.createElement('div'); pagination.className = 'uwu-memory-source-pagination';
+                    const previous = doc.createElement('button'); previous.type = 'button'; previous.className = 'menu_button';
+                    previous.id = 'uwu-phone-memory-source-prev'; previous.textContent = '上一页';
+                    const pageStatus = doc.createElement('span'); pageStatus.id = 'uwu-phone-memory-source-page';
+                    pageStatus.setAttribute?.('role', 'status');
+                    const next = doc.createElement('button'); next.type = 'button'; next.className = 'menu_button';
+                    next.id = 'uwu-phone-memory-source-next'; next.textContent = '下一页';
+                    pagination.append(previous, pageStatus, next);
+                    const selection = doc.createElement('p'); selection.className = 'uwu-memory-help';
+                    selection.id = 'uwu-phone-memory-source-selection'; selection.setAttribute?.('role', 'status');
+                    selection.textContent = '已选 0 段。翻页、搜索或收起列表都会保留选择。';
+                    const selectedList = doc.createElement('div'); selectedList.className = 'uwu-memory-selected-sources';
+                    const entries = sources.map((source, index) => ({ source, index, text: source.text.toLocaleLowerCase() }));
+                    const pageSize = 20, visibleChecks = new Map();
+                    let matches = entries, page = 0, rendered = false;
+                    const updateSelection = () => {
+                        const count = selectedSources.size;
+                        selection.textContent = `已选 ${count} 段。翻页、搜索或收起列表都会保留选择。`;
+                        use.disabled = !settings().enabled || !count;
+                        selectedList.textContent = '';
+                        for (const [index, source] of selectedSources) {
+                            const item = doc.createElement('div'); item.className = 'uwu-memory-selected-source';
+                            const text = doc.createElement('span');
+                            text.textContent = `第 ${source.ref?.floor + 1} 楼：${source.text.slice(0, 60)}${source.text.length > 60 ? '…' : ''}`;
+                            const remove = doc.createElement('button'); remove.type = 'button'; remove.className = 'menu_button';
+                            remove.textContent = '移除'; remove.setAttribute?.('aria-label', `移除第 ${source.ref?.floor + 1} 楼的所选来源`);
+                            remove.addEventListener('click', () => { selectedSources.delete(index); updateSelection(); });
+                            item.append(text, remove); selectedList.append(item);
+                        }
+                        for (const [index, input] of visibleChecks) input.checked = selectedSources.has(index);
+                    };
+                    const renderSources = () => {
+                        rendered = true;
+                        const pageCount = Math.ceil(matches.length / pageSize);
+                        page = Math.max(0, Math.min(page, pageCount - 1));
+                        const start = page * pageSize, end = Math.min(start + pageSize, matches.length);
+                        sourceCount.textContent = `${search.value.trim() ? `找到 ${matches.length} 段（共 ${sources.length} 段）` : `共 ${sources.length} 段`}，最近的排在前面，每页 ${pageSize} 段。`;
+                        pageStatus.textContent = pageCount ? `第 ${page + 1} / ${pageCount} 页 · ${start + 1}-${end} 段` : '没有匹配结果';
+                        previous.disabled = page === 0; next.disabled = !pageCount || page >= pageCount - 1;
+                        list.textContent = ''; visibleChecks.clear();
+                        if (!matches.length) {
+                            const empty = doc.createElement('p'); empty.className = 'uwu-memory-help';
+                            empty.textContent = '没有匹配来源，换个关键词试试。已勾选的来源仍会保留。'; list.append(empty);
+                        }
+                        for (const { source, index } of matches.slice(start, end)) {
+                            const row = doc.createElement('div'); row.className = 'uwu-memory-source-row';
+                            const label = doc.createElement('label'), input = doc.createElement('input'), textSpan = doc.createElement('span');
+                            label.className = 'uwu-memory-check'; input.type = 'checkbox';
+                            input.checked = selectedSources.has(index); input.disabled = !settings().enabled;
+                            input.addEventListener('change', () => {
+                                if (input.checked) selectedSources.set(index, source);
+                                else if (!input.checked) selectedSources.delete(index);
+                                updateSelection();
+                            });
+                            visibleChecks.set(index, input);
+                            const shortened = source.text.length > 180;
+                            textSpan.className = 'uwu-memory-check-text';
+                            textSpan.textContent = `第 ${source.ref?.floor + 1} 楼：${source.text.slice(0, 180)}${shortened ? '…' : ''}`;
+                            label.append(input, textSpan); row.append(label);
+                            if (shortened) {
+                                const full = doc.createElement('details'); full.className = 'uwu-memory-advanced';
+                                const caption = doc.createElement('summary'); caption.textContent = `展开全文（共 ${source.text.length} 字符）`;
+                                const body = doc.createElement('pre'); body.className = 'uwu-memory-snippet'; body.textContent = source.text;
+                                full.append(caption, body); row.append(full);
+                            }
+                            list.append(row);
+                        }
+                    };
+                    browser.addEventListener('toggle', () => {
+                        browserTitle.textContent = `${browser.open ? '收起' : '展开'}来源列表（共 ${sources.length} 段）`;
+                        if (browser.open && !rendered) renderSources();
+                    });
+                    search.addEventListener('input', () => {
+                        const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+                        matches = entries.filter(({ text }) => words.every(word => text.includes(word)));
+                        page = 0; renderSources();
+                    });
+                    previous.addEventListener('click', () => {
+                        if (page > 0) { page--; renderSources(); list.scrollIntoView?.({ block: 'start' }); }
+                    });
+                    next.addEventListener('click', () => {
+                        if ((page + 1) * pageSize < matches.length) { page++; renderSources(); list.scrollIntoView?.({ block: 'start' }); }
+                    });
+                    browserBody.append(search, sourceCount, list, pagination);
+                    manualCard.append(selection, selectedList);
+                    if (browser.open) renderSources();
+                } else {
+                    const emptyHint = doc.createElement('p'); emptyHint.className = 'uwu-memory-help';
+                    emptyHint.textContent = '当前聊天暂无可选的已推送手机记录。';
+                    browserBody.append(emptyHint);
+                }
+            })().catch(() => {
+                if (sourceBrowserCurrent()) loading.textContent = '来源暂时无法读取，请关闭后重新打开重试。';
             });
-            search.addEventListener('input', () => {
-                const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-                matches = entries.filter(({ text }) => words.every(word => text.includes(word)));
-                page = 0; renderSources();
-            });
-            previous.addEventListener('click', () => {
-                if (page > 0) { page--; renderSources(); list.scrollIntoView?.({ block: 'start' }); }
-            });
-            next.addEventListener('click', () => {
-                if ((page + 1) * pageSize < matches.length) { page++; renderSources(); list.scrollIntoView?.({ block: 'start' }); }
-            });
-            browserBody.append(search, sourceCount, list, pagination); browser.append(browserTitle, browserBody);
-            manualCard.append(browser, selection, selectedList);
-        } else {
-            const emptyHint = doc.createElement('p'); emptyHint.className = 'uwu-memory-help';
-            emptyHint.textContent = '当前聊天暂无可选的已推送手机记录。';
-            manualCard.append(emptyHint);
-        }
+            return sourceLoading;
+        };
+        browser.addEventListener('toggle', () => {
+            if (browser.open && !sourcesLoaded) return loadSourceBrowser();
+        });
         panel.append(manualCard);
 
         const footer = doc.createElement('div'); footer.className = 'uwu-memory-footer';
@@ -2013,7 +2104,7 @@ export function createPhoneMemoryAdapter(host = {}) {
         releaseBindings();
         for (const id of ['uwu-phone-memory-preview-dialog', 'uwu-phone-memory-settings', 'uwu-phone-vector-dialog', 'uwu-phone-vector-menu-container', 'uwu-phone-vector-menu', 'uwu-phone-memory-ui-style']) getDocument()?.getElementById?.(id)?.remove();
     }
-    return { initialize, startGeneration: start, interceptor, invalidate, setEnabled, getPreview, selectManual, availableSources, trialRecall, dispose,
+    return { initialize, startGeneration: start, interceptor, invalidate, setEnabled, getPreview, selectManual, availableSources, availableSourcesAsync, trialRecall, dispose,
         getRecallEvaluation, recordTrialEvaluation, getDiagnosticSummary,
         getVectorSettings: () => clone(vectorSettings()), setVectorSettings,
         getVectorState: () => clone(vectors.getState()),

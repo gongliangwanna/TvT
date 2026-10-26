@@ -514,13 +514,31 @@ if (typeof WorkerGlobalScope !== 'undefined' && globalThis instanceof WorkerGlob
     });
 }
 
+const bm25UnitStatistics = new WeakMap();
+function bm25Statistics(unit) {
+    const terms = unit.terms, text = unit.text;
+    const cached = bm25UnitStatistics.get(unit);
+    // Exact values, rather than a short hash or array identity, also catch
+    // in-place edits made by a caller of the exported ranking function.
+    if (cached && cached.text === text && cached.terms.length === terms.length
+        && cached.terms.every((term, index) => term === terms[index])) return cached;
+    const lower = text.toLowerCase();
+    // Keep String.split's original non-overlapping occurrence count and Map's
+    // duplicate-term behavior; changing either would alter relevance scores.
+    const frequencies = new Map(terms.map(term => [term, lower.split(term).length - 1]));
+    const statistics = { text, terms: Array.isArray(terms) ? terms.slice() : [], frequencies,
+        length: [...frequencies.values()].reduce((sum, n) => sum + n, 0) };
+    // Parsed source terms are strings. Exotic custom separators can change
+    // their string conversion without changing identity, so do not cache them.
+    if (Array.isArray(terms) && terms.every(term => typeof term === 'string')) bm25UnitStatistics.set(unit, statistics);
+    return statistics;
+}
+
 export function rankBM25(units, queryTerms, { k1 = 1.2, b = 0.75 } = {}) {
     const query = [...new Set(queryTerms || [])];
-    const frequencies = units.map(unit => {
-        const lower = unit.text.toLowerCase();
-        return new Map(unit.terms.map(term => [term, lower.split(term).length - 1]));
-    });
-    const lengths = frequencies.map(counts => [...counts.values()].reduce((sum, n) => sum + n, 0));
+    const statistics = units.map(bm25Statistics);
+    const frequencies = statistics.map(item => item.frequencies);
+    const lengths = statistics.map(item => item.length);
     const average = lengths.reduce((sum, n) => sum + n, 0) / Math.max(1, units.length);
     const df = new Map(query.map(term => [term, units.filter(unit => unit.terms.includes(term)).length]));
     return units.map((unit, index) => {
@@ -733,13 +751,28 @@ export function restoreTopicRefs(chat, scan, { cutoff = scan.cutoff } = {}) {
     for (let floor = latest.userFloor + 1; floor < cutoff; floor++) {
         const query = userSupportText(chat[floor]);
         if (!query) continue;
+        // A definite exit/independent turn with no request clears topics. Its
+        // only exception is an answer to an unanswered phone-tail question.
+        // Do not stop replay: a later explicit question can establish topics
+        // again even when no new supplement receipt was saved.
+        const classification = classifyQuery(query);
+        if (!classification.need && (classification.exit || classification.independent)) {
+            let source;
+            for (let index = scan.sources.length - 1; index >= 0; index--) {
+                if (scan.sources[index].floor <= floor) { source = scan.sources[index]; break; }
+            }
+            const answeringTail = !classification.exit && source?.tailQuestion
+                && !chat.slice(source.floor + 1, floor + 1).some(isCompletedReply)
+                && chat.slice(source.floor + 1, floor + 1).every(message => message?.is_user || message?.is_system || !ordinaryText(message))
+                && answersPendingQuestion(source, classification);
+            if (!answeringTail) { topics = []; continue; }
+        }
         // Replay the same rules as a live user turn, with only the sources and receipts
         // that already existed then. Deictic openings must not renew unrelated objects.
         const pastScan = { ...scan, cutoff: floor + 1,
             sources: scan.sources.filter(source => source.floor <= floor),
             units: scan.units.filter(unit => unit.floor <= floor) };
-        topics = decideMemory({ scan: pastScan, chat, query, userFloor: floor, topicRefs: topics,
-            receipts: receipts.filter(receipt => receipt.replyFloor <= floor) }).topicRefs;
+        topics = decideMemoryCore({ scan: pastScan, chat, query, userFloor: floor, topicRefs: topics }, true).topicRefs;
     }
     return topics.map(topic => ({ ...topic, unsupportedTurns: userTurns(chat, topic.supportedAt ?? topic.userFloor, cutoff - 1) }))
         .filter(topic => topic.unsupportedTurns < 2);
@@ -884,9 +917,11 @@ function hybridCandidates(scan, lexical, semanticCandidates, classification, rol
 }
 
 /** Default is NONE. Search scores rank candidates; they never establish a need. */
-export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cutoff - 1, topicRefs = [], receipts,
+export function decideMemory(options = {}) { return decideMemoryCore(options); }
+
+function decideMemoryCore({ scan, chat = [], query = '', userFloor = scan?.cutoff - 1, topicRefs = [], receipts,
     mode = 'normal', joinAllowed, manualRefs = [], roleNames = [], enabled = true, group = false, reliableTarget = true,
-    semanticCandidates = [], semanticThreshold = 0.72, semanticMargin = 0.06 } = {}) {
+    semanticCandidates = [], semanticThreshold = 0.72, semanticMargin = 0.06 } = {}, topicsOnly = false) {
     roleNames = [...new Set([...roleNames, ...(scan?.units || []).map(unit => unit.speaker).filter(Boolean)])];
     const classification = classifyQuery(query, { roleNames });
     const decision = { kind: 'NONE', reason: 'NO_NEED', query: classification.text, userFloor, candidates: [], selected: [], topicRefs: [], classification };
@@ -922,7 +957,7 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
     decision.topicRefs = topics;
     if (!scan.units.length) return { ...decision, reason: 'NO_SOURCE' };
     const receiptCutoff = mode === 'continue' ? scan.cutoff + 1 : scan.cutoff;
-    const validReceipts = receipts || collectValidReceipts(chat, scan, { cutoff: receiptCutoff });
+    const validReceipts = topicsOnly ? null : receipts || collectValidReceipts(chat, scan, { cutoff: receiptCutoff });
     let candidates = [];
     if (manualRefs.length) {
         candidates = manualRefs.map(ref => scan.units.find(unit => sameReference(unit.ref, ref) || unit.id === ref || coversReference(unit.ref, ref))).filter(Boolean);
@@ -1021,6 +1056,9 @@ export function decideMemory({ scan, chat = [], query = '', userFloor = scan?.cu
     // Keep user-supported references even when a repeated or already-covered supplement is
     // removed. An assistant's own mentions can never create or renew these references.
     decision.topicRefs = supportedTopics(deduped, topics, userFloor);
+    // Replay needs the same supported references, but not a second pass over
+    // receipts, excerpts and source validation for a request it will not send.
+    if (topicsOnly) return decision;
     const recent = recentReceipts(validReceipts, chat, receiptCutoff);
     const selected = deduped.filter(unit => decision.kind === 'MANUAL' || classification.reconfirm || !recent.some(receipt => receipt.sources.some(ref =>
         (unit.requiredCorrectionRef && coversReference(ref, unit.requiredCorrectionRef)) ||

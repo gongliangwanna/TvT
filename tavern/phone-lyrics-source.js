@@ -181,7 +181,10 @@
             .replace(/<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>/g, ''));
     }
     function bodyLines(lines) {
-        return lines.filter(line => line.trim() && !/^\s*\[(?:ar|al|ti|by|offset|length|re|ve|au):[^\]]*\]\s*$/i.test(line));
+        // Only known standalone section headings are metadata; arbitrary bracketed
+        // wording remains part of the source lyric, as does a heading inside a line.
+        const section = /^\s*\[(?:verse|chorus|pre[\s-]?chorus|post[\s-]?chorus|refrain|intro|outro|bridge|hook|interlude)(?:\s+\d+)?(?:\s*:\s*[^\]\r\n]+)?\]\s*$/i;
+        return lines.filter(line => line.trim() && !/^\s*\[(?:ar|al|ti|by|offset|length|re|ve|au):[^\]]*\]\s*$/i.test(line) && !section.test(line));
     }
     function candidate(record) {
         if (!record || typeof record !== 'object' || record.instrumental === true) return null;
@@ -254,11 +257,9 @@
     }
     function fragmentQueries(fragment) {
         // 搜索服务的全文索引不一定做简繁转换；变体仅用于查询，不改动来源歌词。
-        const traditional = new Map();
-        for (const [from, to] of simplifyMap) if (!traditional.has(to)) traditional.set(to, from);
         const original = fragment.normalize('NFKC').trim();
         const simplified = Array.from(original, character => simplifyMap.get(character) || character).join('');
-        const expanded = Array.from(simplified, character => traditional.get(character) || character).join('');
+        const expanded = Array.from(simplified, character => traditionalSearchMap.get(character) || character).join('');
         return [...new Set([original, simplified, expanded])].filter(Boolean);
     }
 
@@ -282,7 +283,6 @@
                 const artist = input.artist || entry.artist;
                 const signature = new URLSearchParams({ track_name: entry.title, artist_name: artist });
                 const exact = await requestJson('/get?' + signature, signal);
-                if (exact.error) lastError = exact.error;
                 const song = candidate(exact.data);
                 // 规范名称可以不同于搜索源的别名，但用户限定的曲目与片段必须都吻合。
                 if (song && sameTitle(song, entry.title) && sameArtist(song, input.artist) && sameAlbum(song, input.album) && fragmentMatches(song, input.fragment)) {
@@ -298,6 +298,9 @@
             }
             const chosen = choose(verified, input);
             if (chosen.status === 'found') {
+                // 另一首候选尚未完成核验时，唯一成功的结果不等于片段归属唯一。
+                // /get 失败但后续 /search 成功则已经完成核验，不保留前者的临时故障。
+                if (lastError) return failure('unavailable', lastError);
                 chosen.song.discoverySource = 'Unison';
                 chosen.song.discoveryUrl = DISCOVERY_BASE;
             }
