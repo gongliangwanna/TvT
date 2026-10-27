@@ -16,6 +16,8 @@
     const DISCOVERY_TIMEOUT = 30000;
     const CACHE_LIMIT = 24;
     const BODY_LIMIT = 1200000;
+    const MAX_SOURCE_REQUESTS = 16;
+    const MAX_TITLE_QUERIES = 4;
     const cache = new Map();
     let requestTail = Promise.resolve();
     let lastRequestAt = 0;
@@ -129,7 +131,8 @@
         return Number.isFinite(date) ? Math.min(86400000, Math.max(1000, date - Date.now())) : 60000;
     }
 
-    async function requestJson(path, signal, provider = 'lrclib') {
+    async function requestJson(path, signal, provider = 'lrclib', budget) {
+        if (budget && budget.remaining-- <= 0) return { error: 'query_budget_exhausted' };
         const task = async () => {
             if (signal.aborted) throw abortError();
             if (Date.now() < (cooldowns.get(provider) || 0)) return { error: 'rate_limited' };
@@ -212,7 +215,32 @@
     function metadata(song) {
         return { id: song.id, title: song.title, artist: song.artist, album: song.album, source: song.source, url: song.url };
     }
-    function sameTitle(song, title) { return !title || normalize(song.title) === normalize(title); }
+    function titleVariants(title) {
+        const original = String(title || '').normalize('NFKC').trim();
+        // Edition labels identify a different recording. Never strip them as aliases.
+        const edition = /\b(?:live|concert|unplugged|remix|mix|remaster(?:ed)?|acoustic|instrumental|karaoke|cover|demo|edit|extended|version|ver|japanese|korean|english|chinese|mandarin|cantonese|spanish)\b|现场|現場|混音|伴奏|翻唱|重制|重製|日语|日語|韩语|韓語|英语|英語|中文版|国语版|國語版|粤语版|粵語版|日本語|한국어|일본어|버전|라이브|리믹스|어쿠스틱|인스트루멘탈|커버|ライブ|ライヴ|リミックス|バージョン|アコースティック|カラオケ|インスト/i;
+        if (edition.test(original)) return [original];
+        const groups = [...original.matchAll(/\(([^()]*)\)|\[([^\[\]]*)\]/g)].map(match => (match[1] || match[2]).trim());
+        const primary = original.replace(/\([^()]*\)|\[[^\[\]]*\]/g, ' ').replace(/\s+/g, ' ').trim();
+        const variants = [original, primary, ...groups];
+        // Some catalogs join the native and Latin names without brackets.
+        if (/[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(primary) && /\p{Script=Latin}/u.test(primary)) {
+            const latin = /\p{Script=Latin}[\p{Script=Latin}\p{N}'’ .-]*/gu;
+            variants.push(primary.replace(latin, ' ').trim(), ...(primary.match(latin) || []).map(part => part.trim()));
+        }
+        const seen = new Set();
+        return variants.filter(value => {
+            const key = normalize(value);
+            if (!key || (value !== original && key.length < 2) || seen.has(key)) return false;
+            seen.add(key); return true;
+        }).slice(0, MAX_TITLE_QUERIES);
+    }
+    function sameTitle(song, title, allowAliases = false) {
+        if (!title || normalize(song.title) === normalize(title)) return true;
+        if (!allowAliases) return false;
+        const expected = new Set(titleVariants(title).map(normalize));
+        return titleVariants(song.title).some(value => expected.has(normalize(value)));
+    }
     function sameArtist(song, artist) { return !artist || normalize(song.artist) === normalize(artist); }
     function sameAlbum(song, album) { return !album || normalize(song.album) === normalize(album); }
     function fragmentMatches(song, fragment) {
@@ -221,14 +249,15 @@
         return needle.length >= 4 && normalize(song.lyricLines.join('\n')).includes(needle);
     }
     function choose(songs, input) {
-        let eligible = songs.filter(song => sameTitle(song, input.title) && sameArtist(song, input.artist) && sameAlbum(song, input.album));
+        let eligible = songs.filter(song => sameTitle(song, input.title, !!input.fragment) && sameArtist(song, input.artist) && sameAlbum(song, input.album));
         if (input.fragment) eligible = eligible.filter(song => fragmentMatches(song, input.fragment));
-        const unique = new Map();
+        const unique = [];
         for (const song of eligible) {
-            const key = normalize(song.title) + '|' + normalize(song.artist) + '|' + normalize(song.lyricLines.join('\n'));
-            if (!unique.has(key)) unique.set(key, song);
+            const body = normalize(song.lyricLines.join('\n'));
+            if (!unique.some(other => sameTitle(song, other.title, !!input.fragment) && sameArtist(song, other.artist)
+                && body === normalize(other.lyricLines.join('\n')))) unique.push(song);
         }
-        const matches = [...unique.values()];
+        const matches = unique;
         if (matches.length === 1) return { status: 'found', song: matches[0] };
         if (matches.length > 1) return failure('ambiguous', 'ambiguous_song', { candidates: matches.slice(0, 8).map(metadata) });
         return failure('not_found', input.fragment ? 'fragment_not_verified' : 'no_matching_lyrics');
@@ -263,12 +292,12 @@
         return [...new Set([original, simplified, expanded])].filter(Boolean);
     }
 
-    async function discover(input, signal) {
+    async function discover(input, signal, budget) {
         const attempted = new Set();
         let lastError = '';
         for (const query of fragmentQueries(input.fragment)) {
             const parameters = new URLSearchParams({ q: query, limit: '3' });
-            const result = await requestJson('/lyrics/search?' + parameters, signal, 'unison');
+            const result = await requestJson('/lyrics/search?' + parameters, signal, 'unison', budget);
             if (result.error) return failure('unavailable', result.error);
             if (!result.data || result.data.success !== true || !Array.isArray(result.data.data)) return failure('unavailable', 'invalid_discovery_response');
             const discovered = [];
@@ -282,19 +311,26 @@
             for (const entry of discovered) {
                 const artist = input.artist || entry.artist;
                 const signature = new URLSearchParams({ track_name: entry.title, artist_name: artist });
-                const exact = await requestJson('/get?' + signature, signal);
+                const exact = await requestJson('/get?' + signature, signal, 'lrclib', budget);
                 const song = candidate(exact.data);
                 // 规范名称可以不同于搜索源的别名，但用户限定的曲目与片段必须都吻合。
-                if (song && sameTitle(song, entry.title) && sameArtist(song, input.artist) && sameAlbum(song, input.album) && fragmentMatches(song, input.fragment)) {
+                if (song && sameTitle(song, entry.title, true) && sameArtist(song, input.artist) && sameAlbum(song, input.album) && fragmentMatches(song, input.fragment)) {
                     verified.push(song); continue;
                 }
-                const signatureSearch = new URLSearchParams({ track_name: entry.title });
-                if (input.artist) signatureSearch.set('artist_name', input.artist);
-                const search = await requestJson('/search?' + signatureSearch, signal);
-                if (search.error) { lastError = search.error; continue; }
-                if (!Array.isArray(search.data)) { lastError = 'invalid_response'; continue; }
-                verified.push(...search.data.slice(0, 20).map(candidate).filter(Boolean)
-                    .filter(item => sameTitle(item, entry.title) && sameArtist(item, input.artist) && sameAlbum(item, input.album) && fragmentMatches(item, input.fragment)));
+                let entryError = '';
+                for (const title of titleVariants(entry.title)) {
+                    const signatureSearch = new URLSearchParams({ track_name: title });
+                    // The discovered artist is a hint, not a user restriction. Sources
+                    // often use different scripts/aliases; the complete fragment still must match.
+                    if (input.artist) signatureSearch.set('artist_name', input.artist);
+                    const search = await requestJson('/search?' + signatureSearch, signal, 'lrclib', budget);
+                    if (search.error) { entryError = search.error; continue; }
+                    if (!Array.isArray(search.data)) { entryError = 'invalid_response'; continue; }
+                    const matches = search.data.slice(0, 20).map(candidate).filter(Boolean)
+                        .filter(item => sameTitle(item, entry.title, true) && sameArtist(item, input.artist) && sameAlbum(item, input.album) && fragmentMatches(item, input.fragment));
+                    if (matches.length) { verified.push(...matches); entryError = ''; break; }
+                }
+                if (entryError) lastError = entryError;
             }
             const chosen = choose(verified, input);
             if (chosen.status === 'found') {
@@ -328,32 +364,37 @@
         supplied.signal?.addEventListener('abort', externalAbort, { once: true });
         let timedOut = false;
         const timer = setTimeout(() => { timedOut = true; controller.abort(); }, input.title ? LOOKUP_TIMEOUT : DISCOVERY_TIMEOUT);
+        const budget = { remaining: MAX_SOURCE_REQUESTS };
         try {
-            if (!input.title) return remember(key, await discover(input, controller.signal));
+            if (!input.title) return remember(key, await discover(input, controller.signal, budget));
             const errors = [];
             if (input.artist) {
                 const signature = new URLSearchParams({ track_name: input.title, artist_name: input.artist });
                 if (input.album) signature.set('album_name', input.album);
-                const exact = await requestJson('/get?' + signature, controller.signal);
+                const exact = await requestJson('/get?' + signature, controller.signal, 'lrclib', budget);
                 if (exact.error) errors.push(exact.error);
                 const song = candidate(exact.data);
                 // /get is LRCLIB's selected canonical record for the signature.
-                if (song && sameTitle(song, input.title) && sameArtist(song, input.artist) && sameAlbum(song, input.album) && fragmentMatches(song, input.fragment)) {
+                if (song && sameTitle(song, input.title, !!input.fragment) && sameArtist(song, input.artist) && sameAlbum(song, input.album) && fragmentMatches(song, input.fragment)) {
                     return remember(key, { status: 'found', song });
                 }
                 if (exact.error === 'rate_limited' || exact.error === 'unavailable') return failure('unavailable', exact.error);
             }
-            const parameters = new URLSearchParams({ track_name: input.title });
-            if (input.artist) parameters.set('artist_name', input.artist);
-            if (input.album) parameters.set('album_name', input.album);
-            const search = await requestJson('/search?' + parameters, controller.signal);
-            if (search.error) errors.push(search.error);
-            if (!Array.isArray(search.data)) {
-                return failure('unavailable', errors[0] || 'invalid_response', { errors });
+            for (const title of input.fragment ? titleVariants(input.title) : [input.title]) {
+                const parameters = new URLSearchParams({ track_name: title });
+                if (input.artist) parameters.set('artist_name', input.artist);
+                if (input.album) parameters.set('album_name', input.album);
+                const search = await requestJson('/search?' + parameters, controller.signal, 'lrclib', budget);
+                if (search.error) errors.push(search.error);
+                if (!Array.isArray(search.data)) {
+                    if (!search.error) errors.push('invalid_response');
+                    continue;
+                }
+                const result = choose(search.data.slice(0, 20).map(candidate).filter(Boolean), input);
+                if (result.status !== 'not_found') return remember(key, result);
             }
-            const result = choose(search.data.slice(0, 20).map(candidate).filter(Boolean), input);
-            if (result.status === 'not_found' && errors.length) return failure('unavailable', errors[0], { errors });
-            return remember(key, result);
+            if (errors.length) return failure('unavailable', errors[0], { errors });
+            return remember(key, failure('not_found', input.fragment ? 'fragment_not_verified' : 'no_matching_lyrics'));
         } catch (error) {
             if (supplied.signal?.aborted) throw abortError();
             return failure('unavailable', timedOut ? 'timeout' : 'network');
@@ -363,5 +404,6 @@
         }
     }
 
-    root.PhoneLyricsSource = Object.freeze({ version: '0.1.0', lookup, normalizeForMatch: normalize, clearCache: () => cache.clear() });
+    root.PhoneLyricsSource = Object.freeze({ version: '0.2.0', lookup, normalizeForMatch: normalize,
+        titlesMatch: (actual, requested, fragment) => sameTitle({ title: actual }, requested, !!fragment), clearCache: () => cache.clear() });
 })(typeof window !== 'undefined' ? window : globalThis);
